@@ -1265,38 +1265,85 @@ const previewServiceConnection = {
   updatedAt: new Date(BASE).toISOString(),
 }
 
-// The organization's computer (work 052 contract).
-const previewComputer = {
-  computer: {
-    state: 'ready',
-    connected: true,
-    vcpus: 2,
-    memoryGiB: 8,
-    diskGiB: 128,
-    lastError: null,
-    createdAt: new Date(BASE).toISOString(),
-    updatedAt: new Date(BASE).toISOString(),
-  },
-  slack: { installed: true, teamId: 'T0PREVIEW', teamName: 'Acme' },
-  github: {
-    connected: false,
-    installations: [] as Array<{ id: string; accountLogin: string }>,
-  },
-  plan: 'free',
+// The organization's computer (work 052 contract). Onboarded by default with
+// one live and two recent sessions; `?computer=setup` shows the page before
+// Slack and GitHub are connected, `?computer=quiet` nothing live and
+// `?computer=parked` a sleeping computer.
+function previewComputerMode() {
+  return new URLSearchParams(window.location.search).get('computer')
 }
 
-const previewComputerSessions = [
-  {
-    key: 'C0PREVIEW:1760000000.000100',
-    title: 'Fix the flaky checkout test',
+function previewComputer() {
+  const mode = previewComputerMode()
+  const setup = mode === 'setup'
+  const parked = mode === 'parked'
+  return {
+    computer: {
+      state: parked ? 'parked' : 'ready',
+      connected: !parked,
+      vcpus: 2,
+      memoryGiB: 8,
+      diskGiB: 128,
+      lastError: null,
+      createdAt: new Date(BASE).toISOString(),
+      updatedAt: new Date(BASE).toISOString(),
+    },
+    slack: setup
+      ? { installed: false }
+      : { installed: true, teamId: 'T0PREVIEW', teamName: 'Acme' },
+    github: setup
+      ? {
+          connected: false,
+          installations: [] as Array<{ id: string; accountLogin: string }>,
+        }
+      : {
+          connected: true,
+          installations: [
+            { id: '1', accountLogin: 'acme' },
+            { id: '2', accountLogin: 'acme-labs' },
+          ],
+        },
+    plan: 'free',
+  }
+}
+
+function previewComputerSessions() {
+  // Relative to now so the page's "2 min ago" reads true in the preview.
+  const ago = (minutes: number) =>
+    new Date(Date.now() - minutes * 60_000).toISOString()
+  const session = (
+    ts: string,
+    title: string,
+    status: string,
+    minutes: number,
+  ) => ({
+    key: `C0PREVIEW:${ts}`,
+    title,
     channelId: 'C0PREVIEW',
-    threadTs: '1760000000.000100',
+    threadTs: ts,
     ownerSlackUserId: 'U0PREVIEW',
-    status: 'busy',
-    updatedAt: new Date(BASE).toISOString(),
-    slackUrl: 'https://acme.slack.com/archives/C0PREVIEW/p1760000000000100',
-  },
-]
+    status,
+    updatedAt: ago(minutes),
+    slackUrl: `https://acme.slack.com/archives/C0PREVIEW/p${ts.replace('.', '')}`,
+  })
+  const mode = previewComputerMode()
+  const live = mode === 'quiet' || mode === 'parked' ? 'idle' : 'busy'
+  return [
+    session('1760000300.000100', 'Fix the flaky checkout test', live, 2),
+    session(
+      '1760000200.000100',
+      'Explain how billing retries work',
+      'idle',
+      47,
+    ),
+    session(
+      '1760000100.000100',
+      'Upgrade to React 19 and list what broke',
+      'ended',
+      26 * 60,
+    ),
+  ]
+}
 
 let previewProjectServiceAttachments: Array<Record<string, unknown>> = []
 
@@ -1308,10 +1355,10 @@ const ROUTES: Array<[RegExp, Handler]> = [
     () => ({ data: [], next_cursor: null }),
   ],
   [/^\/managed-agents\/agents$/, () => ({ agents: managedAgentItems })],
-  [/^\/managed-agents\/computer$/, () => previewComputer],
+  [/^\/managed-agents\/computer$/, previewComputer],
   [
     /^\/managed-agents\/computer\/sessions$/,
-    () => ({ sessions: previewComputerSessions }),
+    () => ({ sessions: previewComputerSessions() }),
   ],
   [
     /^\/managed-agents\/account\/runtime-profile$/,
@@ -1561,7 +1608,7 @@ const ROUTES: Array<[RegExp, Handler]> = [
 // Mutations the preview needs to echo something parseable (e.g. the Slack
 // wizard's POST …/slack/manifest → manifest+steps). Everything else 204-ish.
 const POST_ROUTES: [RegExp, () => unknown][] = [
-  [/^\/managed-agents\/computer$/, () => previewComputer],
+  [/^\/managed-agents\/computer$/, previewComputer],
   [
     /^\/managed-agents\/computer\/slack\/install$/,
     // Round-trips through the page's Slack return handling.
