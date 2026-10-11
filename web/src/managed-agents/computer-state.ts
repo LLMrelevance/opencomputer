@@ -166,32 +166,55 @@ const SLACK_RETURN_REASONS = new Map<string, string>([
   ['cancelled', 'The Slack install was cancelled.'],
   ['invalid_state', 'The install link expired. Start the install again.'],
   ['state_expired', 'The install link expired. Start the install again.'],
-  [
-    'already_linked',
-    'That Slack workspace is already linked to another organization.',
-  ],
-  [
-    'team_already_linked',
-    'That Slack workspace is already linked to another organization.',
-  ],
+])
+
+/** Reasons that mean the workspace is already another organization's. */
+const ALREADY_LINKED_REASONS = new Set([
+  'team_already_linked',
+  'already_linked',
 ])
 
 export type SlackReturn =
   | { kind: 'connected' }
   | { kind: 'error'; message: string }
+  /**
+   * The workspace already works with OpenComputer in another organization.
+   * `notified`: the person who set it up there was asked in Slack to invite
+   * this person.
+   */
+  | { kind: 'already_linked'; notified: boolean }
   | null
 
-/** Reads `?slack=connected|error&reason=` from Slack's install redirect. */
+/** The query parameters Slack's install redirect adds, removed once handled. */
+export const SLACK_RETURN_PARAMS = ['slack', 'reason', 'notified'] as const
+
+/** Reads `?slack=connected|error&reason=&notified=` from Slack's install redirect. */
 export function slackReturnFromSearch(search: URLSearchParams): SlackReturn {
   const slack = search.get('slack')
   if (slack === 'connected') return { kind: 'connected' }
   if (slack !== 'error') return null
   const reason = search.get('reason') ?? ''
+  if (ALREADY_LINKED_REASONS.has(reason)) {
+    return { kind: 'already_linked', notified: search.get('notified') === '1' }
+  }
   return {
     kind: 'error',
     message:
       SLACK_RETURN_REASONS.get(reason) ??
       'Slack could not be connected. Try again.',
+  }
+}
+
+/** What the already-linked panel says; the other organization is never named. */
+export function alreadyLinkedCopy(notified: boolean): {
+  headline: string
+  body: string
+} {
+  return {
+    headline: 'Your team is already here.',
+    body: notified
+      ? "Your Slack workspace already works with OpenComputer in another organization. We've messaged the person who set it up in Slack to invite you. Once you're invited, switch to that organization from the menu at the top left."
+      : 'Your Slack workspace already works with OpenComputer in another organization. Ask a teammate who uses it to invite you, then switch to that organization from the menu at the top left.',
   }
 }
 

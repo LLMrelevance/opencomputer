@@ -20,6 +20,7 @@ import {
   heroCopy,
   relativeTime,
   sessionPollInterval,
+  alreadyLinkedCopy,
   slackReturnFromSearch,
   splitSessions,
 } from './computer-state'
@@ -249,6 +250,40 @@ describe('Slack install return', () => {
       message: 'Slack could not be connected. Try again.',
     })
     expect(slackReturnFromSearch(new URLSearchParams(''))).toBeNull()
+  })
+
+  it('reads an already-linked workspace and whether its owner was asked', () => {
+    expect(
+      slackReturnFromSearch(
+        new URLSearchParams(
+          'slack=error&reason=team_already_linked&notified=1',
+        ),
+      ),
+    ).toEqual({ kind: 'already_linked', notified: true })
+    expect(
+      slackReturnFromSearch(
+        new URLSearchParams(
+          'slack=error&reason=team_already_linked&notified=0',
+        ),
+      ),
+    ).toEqual({ kind: 'already_linked', notified: false })
+    // Redirects from before `notified` existed: nobody was asked.
+    expect(
+      slackReturnFromSearch(
+        new URLSearchParams('slack=error&reason=team_already_linked'),
+      ),
+    ).toEqual({ kind: 'already_linked', notified: false })
+    expect(alreadyLinkedCopy(true).body).toContain(
+      "We've messaged the person who set it up",
+    )
+    expect(alreadyLinkedCopy(false).body).toContain(
+      'Ask a teammate who uses it to invite you',
+    )
+    for (const notified of [true, false]) {
+      expect(alreadyLinkedCopy(notified).headline).toBe(
+        'Your team is already here.',
+      )
+    }
   })
 })
 

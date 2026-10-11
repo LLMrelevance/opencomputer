@@ -16,6 +16,8 @@ import {
   Sparkles,
   Terminal,
   Unplug,
+  UsersRound,
+  X,
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
@@ -49,6 +51,8 @@ import {
 } from './computer-api'
 import {
   EXAMPLE_ASKS,
+  SLACK_RETURN_PARAMS,
+  alreadyLinkedCopy,
   SESSION_STATUS,
   START_SESSION_COPY,
   compactStatusLine,
@@ -95,7 +99,17 @@ export default function ComputerPage() {
     createNow()
   }, [status.data?.computer, createNow])
 
-  // Slack's install redirect lands here with ?slack=connected|error.
+  // Slack's install redirect lands here with ?slack=connected|error. A
+  // workspace that is another organization's gets a panel, not a toast: the
+  // person is welcome, they just need an invite. The redirect is a full page
+  // load, so the panel's state is read once, from the URL it arrived with;
+  // the effect below then cleans the URL.
+  const [alreadyLinked, setAlreadyLinked] = useState(() => {
+    const slackReturn = slackReturnFromSearch(searchParams)
+    return slackReturn?.kind === 'already_linked'
+      ? { notified: slackReturn.notified }
+      : null
+  })
   const handledSlackReturn = useRef<string | null>(null)
   useEffect(() => {
     const slackReturn = slackReturnFromSearch(searchParams)
@@ -105,13 +119,12 @@ export default function ComputerPage() {
     handledSlackReturn.current = key
     if (slackReturn.kind === 'connected') {
       notifySuccess('Slack is connected.', START_SESSION_COPY)
-    } else {
+    } else if (slackReturn.kind === 'error') {
       notifyError("Couldn't connect Slack.", new Error(slackReturn.message))
     }
     void queryClient.invalidateQueries({ queryKey: computerQueryKey })
     const next = new URLSearchParams(searchParams)
-    next.delete('slack')
-    next.delete('reason')
+    for (const param of SLACK_RETURN_PARAMS) next.delete(param)
     setSearchParams(next, { replace: true })
   }, [queryClient, searchParams, setSearchParams])
 
@@ -143,11 +156,19 @@ export default function ComputerPage() {
   const { live, recent } = splitSessions(sessions.data ?? [])
   const sessionsLoading = hasComputer && sessions.isLoading
   const createError = create.isError ? create.error : null
+  const alreadyLinkedPanel = alreadyLinked ? (
+    <AlreadyLinked
+      notified={alreadyLinked.notified}
+      status={status.data}
+      onDismiss={() => setAlreadyLinked(null)}
+    />
+  ) : null
 
   // Once it is in Slack and knows the code, the page is about the work.
   if (computerIsOnboarded(status.data)) {
     return (
       <div className="mx-auto max-w-5xl space-y-8">
+        {alreadyLinkedPanel}
         <CompactHeader
           status={status.data}
           liveCount={live.length}
@@ -180,6 +201,7 @@ export default function ComputerPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      {alreadyLinkedPanel}
       <Hero
         status={status.data}
         createError={createError}
@@ -576,6 +598,62 @@ function Hero({
   )
 }
 
+/**
+ * Someone tried to link a Slack workspace that already works with
+ * OpenComputer in another organization. Not an error: their team is already
+ * here, and the way in is an invite (the person who set it up may have been
+ * asked in Slack already).
+ */
+function AlreadyLinked({
+  notified,
+  status,
+  onDismiss,
+}: {
+  notified: boolean
+  status: ComputerStatus
+  onDismiss: () => void
+}) {
+  const copy = alreadyLinkedCopy(notified)
+  return (
+    <section
+      aria-labelledby="already-linked-title"
+      className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-8 sm:px-10"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground absolute top-3 right-3"
+        aria-label="Dismiss"
+        onClick={onDismiss}
+      >
+        <X className="size-4" aria-hidden />
+      </Button>
+      <div className="flex gap-5">
+        <div className="bg-primary/15 text-primary flex size-11 shrink-0 items-center justify-center rounded-full">
+          <UsersRound className="size-5" aria-hidden />
+        </div>
+        <div className="max-w-2xl min-w-0 pr-8">
+          <h2
+            id="already-linked-title"
+            className="text-2xl font-semibold tracking-tight text-balance"
+          >
+            {copy.headline}
+          </h2>
+          <p className="text-muted-foreground mt-2 text-balance">{copy.body}</p>
+          {status.slack.installed ? null : (
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <span className="text-muted-foreground text-sm">
+                Or connect a different Slack workspace
+              </span>
+              <SlackInstallButton variant="outline" />
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 const REASONS = [
   {
     icon: MessagesSquare,
@@ -742,11 +820,6 @@ function SlackAction({
 }) {
   const queryClient = useQueryClient()
   const [confirmUnlink, setConfirmUnlink] = useState(false)
-  const install = useMutation({
-    mutationFn: startComputerSlackInstall,
-    onSuccess: (url) => window.location.assign(url),
-    onError: (error) => notifyError("Couldn't start the Slack install.", error),
-  })
   const unlink = useMutation({
     mutationFn: unlinkComputerSlack,
     onSuccess: async () => {
@@ -760,22 +833,7 @@ function SlackAction({
     onError: (error) => notifyError("Couldn't unlink Slack.", error),
   })
 
-  if (!status.slack.installed) {
-    return (
-      <Button
-        // Stays pending through the navigation to Slack.
-        disabled={install.isPending || install.isSuccess}
-        onClick={() => install.mutate()}
-      >
-        {install.isPending || install.isSuccess ? (
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-        ) : (
-          <Send className="size-4" aria-hidden />
-        )}
-        Install Slack app
-      </Button>
-    )
-  }
+  if (!status.slack.installed) return <SlackInstallButton />
   const teamName = status.slack.teamName ?? 'this Slack workspace'
   return (
     <>
@@ -799,6 +857,33 @@ function SlackAction({
         onConfirm={() => unlink.mutate()}
       />
     </>
+  )
+}
+
+function SlackInstallButton({
+  variant = 'default',
+}: {
+  variant?: 'default' | 'outline'
+}) {
+  const install = useMutation({
+    mutationFn: startComputerSlackInstall,
+    onSuccess: (url) => window.location.assign(url),
+    onError: (error) => notifyError("Couldn't start the Slack install.", error),
+  })
+  return (
+    <Button
+      variant={variant}
+      // Stays pending through the navigation to Slack.
+      disabled={install.isPending || install.isSuccess}
+      onClick={() => install.mutate()}
+    >
+      {install.isPending || install.isSuccess ? (
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+      ) : (
+        <Send className="size-4" aria-hidden />
+      )}
+      Install Slack app
+    </Button>
   )
 }
 

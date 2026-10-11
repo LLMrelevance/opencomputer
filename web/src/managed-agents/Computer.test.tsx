@@ -201,6 +201,51 @@ describe('Computer page', () => {
     expect(container.textContent).toContain('Unlink')
   })
 
+  it('welcomes someone whose Slack workspace is already another organization', async () => {
+    computerApi.getComputer.mockResolvedValue(provisioning)
+
+    render('/computer?slack=error&reason=team_already_linked&notified=1')
+    await settle(() => location() === '/computer', 'clean URL')
+    await settle(
+      () =>
+        container.textContent?.includes('Your team is already here.') === true,
+      'already-linked panel',
+    )
+    const panel = container.querySelector(
+      'section[aria-labelledby="already-linked-title"]',
+    )!
+    expect(panel.textContent).toContain(
+      "We've messaged the person who set it up in Slack to invite you.",
+    )
+    expect(panel.textContent).toContain('menu at the top left')
+    expect(panel.textContent).toContain(
+      'Or connect a different Slack workspace',
+    )
+    expect(panel.textContent).toContain('Install Slack app')
+    expect(container.textContent).not.toContain("Couldn't connect Slack")
+
+    act(() =>
+      (
+        panel.querySelector('button[aria-label="Dismiss"]') as HTMLButtonElement
+      ).click(),
+    )
+    expect(container.textContent).not.toContain('Your team is already here.')
+    expect(location()).toBe('/computer')
+  })
+
+  it('asks for a teammate when nobody could be messaged', async () => {
+    computerApi.getComputer.mockResolvedValue(provisioning)
+
+    render('/computer?slack=error&reason=team_already_linked&notified=0')
+    await settle(
+      () =>
+        container.textContent?.includes('Ask a teammate who uses it') === true,
+      'already-linked panel without a notified owner',
+    )
+    expect(container.textContent).not.toContain("We've messaged")
+    await settle(() => location() === '/computer', 'clean URL')
+  })
+
   it('sends an organization without projects to its computer', async () => {
     projectsApi.getManagedProjects.mockResolvedValue([])
     computerApi.getComputer.mockResolvedValue(provisioning)
