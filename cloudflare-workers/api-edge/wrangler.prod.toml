@@ -20,6 +20,12 @@ routes = [
   { pattern = "*.sb.opencomputer.dev/*", zone_name = "opencomputer.dev" },
 ]
 
+# Workers Logs: without this, exceptions behind a Cloudflare 1101 Ray ID are
+# only visible to a live `wrangler tail`.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # Static assets — the dashboard SPA. Built from `web/` by the deploy script.
 [assets]
 directory = "./assets"
