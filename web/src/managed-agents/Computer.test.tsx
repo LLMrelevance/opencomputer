@@ -166,4 +166,11 @@ describe('Computer page', () => {
     expect(container.textContent).toContain('Unlink')
   })
 
+  it('sends an organization without projects to its computer', async () => {
+    projectsApi.getManagedProjects.mockResolvedValue([])
+    computerApi.getComputer.mockResolvedValue(provisioning)
+
+    render('/')
+    await settle(() => location() === '/computer', 'redirect to /computer')
+  })
 })

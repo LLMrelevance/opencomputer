@@ -20,12 +20,13 @@ function renderProjects(projects: unknown[], archived: unknown[] = []) {
 }
 
 describe('projects home onboarding', () => {
-  it('shows CLI onboarding when the account has no projects', () => {
+  it('does not show CLI onboarding on the home screen without projects', () => {
+    // An organization without projects is sent to its computer (see
+    // Computer.test.tsx); CLI onboarding stays at /new.
     const markup = renderProjects([])
 
-    expect(markup).toContain(INSTALL_CLI_COMMAND)
+    expect(markup).not.toContain(INSTALL_CLI_COMMAND)
     expect(markup).not.toContain('Create project')
-    expect(markup).not.toContain('Start from a template')
   })
 
   it('sends New project to the same CLI onboarding route', () => {

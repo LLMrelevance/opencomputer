@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import {
   Archive,
   ChevronRight,
@@ -20,7 +20,6 @@ import {
   getManagedProjects,
   restoreManagedProject,
 } from './api'
-import ProjectOnboarding from './ProjectOnboarding'
 
 export default function ProjectsHome() {
   const queryClient = useQueryClient()
@@ -83,8 +82,10 @@ export default function ProjectsHome() {
     )
   }
 
+  // An organization's first screen is its computer (017, work 052). Project
+  // creation stays CLI-first at /new, which the computer page links to.
   if (items.length === 0 && archivedItems.length === 0) {
-    return <ProjectOnboarding />
+    return <Navigate to="/computer" replace />
   }
 
   return (
