@@ -5,6 +5,7 @@ import {
   Boxes,
   BrainCircuit,
   CalendarClock,
+  Computer,
   Database,
   FolderKanban,
   KeySquare,
@@ -119,10 +120,15 @@ export function managedAgentsNav(options: {
   }
 
   if (!options.projectId) {
-    // The project list is the home screen; it needs a place in the sidebar so
-    // it stays reachable once an advanced area is open.
+    // The organization's computer comes first (work 052): it is the first
+    // screen of an organization without projects. The project list is the
+    // home screen otherwise; it needs a place in the sidebar so it stays
+    // reachable once an advanced area is open.
     groups.push({
-      items: [{ to: '/', label: 'Projects', icon: FolderKanban, end: true }],
+      items: [
+        { to: '/computer', label: 'Computer', icon: Computer },
+        { to: '/', label: 'Projects', icon: FolderKanban, end: true },
+      ],
     })
   }
 

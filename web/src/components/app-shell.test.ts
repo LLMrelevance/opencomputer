@@ -13,8 +13,12 @@ describe('managed agents navigation', () => {
       managedAgentsNav(defaults).map((group) =>
         group.items.map((item) => item.label),
       ),
-    ).toEqual([['Projects'], ['Connections']])
-    expect(managedAgentsNav(defaults)[0]?.items[0]?.end).toBe(true)
+    ).toEqual([['Computer', 'Projects'], ['Connections']])
+    expect(managedAgentsNav(defaults)[0]?.items[0]).toMatchObject({
+      to: '/computer',
+      label: 'Computer',
+    })
+    expect(managedAgentsNav(defaults)[0]?.items[1]?.end).toBe(true)
     expect(managedAgentsNav(defaults)[1]?.items[0]).toMatchObject({
       to: '/managed-agents/connections',
       label: 'Connections',

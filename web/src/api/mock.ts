@@ -1265,6 +1265,39 @@ const previewServiceConnection = {
   updatedAt: new Date(BASE).toISOString(),
 }
 
+// The organization's computer (work 052 contract).
+const previewComputer = {
+  computer: {
+    state: 'ready',
+    connected: true,
+    vcpus: 2,
+    memoryGiB: 8,
+    diskGiB: 128,
+    lastError: null,
+    createdAt: new Date(BASE).toISOString(),
+    updatedAt: new Date(BASE).toISOString(),
+  },
+  slack: { installed: true, teamId: 'T0PREVIEW', teamName: 'Acme' },
+  github: {
+    connected: false,
+    installations: [] as Array<{ id: string; accountLogin: string }>,
+  },
+  plan: 'free',
+}
+
+const previewComputerSessions = [
+  {
+    key: 'C0PREVIEW:1760000000.000100',
+    title: 'Fix the flaky checkout test',
+    channelId: 'C0PREVIEW',
+    threadTs: '1760000000.000100',
+    ownerSlackUserId: 'U0PREVIEW',
+    status: 'busy',
+    updatedAt: new Date(BASE).toISOString(),
+    slackUrl: 'https://acme.slack.com/archives/C0PREVIEW/p1760000000000100',
+  },
+]
+
 let previewProjectServiceAttachments: Array<Record<string, unknown>> = []
 
 // Ordered most-specific first. Matched against the path (without /api/dashboard).
@@ -1275,6 +1308,11 @@ const ROUTES: Array<[RegExp, Handler]> = [
     () => ({ data: [], next_cursor: null }),
   ],
   [/^\/managed-agents\/agents$/, () => ({ agents: managedAgentItems })],
+  [/^\/managed-agents\/computer$/, () => previewComputer],
+  [
+    /^\/managed-agents\/computer\/sessions$/,
+    () => ({ sessions: previewComputerSessions }),
+  ],
   [
     /^\/managed-agents\/account\/runtime-profile$/,
     () => ({ customized: false, displayName: 'OpenComputer default' }),
@@ -1523,6 +1561,12 @@ const ROUTES: Array<[RegExp, Handler]> = [
 // Mutations the preview needs to echo something parseable (e.g. the Slack
 // wizard's POST …/slack/manifest → manifest+steps). Everything else 204-ish.
 const POST_ROUTES: [RegExp, () => unknown][] = [
+  [/^\/managed-agents\/computer$/, () => previewComputer],
+  [
+    /^\/managed-agents\/computer\/slack\/install$/,
+    // Round-trips through the page's Slack return handling.
+    () => ({ url: `${window.location.origin}/computer?slack=connected` }),
+  ],
   [
     /^\/managed-agents\/projects$/,
     () => {
