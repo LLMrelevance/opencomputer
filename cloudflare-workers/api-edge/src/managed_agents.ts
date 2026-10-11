@@ -1,4 +1,11 @@
 import { getAutumnCustomer } from "./autumn_webhook";
+import {
+  COMPUTER_ERROR_MESSAGES,
+  computerFallbackMessage,
+  isComputerRoute,
+  isComputerRouteSuffix,
+  publicComputerBody,
+} from "./computer";
 
 export interface ManagedAgentsEnv {
   MANAGED_AGENTS_API_URL?: string;
@@ -15,6 +22,7 @@ export interface ManagedAgentsCaller {
 }
 
 const DEFAULT_MANAGED_AGENTS_API_URL = "https://managedagents.opencomputer.dev";
+const DASHBOARD_MANAGED_AGENTS_PREFIX = "/api/dashboard/managed-agents";
 const MAX_AGENT_SOURCE_BYTES = 10 * 1024 * 1024;
 
 export async function hasBYOKPlanAccess(
@@ -277,7 +285,15 @@ async function publicErrorResponse(
         Object.hasOwn(LINEAR_ROUTE_ERROR_MESSAGES, backendCode)
       ? LINEAR_ROUTE_ERROR_MESSAGES[backendCode]
       : undefined;
-  if (slackSetupMessage) {
+  const computerMessage =
+    suffix !== undefined && isComputerRouteSuffix(suffix)
+      ? Object.hasOwn(COMPUTER_ERROR_MESSAGES, backendCode)
+        ? COMPUTER_ERROR_MESSAGES[backendCode]
+        : computerFallbackMessage(upstream.status)
+      : undefined;
+  if (computerMessage) {
+    message = computerMessage;
+  } else if (slackSetupMessage) {
     message = slackSetupMessage;
   } else if (deploymentSourceMessage) {
     message = deploymentSourceMessage;
@@ -2617,6 +2633,8 @@ async function deploySourceAgent(
 }
 
 function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
+  // The organization's computer: only the contract's routes (work 052).
+  if (isComputerRouteSuffix(suffix)) return isComputerRoute(method, suffix);
   if (method === "GET" && suffix === "/account/runtime-profile") return true;
   if (method === "POST" && suffix === "/template-inspections") return true;
   if (method === "POST" && suffix === "/template-installations") return true;
@@ -3035,6 +3053,88 @@ export async function handleManagedLinearCallback(
   );
 }
 
+/**
+ * Slack's OAuth redirect for the organization-level OpenComputer Slack app
+ * (work 052). The backend binds the workspace to the organization named by
+ * its single-use state and redirects to `/computer?slack=connected` or
+ * `/computer?slack=error&reason=<code>`; the redirect passes through as is.
+ */
+export async function handleComputerSlackCallback(
+  request: Request,
+  env: ManagedAgentsEnv,
+): Promise<Response> {
+  return forwardProviderCallback(
+    request,
+    env,
+    "/v1/computer/slack/callback",
+    "Slack",
+  );
+}
+
+const COMPUTER_SLACK_WEBHOOK_PATHS = {
+  events: "/v1/webhooks/computer/slack/events",
+  interactivity: "/v1/webhooks/computer/slack/interactivity",
+} as const;
+
+/**
+ * Slack Events API and interactivity deliveries for the organization-level
+ * Slack app. Slack signs the exact body bytes with the request timestamp, and
+ * the backend verifies that signature, so the body is forwarded byte for byte
+ * with Slack's signature, timestamp and retry headers and nothing is trusted
+ * here. The backend's answer (a URL verification challenge, an interactivity
+ * response action, or an empty acknowledgement) goes back to Slack unchanged.
+ */
+export async function handleComputerSlackWebhook(
+  request: Request,
+  env: ManagedAgentsEnv,
+  kind: keyof typeof COMPUTER_SLACK_WEBHOOK_PATHS,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  const base = (
+    env.MANAGED_AGENTS_API_URL ?? DEFAULT_MANAGED_AGENTS_API_URL
+  ).replace(/\/+$/, "");
+  const target = new URL(`${base}${COMPUTER_SLACK_WEBHOOK_PATHS[kind]}`);
+  if (target.protocol !== "https:" && target.hostname !== "localhost") {
+    return new Response("Slack events are unavailable", { status: 503 });
+  }
+  const headers = new Headers();
+  for (const name of [
+    "content-type",
+    "x-slack-signature",
+    "x-slack-request-timestamp",
+    "x-slack-retry-num",
+    "x-slack-retry-reason",
+  ]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  try {
+    const upstream = await fetch(target, {
+      method: "POST",
+      headers,
+      body: await request.arrayBuffer(),
+      redirect: "manual",
+    });
+    const responseHeaders = new Headers({ "cache-control": "no-store" });
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) responseHeaders.set("content-type", contentType);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
+  } catch {
+    return new Response(
+      JSON.stringify({ error: { code: "slack_events_unavailable" } }),
+      {
+        status: 502,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+}
+
 function channelConnectionPage(
   action: string,
   status: number,
@@ -3384,6 +3484,13 @@ export async function proxyManagedAgents(
   if (!isAllowedManagedAgentsRoute(request.method.toUpperCase(), suffix)) {
     return Response.json({ error: "route not found" }, { status: 404 });
   }
+  // The computer is a dashboard surface in v1; API keys do not reach it.
+  if (
+    isComputerRouteSuffix(suffix) &&
+    publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX
+  ) {
+    return Response.json({ error: "route not found" }, { status: 404 });
+  }
   if (!env.OC_MANAGED_AGENTS_SECRET) {
     return Response.json(
       { error: "managed agents are not configured" },
@@ -3577,6 +3684,19 @@ export async function proxyManagedAgents(
     }
     if (!upstream.ok) return publicErrorResponse(upstream, suffix);
     if (upstream.status === 204) return new Response(null, { status: 204 });
+    if (isComputerRouteSuffix(suffix)) {
+      // Unlinking Slack has no response body in the contract.
+      if (method === "DELETE") {
+        return new Response(null, {
+          status: 204,
+          headers: { "cache-control": "no-store" },
+        });
+      }
+      return Response.json(
+        publicComputerBody(method, suffix, await upstream.json()),
+        { status: upstream.status, headers: { "cache-control": "no-store" } },
+      );
+    }
     if (
       /^\/projects\/[^/]+\/source-archive$/.test(suffix) ||
       WORKSPACE_ARTIFACT_CONTENT_ROUTE.test(suffix)

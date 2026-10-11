@@ -92,6 +92,8 @@ import {
   handleManagedGitHubWebhook,
   handleManagedSlackCallback,
   handleManagedLinearCallback,
+  handleComputerSlackCallback,
+  handleComputerSlackWebhook,
   handleManagedAgentChannelConnection,
   proxyManagedAgents,
 } from "./managed_agents";
@@ -5615,6 +5617,28 @@ export default {
       req.method === "GET"
     ) {
       return handleManagedLinearCallback(req, env);
+    }
+    // The organization-level OpenComputer Slack app (work 052). These exact
+    // URLs are configured on the app; Slack calls them without OpenComputer
+    // credentials, so they stay above the API-key check. The backend verifies
+    // Slack's signature over the untouched body.
+    if (
+      path === "/api/managed-agents/computer/slack/callback" &&
+      req.method === "GET"
+    ) {
+      return handleComputerSlackCallback(req, env);
+    }
+    if (
+      path === "/api/managed-agents/computer/slack/events" &&
+      req.method === "POST"
+    ) {
+      return handleComputerSlackWebhook(req, env, "events");
+    }
+    if (
+      path === "/api/managed-agents/computer/slack/interactivity" &&
+      req.method === "POST"
+    ) {
+      return handleComputerSlackWebhook(req, env, "interactivity");
     }
     if (path.startsWith("/api/agent-webhooks/")) {
       return handleAgentWebhookInvocation(req, env);
