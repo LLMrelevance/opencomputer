@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProjectsHome from './Home'
 import { INSTALL_CLI_COMMAND } from './ProjectOnboarding'
 
@@ -19,14 +19,31 @@ function renderProjects(projects: unknown[], archived: unknown[] = []) {
   )
 }
 
+function stubSessionStorage(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial))
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  })
+}
+
+afterEach(() => vi.unstubAllGlobals())
+
 describe('projects home onboarding', () => {
-  it('does not show CLI onboarding on the home screen without projects', () => {
-    // An organization without projects is sent to its computer (see
-    // Computer.test.tsx); CLI onboarding stays at /new.
+  it('sends the first landing without projects to the computer, not CLI onboarding', () => {
+    // An organization's first screen is its computer (work 052).
+    stubSessionStorage()
     const markup = renderProjects([])
 
     expect(markup).not.toContain(INSTALL_CLI_COMMAND)
     expect(markup).not.toContain('Create project')
+  })
+
+  it('shows CLI onboarding when Projects is opened after the first landing', () => {
+    stubSessionStorage({ 'oc.computerLanding': '1' })
+    const markup = renderProjects([])
+
+    expect(markup).toContain(INSTALL_CLI_COMMAND)
   })
 
   it('sends New project to the same CLI onboarding route', () => {

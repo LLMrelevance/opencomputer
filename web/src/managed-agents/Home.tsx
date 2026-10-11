@@ -20,6 +20,21 @@ import {
   getManagedProjects,
   restoreManagedProject,
 } from './api'
+import ProjectOnboarding from './ProjectOnboarding'
+
+// Set once per browser session: the first landing goes to the computer, an
+// explicit visit to Projects afterwards shows project onboarding.
+const COMPUTER_LANDING_KEY = 'oc.computerLanding'
+
+function firstLandingThisSession(): boolean {
+  try {
+    if (sessionStorage.getItem(COMPUTER_LANDING_KEY)) return false
+    sessionStorage.setItem(COMPUTER_LANDING_KEY, '1')
+    return true
+  } catch {
+    return false
+  }
+}
 
 export default function ProjectsHome() {
   const queryClient = useQueryClient()
@@ -82,10 +97,15 @@ export default function ProjectsHome() {
     )
   }
 
-  // An organization's first screen is its computer (017, work 052). Project
-  // creation stays CLI-first at /new, which the computer page links to.
+  // An organization's first screen is its computer (017, work 052): the
+  // first landing of a session goes there. Clicking Projects afterwards shows
+  // the CLI-first project onboarding, as before.
   if (items.length === 0 && archivedItems.length === 0) {
-    return <Navigate to="/computer" replace />
+    return firstLandingThisSession() ? (
+      <Navigate to="/computer" replace />
+    ) : (
+      <ProjectOnboarding />
+    )
   }
 
   return (
