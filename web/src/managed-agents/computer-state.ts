@@ -260,3 +260,110 @@ export const EXAMPLE_ASKS = [
   'upgrade us to the latest React and tell me what broke.',
   'every morning, summarize what changed in main yesterday.',
 ] as const
+
+/**
+ * Onboarded: the computer is in Slack and knows the code. From then on the
+ * page stops selling and setting up, and shows the work instead (Mohamed,
+ * 2026-10-11: "mainly showcase the sessions that are live").
+ */
+export function computerIsOnboarded(status: ComputerStatus): boolean {
+  return status.slack.installed && status.github.connected
+}
+
+/** A session the computer is working on right now. */
+export function sessionIsLive(session: ComputerSession): boolean {
+  return session.status === 'starting' || session.status === 'busy'
+}
+
+/** Live sessions and everything else, each newest first. */
+export function splitSessions(sessions: readonly ComputerSession[]): {
+  live: ComputerSession[]
+  recent: ComputerSession[]
+} {
+  const sorted = [...sessions].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )
+  return {
+    live: sorted.filter(sessionIsLive),
+    recent: sorted.filter((session) => !sessionIsLive(session)),
+  }
+}
+
+export const LIVE_SESSION_POLL_MS = 5_000
+export const SESSION_POLL_MS = 15_000
+
+/** Watch closely while something is being worked on. */
+export function sessionPollInterval(
+  sessions: readonly ComputerSession[] | undefined,
+): number {
+  return sessions?.some(sessionIsLive) ? LIVE_SESSION_POLL_MS : SESSION_POLL_MS
+}
+
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+/** "just now", "2 min ago", "3 hr ago", "yesterday", "4 days ago", then a date. */
+export function relativeTime(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const elapsed = Math.max(0, now - then)
+  if (elapsed < MINUTE) return 'just now'
+  if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} min ago`
+  if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} hr ago`
+  const days = Math.floor(elapsed / DAY)
+  if (days === 1) return 'yesterday'
+  if (days < 7) return `${days} days ago`
+  return new Date(then).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year:
+      new Date(then).getFullYear() === new Date(now).getFullYear()
+        ? undefined
+        : 'numeric',
+  })
+}
+
+export type StatusLine = { headline: string; detail?: string }
+
+/**
+ * The one line under the status dot once onboarded: short, in the hero's
+ * voice, and about the work when there is work.
+ */
+export function compactStatusLine(
+  computer: Computer | null,
+  plan: ComputerStatus['plan'],
+  liveCount: number,
+): StatusLine {
+  switch (computer?.state ?? 'provisioning') {
+    case 'provisioning':
+      return { headline: 'Coming to life. A minute or two.' }
+    case 'ready':
+      if (!computer?.connected) {
+        return { headline: 'Reconnecting. Usually within a minute.' }
+      }
+      if (liveCount === 0) return { headline: 'Ready when you are.' }
+      return {
+        headline:
+          liveCount === 1
+            ? 'On it. One thing in flight.'
+            : `On it. ${liveCount} things in flight.`,
+      }
+    case 'parked':
+      return {
+        headline: 'Resting — wakes when you mention it.',
+        detail: plan === 'paid' ? undefined : 'Upgrade and it never sleeps.',
+      }
+    case 'waking':
+      return { headline: 'Waking up. Picking up where it left off.' }
+    case 'failed':
+      return {
+        headline: 'Something went wrong.',
+        detail:
+          computer?.lastError ??
+          'Your computer could not start. Try again, or tell us if it keeps happening.',
+      }
+    case 'deleting':
+      return { headline: 'Saying goodbye.' }
+  }
+}

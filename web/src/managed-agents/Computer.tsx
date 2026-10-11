@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
@@ -6,11 +6,14 @@ import {
   Computer as ComputerIcon,
   ExternalLink,
   GitPullRequest,
+  Hash,
+  Lightbulb,
   Loader2,
   MessagesSquare,
   Moon,
   RotateCcw,
   Send,
+  Sparkles,
   Terminal,
   Unplug,
 } from 'lucide-react'
@@ -28,6 +31,7 @@ import {
 import { ResourceTable, type Column } from '@/components/resource-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { addManagedGitHubConnection } from './api'
@@ -47,15 +51,18 @@ import {
   EXAMPLE_ASKS,
   SESSION_STATUS,
   START_SESSION_COPY,
+  compactStatusLine,
   computerChecklist,
+  computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
   heroCopy,
+  relativeTime,
+  sessionPollInterval,
   slackReturnFromSearch,
+  splitSessions,
   type ChecklistStep,
 } from './computer-state'
-
-const SESSION_POLL_MS = 15_000
 
 export default function ComputerPage() {
   const queryClient = useQueryClient()
@@ -71,7 +78,7 @@ export default function ComputerPage() {
     queryFn: getComputerSessions,
     // Sessions run on the computer; there are none to ask for before it exists.
     enabled: hasComputer,
-    refetchInterval: SESSION_POLL_MS,
+    refetchInterval: (query) => sessionPollInterval(query.state.data),
   })
 
   // The first visit creates the organization's computer. The call is
@@ -133,11 +140,49 @@ export default function ComputerPage() {
     )
   }
 
+  const { live, recent } = splitSessions(sessions.data ?? [])
+  const sessionsLoading = hasComputer && sessions.isLoading
+  const createError = create.isError ? create.error : null
+
+  // Once it is in Slack and knows the code, the page is about the work.
+  if (computerIsOnboarded(status.data)) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-8">
+        <CompactHeader
+          status={status.data}
+          liveCount={live.length}
+          createError={createError}
+          creating={create.isPending}
+          onRetry={() => create.mutate()}
+        />
+        <LiveNow
+          sessions={live}
+          readAt={sessions.dataUpdatedAt}
+          loading={sessionsLoading}
+          failed={sessions.isError}
+        />
+        <SessionsPanel
+          title="Recent"
+          description="Finished and waiting threads, newest first."
+          emptyTitle="Nothing here yet"
+          emptyDescription="Finished work lands here."
+          hasComputer={hasComputer}
+          sessions={recent}
+          readAt={sessions.dataUpdatedAt}
+          loading={sessionsLoading}
+          failed={sessions.isError}
+        />
+        <IdeasToTry />
+        <CliFooter />
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <Hero
         status={status.data}
-        createError={create.isError ? create.error : null}
+        createError={createError}
         creating={create.isPending}
         onRetry={() => create.mutate()}
       />
@@ -145,25 +190,350 @@ export default function ComputerPage() {
       <Checklist status={status.data} sessions={sessions.data} />
       <TryAsking />
       <SessionsPanel
+        title="Sessions"
+        description="Work your computer is doing for your team, newest first."
+        emptyTitle="No sessions yet"
+        emptyDescription={START_SESSION_COPY}
         hasComputer={hasComputer}
-        sessions={newestFirst(sessions.data ?? [])}
-        loading={hasComputer && sessions.isLoading}
+        sessions={[...live, ...recent]}
+        readAt={sessions.dataUpdatedAt}
+        loading={sessionsLoading}
         failed={sessions.isError}
       />
-      <Panel>
-        <PanelContent className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Terminal className="text-muted-foreground size-4" aria-hidden />
-            <p className="text-muted-foreground text-sm">
-              Build and deploy agents of your own with the OpenComputer CLI.
-            </p>
-          </div>
-          <Button variant="outline" asChild>
-            <Link to="/new">Create an agent</Link>
-          </Button>
-        </PanelContent>
-      </Panel>
+      <CliFooter />
     </div>
+  )
+}
+
+function CliFooter() {
+  return (
+    <Panel>
+      <PanelContent className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Terminal className="text-muted-foreground size-4" aria-hidden />
+          <p className="text-muted-foreground text-sm">
+            Build and deploy agents of your own with the OpenComputer CLI.
+          </p>
+        </div>
+        <Button variant="outline" asChild>
+          <Link to="/new">Create an agent</Link>
+        </Button>
+      </PanelContent>
+    </Panel>
+  )
+}
+
+/** Re-renders on an interval so relative times stay true between polls. */
+function useNow(intervalMs: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(timer)
+  }, [intervalMs])
+  return now
+}
+
+type DotTone = 'alive' | 'busy' | 'failed' | 'quiet'
+
+function PulseDot({ tone, className }: { tone: DotTone; className?: string }) {
+  const pulsing = tone === 'alive' || tone === 'busy'
+  return (
+    <span className={cn('relative flex size-2', className)} aria-hidden>
+      {pulsing ? (
+        <span
+          className={cn(
+            'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+            tone === 'alive' ? 'bg-emerald-500' : 'bg-amber-500',
+          )}
+        />
+      ) : null}
+      <span
+        className={cn(
+          'relative inline-flex size-full rounded-full',
+          tone === 'alive'
+            ? 'bg-emerald-500'
+            : tone === 'busy'
+              ? 'bg-amber-500'
+              : tone === 'failed'
+                ? 'bg-red-500'
+                : 'bg-muted-foreground',
+        )}
+      />
+    </span>
+  )
+}
+
+/** The computer's state as a dot tone, shared by the hero and the header. */
+function computerDot(status: ComputerStatus, failedToCreate: boolean): DotTone {
+  const { computer } = status
+  if (failedToCreate || computer?.state === 'failed') return 'failed'
+  if (computer?.state === 'ready' && computer.connected) return 'alive'
+  if (
+    !computer ||
+    computer.state === 'provisioning' ||
+    computer.state === 'waking' ||
+    computer.state === 'ready'
+  ) {
+    return 'busy'
+  }
+  return 'quiet'
+}
+
+function StatusPill({
+  status,
+  failedToCreate,
+}: {
+  status: ComputerStatus
+  failedToCreate: boolean
+}) {
+  return (
+    <div className="bg-background/70 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur">
+      <PulseDot tone={computerDot(status, failedToCreate)} />
+      {failedToCreate
+        ? 'Failed'
+        : computerPresentation(status.computer, status.plan).label}
+    </div>
+  )
+}
+
+function RetryButton({
+  creating,
+  onRetry,
+  className,
+}: {
+  creating: boolean
+  onRetry: () => void
+  className?: string
+}) {
+  return (
+    <Button className={className} disabled={creating} onClick={onRetry}>
+      {creating ? (
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+      ) : (
+        <RotateCcw className="size-4" aria-hidden />
+      )}
+      Try again
+    </Button>
+  )
+}
+
+function CompactHeader({
+  status,
+  liveCount,
+  createError,
+  creating,
+  onRetry,
+}: {
+  status: ComputerStatus
+  liveCount: number
+  createError: Error | null
+  creating: boolean
+  onRetry: () => void
+}) {
+  const { computer } = status
+  const failedToCreate = !computer && createError !== null
+  const line = failedToCreate
+    ? { headline: 'Something went wrong.', detail: createError.message }
+    : compactStatusLine(computer, status.plan, liveCount)
+  const offerUpgrade = computer?.state === 'parked' && status.plan === 'free'
+  const canRetry = failedToCreate || computer?.state === 'failed'
+  const accounts = status.github.installations.map(
+    (installation) => installation.accountLogin,
+  )
+  return (
+    <section className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-6 py-6 sm:px-8">
+      <div
+        className="bg-primary/15 pointer-events-none absolute -top-20 -right-16 size-56 rounded-full blur-3xl"
+        aria-hidden
+      />
+      <div className="relative flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+        <div className="min-w-0">
+          <StatusPill status={status} failedToCreate={failedToCreate} />
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+            {line.headline}
+          </h1>
+          {line.detail ? (
+            <p className="text-muted-foreground mt-1.5 text-sm">
+              {offerUpgrade ? (
+                <Link
+                  to="/billing"
+                  className="text-foreground decoration-foreground/30 hover:decoration-foreground underline underline-offset-4 transition-colors"
+                >
+                  {line.detail}
+                </Link>
+              ) : (
+                line.detail
+              )}
+            </p>
+          ) : null}
+          {canRetry ? (
+            <RetryButton
+              className="mt-4"
+              creating={creating}
+              onRetry={onRetry}
+            />
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="bg-background/70 text-muted-foreground inline-flex items-center gap-1.5 rounded-full border px-3 py-1 backdrop-blur">
+            <Hash className="size-3.5" aria-hidden />
+            <span className="sr-only">Slack: </span>
+            {status.slack.teamName ?? 'Slack'}
+          </span>
+          <span
+            className="bg-background/70 text-muted-foreground inline-flex max-w-64 items-center gap-1.5 rounded-full border px-3 py-1 backdrop-blur"
+            title={accounts.join(', ')}
+          >
+            <GithubMark className="size-3.5 shrink-0" />
+            <span className="sr-only">GitHub: </span>
+            <span className="truncate">
+              {accounts.length ? accounts.join(', ') : 'GitHub'}
+            </span>
+          </span>
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/managed-agents/connections">Manage</Link>
+          </Button>
+          <SlackAction status={status} compact />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function LiveNow({
+  sessions,
+  readAt,
+  loading,
+  failed,
+}: {
+  sessions: ComputerSession[]
+  /** When the sessions were read; relative times never predate it. */
+  readAt: number
+  loading: boolean
+  failed: boolean
+}) {
+  const now = Math.max(useNow(30_000), readAt)
+  return (
+    <section aria-labelledby="live-now">
+      <div className="mb-3 flex items-baseline justify-between gap-4">
+        <h2 id="live-now" className="text-lg font-semibold tracking-tight">
+          Live now
+        </h2>
+        {sessions.length > 0 ? (
+          <span className="text-muted-foreground text-sm">
+            {sessions.length === 1
+              ? '1 session in flight'
+              : `${sessions.length} sessions in flight`}
+          </span>
+        ) : null}
+      </div>
+      {loading ? (
+        <Skeleton className="h-36 rounded-xl" />
+      ) : sessions.length > 0 ? (
+        <div
+          className={cn('grid gap-4', sessions.length > 1 && 'sm:grid-cols-2')}
+        >
+          {sessions.map((session) => (
+            <LiveCard key={session.key} session={session} now={now} />
+          ))}
+        </div>
+      ) : failed ? (
+        <div className="bg-panel text-muted-foreground rounded-xl border px-6 py-8 text-center text-sm">
+          Sessions are temporarily unavailable. They reload by themselves.
+        </div>
+      ) : (
+        <QuietNow />
+      )}
+    </section>
+  )
+}
+
+function LiveCard({ session, now }: { session: ComputerSession; now: number }) {
+  const busy = session.status === 'busy'
+  return (
+    <article
+      className={cn(
+        'bg-panel relative overflow-hidden rounded-xl border bg-linear-to-br to-transparent p-6 shadow-sm',
+        busy ? 'from-emerald-500/[0.06]' : 'from-amber-500/[0.06]',
+      )}
+    >
+      <div
+        className={cn(
+          'absolute inset-x-0 top-0 h-0.5 bg-linear-to-r from-transparent to-transparent',
+          busy ? 'via-emerald-500' : 'via-amber-500',
+        )}
+        aria-hidden
+      />
+      <div className="flex items-center gap-2.5 text-sm">
+        <PulseDot tone={busy ? 'alive' : 'busy'} className="size-2.5" />
+        <span
+          className={cn(
+            'font-medium',
+            busy
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-amber-600 dark:text-amber-400',
+          )}
+        >
+          {busy ? 'Working…' : 'Starting…'}
+        </span>
+        <span className="text-muted-foreground">·</span>
+        <time
+          className="text-muted-foreground"
+          dateTime={session.updatedAt}
+          title={new Date(session.updatedAt).toLocaleString()}
+        >
+          {relativeTime(session.updatedAt, now)}
+        </time>
+      </div>
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+        <h3 className="min-w-0 flex-1 text-xl font-semibold tracking-tight text-balance">
+          {session.title || 'Untitled session'}
+        </h3>
+        {session.slackUrl ? (
+          <Button variant="outline" asChild>
+            <a href={session.slackUrl} target="_blank" rel="noreferrer">
+              Open in Slack
+              <ExternalLink className="size-3.5" aria-hidden />
+            </a>
+          </Button>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function QuietNow() {
+  return (
+    <div className="bg-panel rounded-xl border border-dashed px-6 py-10 text-center">
+      <Sparkles className="text-primary mx-auto size-5" aria-hidden />
+      <p className="mt-3 font-medium">Quiet right now.</p>
+      <p className="text-muted-foreground mt-1 text-sm">
+        Mention @OpenComputer in Slack to hand it something.
+      </p>
+      <CopyRow
+        value={`@OpenComputer ${EXAMPLE_ASKS[0]}`}
+        className="mx-auto mt-5 max-w-2xl text-left"
+      />
+    </div>
+  )
+}
+
+function IdeasToTry() {
+  return (
+    <details className="group bg-panel rounded-xl border">
+      <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+        <Lightbulb className="size-4" aria-hidden />
+        Ideas to try
+        <span className="ml-auto text-xs transition-transform group-open:rotate-90">
+          ›
+        </span>
+      </summary>
+      <div className="grid gap-2 px-5 pb-5">
+        {EXAMPLE_ASKS.map((ask) => (
+          <CopyRow key={ask} value={`@OpenComputer ${ask}`} />
+        ))}
+      </div>
+    </details>
   )
 }
 
@@ -179,17 +549,10 @@ function Hero({
   onRetry: () => void
 }) {
   const { computer } = status
-  const presentation = computerPresentation(computer, status.plan)
   const failedToCreate = !computer && createError !== null
   const copy = failedToCreate
     ? { headline: 'Something went wrong.', subline: createError.message }
     : heroCopy(computer, status.plan)
-  const alive = computer?.state === 'ready' && computer.connected
-  const busy =
-    !computer ||
-    computer.state === 'provisioning' ||
-    computer.state === 'waking' ||
-    (computer.state === 'ready' && !computer.connected)
   const canRetry = failedToCreate || computer?.state === 'failed'
   return (
     <section className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-12 sm:px-12 sm:py-16">
@@ -198,31 +561,7 @@ function Hero({
         aria-hidden
       />
       <div className="relative max-w-3xl">
-        <div className="bg-background/70 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur">
-          <span className="relative flex size-2" aria-hidden>
-            {alive || busy ? (
-              <span
-                className={cn(
-                  'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                  alive ? 'bg-emerald-500' : 'bg-amber-500',
-                )}
-              />
-            ) : null}
-            <span
-              className={cn(
-                'relative inline-flex size-2 rounded-full',
-                alive
-                  ? 'bg-emerald-500'
-                  : busy
-                    ? 'bg-amber-500'
-                    : failedToCreate || computer?.state === 'failed'
-                      ? 'bg-red-500'
-                      : 'bg-muted-foreground',
-              )}
-            />
-          </span>
-          {failedToCreate ? 'Failed' : presentation.label}
-        </div>
+        <StatusPill status={status} failedToCreate={failedToCreate} />
         <h1 className="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           {copy.headline}
         </h1>
@@ -230,14 +569,7 @@ function Hero({
           {copy.subline}
         </p>
         {canRetry ? (
-          <Button className="mt-8" disabled={creating} onClick={onRetry}>
-            {creating ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <RotateCcw className="size-4" aria-hidden />
-            )}
-            Try again
-          </Button>
+          <RetryButton className="mt-8" creating={creating} onRetry={onRetry} />
         ) : null}
       </div>
     </section>
@@ -401,7 +733,13 @@ function Step({
   )
 }
 
-function SlackAction({ status }: { status: ComputerStatus }) {
+function SlackAction({
+  status,
+  compact = false,
+}: {
+  status: ComputerStatus
+  compact?: boolean
+}) {
   const queryClient = useQueryClient()
   const [confirmUnlink, setConfirmUnlink] = useState(false)
   const install = useMutation({
@@ -441,9 +779,14 @@ function SlackAction({ status }: { status: ComputerStatus }) {
   const teamName = status.slack.teamName ?? 'this Slack workspace'
   return (
     <>
-      <Button variant="outline" onClick={() => setConfirmUnlink(true)}>
-        <Unplug className="size-4" aria-hidden />
-        Unlink
+      <Button
+        variant={compact ? 'ghost' : 'outline'}
+        size={compact ? 'sm' : 'default'}
+        className={cn(compact && 'text-muted-foreground')}
+        onClick={() => setConfirmUnlink(true)}
+      >
+        <Unplug className={compact ? 'size-3.5' : 'size-4'} aria-hidden />
+        {compact ? 'Unlink Slack' : 'Unlink'}
       </Button>
       <ConfirmDialog
         open={confirmUnlink}
@@ -494,80 +837,90 @@ function GitHubAction({ connected }: { connected: boolean }) {
   )
 }
 
-function newestFirst(sessions: ComputerSession[]) {
-  return [...sessions].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  )
+function sessionColumns(now: number): Column<ComputerSession>[] {
+  return [
+    {
+      key: 'title',
+      header: 'Session',
+      cell: (session) => (
+        <span className="block max-w-md truncate font-medium">
+          {session.title || 'Untitled session'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (session) => (
+        <StatusBadge
+          status={SESSION_STATUS[session.status].badge}
+          label={SESSION_STATUS[session.status].label}
+        />
+      ),
+    },
+    {
+      key: 'updated',
+      header: 'Updated',
+      cell: (session) => (
+        <time
+          className="text-muted-foreground whitespace-nowrap"
+          dateTime={session.updatedAt}
+          title={new Date(session.updatedAt).toLocaleString()}
+        >
+          {relativeTime(session.updatedAt, now)}
+        </time>
+      ),
+    },
+    {
+      key: 'open',
+      header: <span className="sr-only">Open</span>,
+      align: 'right',
+      cell: (session) =>
+        session.slackUrl ? (
+          <Button variant="ghost" size="sm" asChild>
+            <a href={session.slackUrl} target="_blank" rel="noreferrer">
+              Open in Slack
+              <ExternalLink className="size-3.5" aria-hidden />
+            </a>
+          </Button>
+        ) : null,
+    },
+  ]
 }
 
-const SESSION_COLUMNS: Column<ComputerSession>[] = [
-  {
-    key: 'title',
-    header: 'Session',
-    cell: (session) => (
-      <span className="block max-w-md truncate font-medium">
-        {session.title || 'Untitled session'}
-      </span>
-    ),
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    cell: (session) => (
-      <StatusBadge
-        status={SESSION_STATUS[session.status].badge}
-        label={SESSION_STATUS[session.status].label}
-      />
-    ),
-  },
-  {
-    key: 'updated',
-    header: 'Updated',
-    cell: (session) => (
-      <span className="text-muted-foreground whitespace-nowrap">
-        {new Date(session.updatedAt).toLocaleString()}
-      </span>
-    ),
-  },
-  {
-    key: 'open',
-    header: <span className="sr-only">Open</span>,
-    align: 'right',
-    cell: (session) =>
-      session.slackUrl ? (
-        <Button variant="ghost" size="sm" asChild>
-          <a href={session.slackUrl} target="_blank" rel="noreferrer">
-            Open in Slack
-            <ExternalLink className="size-3.5" aria-hidden />
-          </a>
-        </Button>
-      ) : null,
-  },
-]
-
 function SessionsPanel({
+  title,
+  description,
+  emptyTitle,
+  emptyDescription,
   hasComputer,
   sessions,
+  readAt,
   loading,
   failed,
 }: {
+  title: string
+  description: string
+  emptyTitle: string
+  emptyDescription: string
   hasComputer: boolean
   sessions: ComputerSession[]
+  readAt: number
   loading: boolean
   failed: boolean
 }) {
+  const now = Math.max(useNow(30_000), readAt)
+  const columns = useMemo(() => sessionColumns(now), [now])
   return (
     <Panel>
       <PanelHeader>
         <div>
-          <PanelTitle>Sessions</PanelTitle>
-          <PanelDescription className="mt-1">
-            Work your computer is doing for your team, newest first.
-          </PanelDescription>
+          <PanelTitle>{title}</PanelTitle>
+          <PanelDescription className="mt-1">{description}</PanelDescription>
         </div>
       </PanelHeader>
       <ResourceTable
-        columns={SESSION_COLUMNS}
+        columns={columns}
         rows={sessions}
         rowKey={(session) => session.key}
         loading={loading}
@@ -579,11 +932,11 @@ function SessionsPanel({
               failed
                 ? 'Sessions are temporarily unavailable'
                 : hasComputer
-                  ? 'No sessions yet'
+                  ? emptyTitle
                   : 'Sessions appear once your computer is set up'
             }
             description={
-              failed ? 'They reload by themselves.' : START_SESSION_COPY
+              failed ? 'They reload by themselves.' : emptyDescription
             }
           />
         }

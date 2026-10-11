@@ -48,6 +48,40 @@ const provisioning = {
   },
 }
 
+const onboarded = {
+  ...provisioning,
+  computer: {
+    ...provisioning.computer,
+    state: 'ready' as const,
+    connected: true,
+  },
+  slack: { installed: true, teamId: 'T1', teamName: 'Acme' },
+  github: {
+    connected: true,
+    installations: [{ id: '42', accountLogin: 'acme' }],
+  },
+}
+const minutesAgo = (minutes: number) =>
+  new Date(Date.now() - minutes * 60_000).toISOString()
+const liveSession = {
+  key: 'C1:1.1',
+  title: 'Fix the flaky checkout test',
+  channelId: 'C1',
+  threadTs: '1.1',
+  ownerSlackUserId: 'U1',
+  status: 'busy' as const,
+  updatedAt: minutesAgo(2),
+  slackUrl: 'https://acme.slack.com/archives/C1/p11',
+}
+const doneSession = {
+  ...liveSession,
+  key: 'C1:1.0',
+  title: 'Explain the billing flow',
+  threadTs: '1.0',
+  status: 'idle' as const,
+  updatedAt: minutesAgo(90),
+}
+
 async function settle(until: () => boolean, label: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (until()) return
@@ -173,5 +207,88 @@ describe('Computer page', () => {
 
     render('/')
     await settle(() => location() === '/computer', 'redirect to /computer')
+  })
+
+  it('shows live work instead of setup once onboarded', async () => {
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    computerApi.getComputerSessions.mockResolvedValue([
+      doneSession,
+      liveSession,
+    ])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Fix the flaky') === true,
+      'live session card',
+    )
+
+    const live = container.querySelector('section[aria-labelledby="live-now"]')
+    expect(live?.textContent).toContain('Live now')
+    expect(live?.textContent).toContain('Fix the flaky checkout test')
+    expect(live?.textContent).toContain('Working…')
+    expect(live?.textContent).toContain('2 min ago')
+    expect(live?.textContent).not.toContain('Explain the billing flow')
+    expect(
+      live?.querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
+        ?.textContent,
+    ).toContain('Open in Slack')
+    expect(container.textContent).toContain('Recent')
+    expect(container.textContent).toContain('Explain the billing flow')
+    expect(container.textContent).toContain('1 hr ago')
+    expect(container.textContent).toContain('One thing in flight')
+    expect(container.textContent).toContain('Acme')
+    expect(container.textContent).toContain('acme')
+
+    // Setup and selling are gone; specs never appear.
+    expect(container.textContent).not.toContain('Three steps')
+    expect(container.textContent).not.toContain('Install Slack app')
+    expect(container.textContent).not.toContain('Lives in Slack')
+    expect(container.textContent).not.toContain('never logs off')
+    expect(container.textContent).not.toMatch(/vCPU|GiB/)
+  })
+
+  it('invites a hand-off when nothing is live', async () => {
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    computerApi.getComputerSessions.mockResolvedValue([doneSession])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Quiet right now.') === true,
+      'quiet live state',
+    )
+    expect(container.textContent).toContain('Ready when you are.')
+    expect(container.textContent).toContain('@OpenComputer why is the')
+  })
+
+  it('keeps a resting computer and the upgrade visible once onboarded', async () => {
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      computer: { ...onboarded.computer, state: 'parked', connected: false },
+    })
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Resting') === true,
+      'resting header',
+    )
+    expect(container.textContent).toContain('Sleeping')
+    expect(container.textContent).toContain('Upgrade and it never sleeps.')
+  })
+
+  it('keeps the setup page until GitHub is connected too', async () => {
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      github: { connected: false, installations: [] },
+    })
+    computerApi.getComputerSessions.mockResolvedValue([liveSession])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Three steps') === true,
+      'setup checklist',
+    )
+    expect(container.textContent).toContain('never logs off')
+    expect(container.textContent).toContain('Connect GitHub')
+    expect(container.textContent).not.toContain('Live now')
   })
 })

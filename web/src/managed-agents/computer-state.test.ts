@@ -4,16 +4,24 @@ import {
   computerStatusSchema,
   computerSlackInstallSchema,
   type Computer,
+  type ComputerSession,
   type ComputerStatus,
 } from './computer-api'
 import {
   FAST_POLL_MS,
+  LIVE_SESSION_POLL_MS,
+  SESSION_POLL_MS,
   SLOW_POLL_MS,
+  compactStatusLine,
   computerChecklist,
+  computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
   heroCopy,
+  relativeTime,
+  sessionPollInterval,
   slackReturnFromSearch,
+  splitSessions,
 } from './computer-state'
 
 const computer: Computer = {
@@ -241,5 +249,125 @@ describe('Slack install return', () => {
       message: 'Slack could not be connected. Try again.',
     })
     expect(slackReturnFromSearch(new URLSearchParams(''))).toBeNull()
+  })
+})
+
+function session(
+  key: string,
+  status: ComputerSession['status'],
+  updatedAt: string,
+): ComputerSession {
+  return {
+    key,
+    title: key,
+    channelId: 'C1',
+    threadTs: '1.2',
+    ownerSlackUserId: null,
+    status,
+    updatedAt,
+    slackUrl: null,
+  }
+}
+
+describe('onboarding', () => {
+  it('is onboarded once Slack is installed and GitHub connected', () => {
+    const slack = { installed: true, teamName: 'Acme' }
+    const github = {
+      connected: true,
+      installations: [{ id: '1', accountLogin: 'acme' }],
+    }
+    expect(computerIsOnboarded(status())).toBe(false)
+    expect(computerIsOnboarded(status({ slack }))).toBe(false)
+    expect(computerIsOnboarded(status({ github }))).toBe(false)
+    expect(computerIsOnboarded(status({ slack, github }))).toBe(true)
+    // Onboarding is about the person's setup, not the computer's mood.
+    expect(
+      computerIsOnboarded(
+        status({ slack, github, computer: { ...computer, state: 'parked' } }),
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('live and recent sessions', () => {
+  const sessions = [
+    session('old-idle', 'idle', '2026-10-11T09:00:00.000Z'),
+    session('busy', 'busy', '2026-10-11T10:00:00.000Z'),
+    session('ended', 'ended', '2026-10-11T11:00:00.000Z'),
+    session('starting', 'starting', '2026-10-11T12:00:00.000Z'),
+    session('error', 'error', '2026-10-11T08:00:00.000Z'),
+  ]
+
+  it('splits starting and busy from the rest, each newest first', () => {
+    const { live, recent } = splitSessions(sessions)
+    expect(live.map((s) => s.key)).toEqual(['starting', 'busy'])
+    expect(recent.map((s) => s.key)).toEqual(['ended', 'old-idle', 'error'])
+    expect(splitSessions([])).toEqual({ live: [], recent: [] })
+  })
+
+  it('polls sessions faster while any is live', () => {
+    expect(sessionPollInterval(undefined)).toBe(SESSION_POLL_MS)
+    expect(sessionPollInterval([])).toBe(SESSION_POLL_MS)
+    expect(
+      sessionPollInterval(sessions.filter((s) => s.status === 'idle')),
+    ).toBe(SESSION_POLL_MS)
+    expect(sessionPollInterval(sessions)).toBe(LIVE_SESSION_POLL_MS)
+    expect(LIVE_SESSION_POLL_MS).toBe(5_000)
+    expect(SESSION_POLL_MS).toBe(15_000)
+  })
+})
+
+describe('relative time', () => {
+  const now = new Date('2026-10-11T12:00:00.000Z').getTime()
+  const ago = (ms: number) =>
+    relativeTime(new Date(now - ms).toISOString(), now)
+
+  it('reads like a person would say it', () => {
+    expect(ago(0)).toBe('just now')
+    expect(ago(59_000)).toBe('just now')
+    expect(ago(2 * 60_000)).toBe('2 min ago')
+    expect(ago(59 * 60_000 + 59_000)).toBe('59 min ago')
+    expect(ago(3 * 3_600_000)).toBe('3 hr ago')
+    expect(ago(30 * 3_600_000)).toBe('yesterday')
+    expect(ago(4 * 86_400_000)).toBe('4 days ago')
+    expect(ago(30 * 86_400_000)).not.toMatch(/ago|yesterday/)
+  })
+
+  it('treats clock skew as now and ignores bad timestamps', () => {
+    expect(ago(-60_000)).toBe('just now')
+    expect(relativeTime('not a date', now)).toBe('')
+  })
+})
+
+describe('compact status line', () => {
+  it('talks about the work when there is work', () => {
+    expect(compactStatusLine(computer, 'free', 0).headline).toBe(
+      'Ready when you are.',
+    )
+    expect(compactStatusLine(computer, 'free', 1).headline).toContain(
+      'One thing',
+    )
+    expect(compactStatusLine(computer, 'free', 3).headline).toContain(
+      '3 things',
+    )
+  })
+
+  it('keeps resting, waking and failure visible, upgrade for free only', () => {
+    const parked = { ...computer, state: 'parked' as const }
+    expect(compactStatusLine(parked, 'free', 0)).toEqual({
+      headline: 'Resting — wakes when you mention it.',
+      detail: 'Upgrade and it never sleeps.',
+    })
+    expect(compactStatusLine(parked, 'paid', 0).detail).toBeUndefined()
+    expect(
+      compactStatusLine({ ...computer, state: 'waking' }, 'free', 0).headline,
+    ).toContain('Waking')
+    expect(
+      compactStatusLine(
+        { ...computer, state: 'failed', lastError: 'Setup timed out.' },
+        'free',
+        0,
+      ),
+    ).toEqual({ headline: 'Something went wrong.', detail: 'Setup timed out.' })
   })
 })
