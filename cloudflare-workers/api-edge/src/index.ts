@@ -85,6 +85,7 @@ import * as snapshots from "./snapshots";
 import * as templates from "./templates";
 import * as webhooks from "./webhooks";
 import { createAPIKey, hashAPIKey } from "./api_keys";
+import { envWithD1Retry } from "./d1_retry";
 import {
   handleAgentWebhookInvocation,
   handleManagedGitHubCallback,
@@ -3768,7 +3769,12 @@ async function authLogin(req: Request, env: Env): Promise<Response> {
   // the OAuth `state` param so the callback can land the user back on it (incl.
   // a /do?action=… deferred action). Only same-origin paths survive validation.
   const returnTo = safeReturnTo(reqURL.searchParams.get("returnTo"));
-  if (returnTo) authURL.searchParams.set("state", JSON.stringify({ returnTo }));
+  // `retried` marks a login restarted by a failed callback; it rides `state` so
+  // the callback restarts at most once instead of looping on a WorkOS session.
+  const retried = reqURL.searchParams.get("retried") === "1";
+  if (returnTo || retried) {
+    authURL.searchParams.set("state", JSON.stringify({ ...(returnTo ? { returnTo } : {}), ...(retried ? { retried: true } : {}) }));
+  }
   return Response.redirect(authURL.toString(), 302);
 }
 
@@ -4019,6 +4025,43 @@ async function authCallback(req: Request, env: Env): Promise<Response> {
     return json({ error: `workos exchange failed: ${tokenResp.status}: ${errText}` }, 401);
   }
   const tokenBody = await tokenResp.json<{ user: WorkOSProfile; organization_id?: string; access_token?: string }>();
+  // The code is spent from here on, so a throw would leave the user on a 1101
+  // whose refresh fails with "code already exchanged". Restart the login once
+  // (WorkOS issues a fresh code); a second failure gets a plain retry page.
+  try {
+    return await completeAuthCallback(req, env, reqURL, tokenBody);
+  } catch (err) {
+    console.error("auth callback: post-exchange failure", err);
+    const state = parseAuthState(reqURL.searchParams.get("state"));
+    if (state.retried) {
+      return new Response(
+        `<!doctype html><title>Sign-in failed</title><p>Sign-in hit a temporary error. <a href="/auth/login">Try again</a>.</p>`,
+        { status: 503, headers: { "content-type": "text/html; charset=utf-8", "retry-after": "5" } },
+      );
+    }
+    const retry = new URL("/auth/login", reqURL.origin);
+    retry.searchParams.set("retried", "1");
+    if (state.returnTo) retry.searchParams.set("returnTo", state.returnTo);
+    return Response.redirect(retry.toString(), 302);
+  }
+}
+
+function parseAuthState(raw: string | null): { returnTo: string | null; retried: boolean } {
+  if (!raw) return { returnTo: null, retried: false };
+  try {
+    const parsed = JSON.parse(raw) as { returnTo?: string; retried?: boolean };
+    return { returnTo: safeReturnTo(parsed.returnTo), retried: parsed.retried === true };
+  } catch {
+    return { returnTo: null, retried: false };
+  }
+}
+
+async function completeAuthCallback(
+  req: Request,
+  env: Env,
+  reqURL: URL,
+  tokenBody: { user: WorkOSProfile; organization_id?: string; access_token?: string },
+): Promise<Response> {
   const profile = tokenBody.user;
   // WorkOS session id (sid) for the hosted logout flow — carried in our session JWT.
   const workosSessionID = workosSessionIdFromAccessToken(tokenBody.access_token);
@@ -4043,15 +4086,7 @@ async function authCallback(req: Request, env: Env): Promise<Response> {
   // Land on the deferred deep link if `state` carried a valid one, else the
   // dashboard. Re-validate here: `state` is attacker-influenceable, so the path
   // is only trusted after safeReturnTo passes a second time.
-  let returnTo: string | null = null;
-  const stateRaw = reqURL.searchParams.get("state");
-  if (stateRaw) {
-    try {
-      returnTo = safeReturnTo((JSON.parse(stateRaw) as { returnTo?: string }).returnTo);
-    } catch {
-      returnTo = null;
-    }
-  }
+  const returnTo = parseAuthState(reqURL.searchParams.get("state")).returnTo;
   const landingURL = `${reqURL.origin}${returnTo ?? "/dashboard"}`;
   return new Response(null, {
     status: 302,
@@ -5074,6 +5109,7 @@ let ISO_SEQ = 0;
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    env = envWithD1Retry(env);
     const tTop = Date.now();
     ISO_SEQ++;
     const url = new URL(req.url);
@@ -5894,6 +5930,7 @@ export default {
   // key's spend → debit Autumn `model_spend` → push the markup-correct cap + halt.
   // Dormant unless OPENROUTER_PROVISIONING_KEY is set + managed keys exist.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    env = envWithD1Retry(env);
     // Cross-cell paused-cap enforcement runs regardless of billing config.
     ctx.waitUntil(
       runPausedCapEnforcer(env).catch((err) => console.error("paused-cap: run failed", err)),
@@ -5930,6 +5967,7 @@ export default {
   // (marks the box error), so a message is acked once processed; genuine
   // enqueue-side failures already fell back to inline finalize at the producer.
   async queue(batch: MessageBatch<FinalizeMsg>, env: Env): Promise<void> {
+    env = envWithD1Retry(env);
     await Promise.all(
       batch.messages.map(async (m) => {
         const b = m.body;
