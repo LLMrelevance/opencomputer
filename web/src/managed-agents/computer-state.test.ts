@@ -12,7 +12,7 @@ import {
   computerChecklist,
   computerPollInterval,
   computerPresentation,
-  formatCapacity,
+  heroCopy,
   slackReturnFromSearch,
 } from './computer-state'
 
@@ -132,12 +132,33 @@ describe('computer state copy', () => {
     ).toBe('Setup timed out.')
   })
 
-  it('formats capacity as vCPUs, memory and disk', () => {
-    expect(formatCapacity(computer)).toEqual([
-      { label: 'vCPUs', value: '2' },
-      { label: 'Memory', value: '8 GiB' },
-      { label: 'Disk', value: '128 GiB' },
-    ])
+  it('writes a headline for every state without naming hardware or vendors', () => {
+    const states = [
+      'provisioning',
+      'ready',
+      'parked',
+      'waking',
+      'failed',
+      'deleting',
+    ] as const
+    for (const state of states) {
+      for (const plan of ['free', 'paid'] as const) {
+        const copy = heroCopy({ ...computer, state }, plan)
+        expect(copy.headline.length).toBeGreaterThan(0)
+        expect(`${copy.headline} ${copy.subline}`).not.toMatch(
+          /vCPU|GiB|azure|region|instance/i,
+        )
+      }
+    }
+    expect(heroCopy(null, 'free').headline).toBe(
+      heroCopy({ ...computer, state: 'provisioning' }, 'free').headline,
+    )
+  })
+
+  it('offers the upgrade only to a sleeping free computer', () => {
+    const parked = { ...computer, state: 'parked' as const }
+    expect(heroCopy(parked, 'free').subline).toContain('Upgrade')
+    expect(heroCopy(parked, 'paid').subline).not.toContain('Upgrade')
   })
 })
 

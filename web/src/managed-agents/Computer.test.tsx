@@ -126,13 +126,14 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('8 GiB') === true,
+      () => container.textContent?.includes('coming to life') === true,
       'provisioning computer',
     )
 
     expect(computerApi.createComputer).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('Setting up')
     expect(container.textContent).toContain('Install Slack app')
+    expect(container.textContent).not.toMatch(/vCPU|GiB/)
     expect(container.textContent).toContain('Connect GitHub')
     expect(container.textContent).toContain(
       'Mention @OpenComputer in any channel, or DM it.',

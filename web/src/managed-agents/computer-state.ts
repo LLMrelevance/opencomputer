@@ -195,10 +195,68 @@ export function slackReturnFromSearch(search: URLSearchParams): SlackReturn {
   }
 }
 
-export function formatCapacity(computer: Computer) {
-  return [
-    { label: 'vCPUs', value: String(computer.vcpus) },
-    { label: 'Memory', value: `${computer.memoryGiB} GiB` },
-    { label: 'Disk', value: `${computer.diskGiB} GiB` },
-  ]
+export type HeroCopy = { headline: string; subline: string }
+
+/**
+ * The page's headline for each state: what the computer means to the team,
+ * never what it is made of (Mohamed, 2026-10-11: no specs, make people want it).
+ */
+export function heroCopy(
+  computer: Computer | null,
+  plan: ComputerStatus['plan'],
+): HeroCopy {
+  switch (computer?.state ?? 'provisioning') {
+    case 'provisioning':
+      return {
+        headline: 'Your computer is coming to life.',
+        subline:
+          'A minute or two, and your team has a colleague that never logs off. Invite it into Slack while you wait.',
+      }
+    case 'ready':
+      return computer?.connected
+        ? {
+            headline: 'Your team just got a colleague that never logs off.',
+            subline:
+              'It knows your code, lives in your Slack, and keeps going while you sleep. Ask it anything. Hand it anything.',
+          }
+        : {
+            headline: 'Reconnecting.',
+            subline:
+              'Your computer is on and finding its way back. Usually within a minute.',
+          }
+    case 'parked':
+      return {
+        headline: 'Resting, not gone.',
+        subline:
+          plan === 'paid'
+            ? 'Everything it knows is right where it left it. Mention it and it is back in a minute.'
+            : 'Everything it knows is right where it left it. Mention it and it is back in a minute. Upgrade and it never sleeps.',
+      }
+    case 'waking':
+      return {
+        headline: 'Waking up.',
+        subline:
+          'Picking up exactly where it left off. Your message is already waiting for it.',
+      }
+    case 'failed':
+      return {
+        headline: 'Something went wrong.',
+        subline:
+          computer?.lastError ??
+          'Your computer could not start. Try again, or tell us if it keeps happening.',
+      }
+    case 'deleting':
+      return {
+        headline: 'Saying goodbye.',
+        subline: 'Your computer is being removed.',
+      }
+  }
 }
+
+/** Things to ask first: concrete, so the first message is easy to write. */
+export const EXAMPLE_ASKS = [
+  'why is the checkout test flaky? Fix it and open a PR.',
+  'walk me through how billing works in our codebase.',
+  'upgrade us to the latest React and tell me what broke.',
+  'every morning, summarize what changed in main yesterday.',
+] as const

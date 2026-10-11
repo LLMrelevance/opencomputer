@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  AtSign,
   Check,
   Computer as ComputerIcon,
   ExternalLink,
+  GitPullRequest,
   Loader2,
   MessagesSquare,
+  Moon,
   RotateCcw,
   Send,
   Terminal,
@@ -16,7 +17,7 @@ import {
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
 import { GithubMark } from '@/components/github-mark'
-import { PageHeader } from '@/components/page-header'
+import { CopyRow } from '@/components/copy-row'
 import {
   Panel,
   PanelContent,
@@ -43,12 +44,13 @@ import {
   type ComputerStatus,
 } from './computer-api'
 import {
+  EXAMPLE_ASKS,
   SESSION_STATUS,
   START_SESSION_COPY,
   computerChecklist,
   computerPollInterval,
   computerPresentation,
-  formatCapacity,
+  heroCopy,
   slackReturnFromSearch,
   type ChecklistStep,
 } from './computer-state'
@@ -133,17 +135,15 @@ export default function ComputerPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <PageHeader
-        title="Computer"
-        description="Your organization's computer holds your repositories and works on them with you from Slack."
-      />
-      <StatusCard
+      <Hero
         status={status.data}
         createError={create.isError ? create.error : null}
         creating={create.isPending}
         onRetry={() => create.mutate()}
       />
+      <Reasons />
       <Checklist status={status.data} sessions={sessions.data} />
+      <TryAsking />
       <SessionsPanel
         hasComputer={hasComputer}
         sessions={newestFirst(sessions.data ?? [])}
@@ -167,7 +167,7 @@ export default function ComputerPage() {
   )
 }
 
-function StatusCard({
+function Hero({
   status,
   createError,
   creating,
@@ -180,48 +180,57 @@ function StatusCard({
 }) {
   const { computer } = status
   const presentation = computerPresentation(computer, status.plan)
-  const canRetry =
-    (!computer && createError !== null) || computer?.state === 'failed'
+  const failedToCreate = !computer && createError !== null
+  const copy = failedToCreate
+    ? { headline: 'Something went wrong.', subline: createError.message }
+    : heroCopy(computer, status.plan)
+  const alive = computer?.state === 'ready' && computer.connected
+  const busy =
+    !computer ||
+    computer.state === 'provisioning' ||
+    computer.state === 'waking' ||
+    (computer.state === 'ready' && !computer.connected)
+  const canRetry = failedToCreate || computer?.state === 'failed'
   return (
-    <Panel>
-      <PanelHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
-            <ComputerIcon className="size-4" aria-hidden />
-          </div>
-          <div className="min-w-0">
-            <PanelTitle>Your computer</PanelTitle>
-            <PanelDescription className="mt-1 max-w-2xl">
-              {!computer && createError
-                ? createError.message
-                : presentation.description}
-            </PanelDescription>
-          </div>
+    <section className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-12 sm:px-12 sm:py-16">
+      <div
+        className="bg-primary/15 pointer-events-none absolute -top-24 -right-24 size-72 rounded-full blur-3xl"
+        aria-hidden
+      />
+      <div className="relative max-w-3xl">
+        <div className="bg-background/70 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur">
+          <span className="relative flex size-2" aria-hidden>
+            {alive || busy ? (
+              <span
+                className={cn(
+                  'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                  alive ? 'bg-emerald-500' : 'bg-amber-500',
+                )}
+              />
+            ) : null}
+            <span
+              className={cn(
+                'relative inline-flex size-2 rounded-full',
+                alive
+                  ? 'bg-emerald-500'
+                  : busy
+                    ? 'bg-amber-500'
+                    : failedToCreate || computer?.state === 'failed'
+                      ? 'bg-red-500'
+                      : 'bg-muted-foreground',
+              )}
+            />
+          </span>
+          {failedToCreate ? 'Failed' : presentation.label}
         </div>
-        <StatusBadge
-          status={!computer && createError ? 'failed' : presentation.badge}
-          label={!computer && createError ? 'Failed' : presentation.label}
-        />
-      </PanelHeader>
-      <PanelContent className="flex flex-wrap items-end justify-between gap-4">
-        {computer ? (
-          <dl className="grid grid-cols-3 gap-6">
-            {formatCapacity(computer).map((item) => (
-              <div key={item.label}>
-                <dt className="text-muted-foreground text-xs">{item.label}</dt>
-                <dd className="mt-1 font-mono text-lg font-semibold tabular-nums">
-                  {item.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            Capacity appears once your computer is set up.
-          </p>
-        )}
+        <h1 className="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+          {copy.headline}
+        </h1>
+        <p className="text-muted-foreground mt-4 max-w-2xl text-lg text-balance">
+          {copy.subline}
+        </p>
         {canRetry ? (
-          <Button variant="outline" disabled={creating} onClick={onRetry}>
+          <Button className="mt-8" disabled={creating} onClick={onRetry}>
             {creating ? (
               <Loader2 className="size-4 animate-spin" aria-hidden />
             ) : (
@@ -230,6 +239,59 @@ function StatusCard({
             Try again
           </Button>
         ) : null}
+      </div>
+    </section>
+  )
+}
+
+const REASONS = [
+  {
+    icon: MessagesSquare,
+    title: 'Lives in Slack',
+    body: 'Mention it in any thread. It picks up the context, does the work and reports back, right there.',
+  },
+  {
+    icon: GitPullRequest,
+    title: 'Works in your real code',
+    body: 'Your repositories, your stack. It reads, runs and fixes, then hands you a pull request to review.',
+  },
+  {
+    icon: Moon,
+    title: 'Never logs off',
+    body: 'Hand it the slow stuff at 6pm. It is still on it at 3am, and it remembers where everything is.',
+  },
+] as const
+
+function Reasons() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-3">
+      {REASONS.map(({ icon: Icon, title, body }) => (
+        <div key={title} className="bg-panel rounded-xl border p-5">
+          <Icon className="text-primary size-5" aria-hidden />
+          <p className="mt-3 font-medium">{title}</p>
+          <p className="text-muted-foreground mt-1 text-sm">{body}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TryAsking() {
+  return (
+    <Panel>
+      <PanelHeader>
+        <div>
+          <PanelTitle>Not sure where to start?</PanelTitle>
+          <PanelDescription className="mt-1">
+            Paste one of these into Slack. Then give it the thing you have been
+            putting off.
+          </PanelDescription>
+        </div>
+      </PanelHeader>
+      <PanelContent className="grid gap-2">
+        {EXAMPLE_ASKS.map((ask) => (
+          <CopyRow key={ask} value={`@OpenComputer ${ask}`} />
+        ))}
       </PanelContent>
     </Panel>
   )
@@ -242,46 +304,49 @@ function Checklist({
   status: ComputerStatus
   sessions: ComputerSession[] | undefined
 }) {
-  const steps = computerChecklist(status, sessions)
-  const [computerStep, slackStep, githubStep, sessionStep] = steps
+  // The computer itself is the hero; these are the three things a person does.
+  const [, slackStep, githubStep, sessionStep] = computerChecklist(
+    status,
+    sessions,
+  )
+  const steps = [slackStep, githubStep, sessionStep]
+  const done = steps.filter((step) => step.done).length
   return (
     <Panel>
       <PanelHeader>
         <div>
-          <PanelTitle>Get started</PanelTitle>
+          <PanelTitle>
+            {done === steps.length
+              ? 'You are all set.'
+              : 'Three steps to your first hand-off'}
+          </PanelTitle>
           <PanelDescription className="mt-1">
-            {steps.filter((step) => step.done).length} of {steps.length} done
+            {done === steps.length
+              ? 'It is part of the team now. Keep it busy.'
+              : `${done} of ${steps.length} done. Takes about two minutes.`}
           </PanelDescription>
         </div>
       </PanelHeader>
       <PanelContent className="p-0">
         <ol className="divide-y">
-          <Step number={1} step={computerStep}>
-            {computerStep.done
-              ? 'Your computer is set up.'
-              : 'Your computer is being set up. You can install the Slack app and connect GitHub in the meantime.'}
-          </Step>
           <Step
-            number={2}
-            step={slackStep}
+            number={1}
+            step={{ ...slackStep, title: 'Invite it to Slack' }}
             action={<SlackAction status={status} />}
           >
             {status.slack.installed
-              ? `Linked to the ${status.slack.teamName ?? 'Slack'} workspace.`
-              : 'Add OpenComputer to your Slack workspace so your team can work with the computer.'}
+              ? `It is in ${status.slack.teamName ?? 'your Slack workspace'}.`
+              : 'Where your team already talks. One click, no setup.'}
           </Step>
           <Step
-            number={3}
-            step={githubStep}
+            number={2}
+            step={{ ...githubStep, title: 'Give it your code' }}
             action={<GitHubAction connected={status.github.connected} />}
           >
             {githubSummary(status.github)}
           </Step>
-          <Step number={4} step={sessionStep}>
-            <span className="inline-flex items-center gap-1.5">
-              <AtSign className="size-3.5 shrink-0" aria-hidden />
-              {START_SESSION_COPY}
-            </span>
+          <Step number={3} step={{ ...sessionStep, title: 'Say hello' }}>
+            {START_SESSION_COPY}
           </Step>
         </ol>
       </PanelContent>
@@ -291,13 +356,13 @@ function Checklist({
 
 function githubSummary(github: ComputerStatus['github']) {
   if (!github.connected) {
-    return 'Install the OpenComputer GitHub App on the repositories your computer should work in.'
+    return 'Pick the repositories it should know. It never pushes to main unless you ask.'
   }
   const accounts = github.installations.map(
     (installation) => installation.accountLogin,
   )
   return accounts.length
-    ? `Repositories from ${accounts.join(', ')} are available to your computer.`
+    ? `It knows the code in ${accounts.join(', ')}.`
     : 'GitHub is connected.'
 }
 
