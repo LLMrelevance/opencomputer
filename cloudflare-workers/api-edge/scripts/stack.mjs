@@ -11,7 +11,7 @@
 //
 // Env: CLOUDFLARE_API_TOKEN (falls back to CLOUDFLARE_DEVIN_API_TOKEN),
 //      WORKOS_STAGING_API_KEY/WORKOS_STAGING_CLIENT_ID (staging app only),
-//      OPENROUTER_PROVISIONING_KEY, OC_STACK_HOME (default ~/.oc-stacks).
+//      OPENROUTER_PROVISIONING_KEY (optional), OC_STACK_HOME (default ~/.oc-stacks).
 //
 // Reads/writes $OC_STACK_HOME/<name>/stack.json and secrets.json shared with
 // the blue script (OC_MANAGED_AGENTS_SECRET, OC_MANAGED_CRED_HMAC_SECRET and
@@ -125,7 +125,11 @@ async function up() {
   deploy({
     WORKOS_API_KEY: env("WORKOS_STAGING_API_KEY"),
     WORKOS_CLIENT_ID: env("WORKOS_STAGING_CLIENT_ID"),
-    OPENROUTER_PROVISIONING_KEY: env("OPENROUTER_PROVISIONING_KEY"),
+    // Optional: without it, per-organization model keys are not provisioned
+    // (managed-agent model calls fail), but the rest of the stack works.
+    ...(process.env.OPENROUTER_PROVISIONING_KEY
+      ? { OPENROUTER_PROVISIONING_KEY: process.env.OPENROUTER_PROVISIONING_KEY }
+      : {}),
     OC_MANAGED_AGENTS_SECRET: secrets.OC_MANAGED_AGENTS_SECRET,
     OC_MANAGED_CRED_HMAC_SECRET: secrets.OC_MANAGED_CRED_HMAC_SECRET,
     AGENT_RUNTIME_USAGE_HMAC_SECRET: secrets.BLUE_USAGE_HMAC_SECRET,
