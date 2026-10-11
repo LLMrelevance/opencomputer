@@ -1,0 +1,64 @@
+---
+title: "Your computer"
+description: "Your organization's computer works on your repositories with your team from Slack"
+---
+
+Every OpenComputer organization has its own computer. It holds your
+organization's repositories, runs coding sessions for your team, and keeps
+everything on its disk between sessions. You talk to it from Slack.
+
+Open **Computer** in the dashboard at
+[app.opencomputer.dev](https://app.opencomputer.dev). The first time you open
+it, OpenComputer sets up your computer; this takes a few minutes.
+
+## Get started
+
+The Computer page walks you through four steps.
+
+1. **Computer ready.** The page shows your computer's status and its capacity:
+   vCPUs, memory and disk.
+2. **Install the Slack app.** Select **Install Slack app** and approve
+   OpenComputer for your Slack workspace. One Slack workspace links to one
+   OpenComputer organization. To stop using a workspace, select **Unlink**;
+   the app stays installed in Slack until you remove it there.
+3. **Connect GitHub.** Select **Connect GitHub** to install the OpenComputer
+   GitHub App and choose which repositories it can access. Your computer works
+   in exactly the repositories you grant. You can change the selection at any
+   time in GitHub, or from **Connections** in the dashboard.
+4. **Start a session.** Mention `@OpenComputer` in any channel, or send it a
+   direct message. Each Slack thread is one session.
+
+## Sessions
+
+The Computer page lists your organization's sessions with their status and
+when they last changed. **Open in Slack** takes you to the session's thread,
+where you continue the conversation.
+
+| Status   | Meaning                                   |
+| -------- | ----------------------------------------- |
+| Starting | The session is starting on your computer. |
+| Working  | The computer is working on a request.     |
+| Idle     | The session is waiting for your next message. |
+| Ended    | The session has finished.                 |
+| Error    | The session stopped because of an error.  |
+
+## Computer status
+
+| Status     | Meaning                                                                 |
+| ---------- | ----------------------------------------------------------------------- |
+| Setting up | OpenComputer is preparing your computer.                                |
+| Online     | Your computer is on and ready for work.                                 |
+| Offline    | Your computer is on but not connected. It reconnects by itself.         |
+| Sleeping   | Your computer is asleep. It wakes when you message it.                  |
+| Waking     | Your computer is starting again, with everything on its disk intact.    |
+| Failed     | Something went wrong. The page shows what happened and lets you retry.  |
+
+On the free plan, a computer that has been idle for a while goes to sleep and
+wakes up when someone messages it; waking takes a minute or two. Paid plans
+keep the computer always on.
+
+## Build your own agents
+
+Your computer is where your team works interactively. To build agents that run
+on their own, on a schedule, from webhooks or in Slack, follow the
+[quickstart](/agents/quickstart).
