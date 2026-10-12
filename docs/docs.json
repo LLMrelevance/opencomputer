@@ -30,7 +30,6 @@
             "group": "Getting started",
             "pages": [
               "agents/overview",
-              "agents/computer",
               "agents/mental-model",
               "agents/quickstart",
               "agents/projects"
