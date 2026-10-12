@@ -23,6 +23,7 @@ const me = {
   orgId: 'org_digger',
   durableSessionsEnabled: true,
   infrastructureEnabled: true,
+  computerEnabled: true,
   orgs: [
     { id: 'org_digger', name: 'Digger', isPersonal: false, isActive: true },
     { id: 'org_personal', name: 'Personal', isPersonal: true, isActive: false },

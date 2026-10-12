@@ -5,17 +5,41 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProjectsHome from './Home'
 import { INSTALL_CLI_COMMAND } from './ProjectOnboarding'
 
-function renderProjects(projects: unknown[], archived: unknown[] = []) {
+import { AuthContext } from '@/hooks/useAuth'
+
+const authWith = (computerEnabled: boolean) =>
+  ({
+    user: {
+      id: 'u1',
+      email: 'a@b.c',
+      orgId: 'org_1',
+      durableSessionsEnabled: false,
+      infrastructureEnabled: false,
+      computerEnabled,
+    },
+    loading: false,
+    error: null,
+    switchOrg: async () => {},
+    refreshUser: async () => {},
+  }) as const
+
+function renderProjects(
+  projects: unknown[],
+  archived: unknown[] = [],
+  computerEnabled = true,
+) {
   const queryClient = new QueryClient()
   queryClient.setQueryData(['managed-projects'], projects)
   queryClient.setQueryData(['managed-projects', 'archived'], archived)
 
   return renderToStaticMarkup(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <ProjectsHome />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <AuthContext.Provider value={authWith(computerEnabled)}>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ProjectsHome />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   )
 }
 
@@ -37,6 +61,13 @@ describe('projects home onboarding', () => {
 
     expect(markup).not.toContain(INSTALL_CLI_COMMAND)
     expect(markup).not.toContain('Create project')
+  })
+
+  it('keeps CLI onboarding for an organization without the computer (rollout flag)', () => {
+    stubSessionStorage()
+    const markup = renderProjects([], [], false)
+
+    expect(markup).toContain(INSTALL_CLI_COMMAND)
   })
 
   it('shows CLI onboarding when Projects is opened after the first landing', () => {

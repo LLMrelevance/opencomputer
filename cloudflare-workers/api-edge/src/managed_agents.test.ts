@@ -1,3 +1,4 @@
+import { computerEnabledFor } from "./computer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6455,9 +6456,30 @@ describe("organization computer (work 052)", () => {
   const env = {
     MANAGED_AGENTS_API_URL: "https://managedagents.test",
     OC_MANAGED_AGENTS_SECRET: "test-secret",
+    COMPUTER_ENABLED_ORGS: "org_other, org_test",
   };
   const caller = { orgID: "org_test", userID: "user_test", role: "admin" };
   const dashboard = "/api/dashboard/managed-agents";
+
+  it("hides the computer from organizations outside the rollout", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await proxyManagedAgents(
+      new Request(`https://app.opencomputer.dev${dashboard}/computer`),
+      { ...env, COMPUTER_ENABLED_ORGS: "org_other" },
+      caller,
+      dashboard,
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("enables everyone with COMPUTER_ENABLED_FOR_ALL", () => {
+    expect(computerEnabledFor({ COMPUTER_ENABLED_FOR_ALL: "true" }, "org_x")).toBe(true);
+    expect(computerEnabledFor({ COMPUTER_ENABLED_ORGS: " org_x ,org_y" }, "org_x")).toBe(true);
+    expect(computerEnabledFor({ COMPUTER_ENABLED_ORGS: "org_y" }, "org_x")).toBe(false);
+    expect(computerEnabledFor({}, "org_x")).toBe(false);
+  });
 
   const computerStatus = {
     computer: {

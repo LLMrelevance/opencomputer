@@ -26,6 +26,22 @@ const projectsApi = vi.hoisted(() => ({
 vi.mock('./api', () => projectsApi)
 
 const { default: ComputerPage } = await import('./Computer')
+const { AuthContext } = await import('@/hooks/useAuth')
+const authWith = (computerEnabled: boolean) =>
+  ({
+    user: {
+      id: 'u1',
+      email: 'a@b.c',
+      orgId: 'org_1',
+      durableSessionsEnabled: false,
+      infrastructureEnabled: false,
+      computerEnabled,
+    },
+    loading: false,
+    error: null,
+    switchOrg: async () => {},
+    refreshUser: async () => {},
+  }) as const
 const { default: ProjectsHome } = await import('./Home')
 
 const empty = {
@@ -138,15 +154,17 @@ describe('Computer page', () => {
   function render(url: string) {
     act(() => {
       root.render(
-        <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={[url]}>
-            <Routes>
-              <Route index element={<ProjectsHome />} />
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-            <Location />
-          </MemoryRouter>
-        </QueryClientProvider>,
+        <AuthContext.Provider value={authWith(true)}>
+          <QueryClientProvider client={client}>
+            <MemoryRouter initialEntries={[url]}>
+              <Routes>
+                <Route index element={<ProjectsHome />} />
+                <Route path="computer" element={<ComputerPage />} />
+              </Routes>
+              <Location />
+            </MemoryRouter>
+          </QueryClientProvider>
+        </AuthContext.Provider>,
       )
     })
   }

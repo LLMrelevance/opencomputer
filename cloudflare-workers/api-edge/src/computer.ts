@@ -164,3 +164,21 @@ export function publicComputerBody(
   }
   throw new Error("Unsupported computer response");
 }
+
+/**
+ * Whether an organization has its computer (work 052 rollout). Until
+ * COMPUTER_ENABLED_FOR_ALL is "true", only organizations listed in
+ * COMPUTER_ENABLED_ORGS (comma-separated ids) see it; for everyone else the
+ * computer routes do not exist and the dashboard hides the page.
+ */
+export function computerEnabledFor(
+  env: { COMPUTER_ENABLED_FOR_ALL?: string; COMPUTER_ENABLED_ORGS?: string },
+  orgID: string | null | undefined,
+): boolean {
+  if (env.COMPUTER_ENABLED_FOR_ALL === "true") return true;
+  if (!orgID) return false;
+  return (env.COMPUTER_ENABLED_ORGS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .includes(orgID);
+}

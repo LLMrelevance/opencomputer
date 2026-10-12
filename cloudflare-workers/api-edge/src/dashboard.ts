@@ -38,10 +38,14 @@ import {
   proxyManagedAgents,
   proxyPublicTemplateInspection,
 } from "./managed_agents";
+import { computerEnabledFor } from "./computer";
 import { enableManagedBilling } from "./model_billing";
 import { insufficientManagedAgentCredits } from "./managed_agent_credit_gate";
 
 export interface DashboardEnv {
+  /** Computer rollout (work 052): see computerEnabledFor in computer.ts. */
+  COMPUTER_ENABLED_FOR_ALL?: string;
+  COMPUTER_ENABLED_ORGS?: string;
   OPENCOMPUTER_DB: D1Database;
   SESSIONS_KV: KVNamespace;
   CREDIT_ACCOUNT: DurableObjectNamespace;
@@ -402,6 +406,7 @@ async function handleMe(req: Request, env: DashboardEnv, caller: Caller): Promis
     orgs,
     durableSessionsEnabled: !!user.durable_sessions_enabled,
     infrastructureEnabled: !!user.infrastructure_enabled,
+    computerEnabled: computerEnabledFor(env, caller.orgID),
   });
 }
 

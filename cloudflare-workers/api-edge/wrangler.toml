@@ -170,6 +170,9 @@ crons = ["*/5 * * * *"]
 
 [vars]
 WORKER_ENV = "dev"
+# Computer rollout (work 052); see wrangler.prod.toml.
+COMPUTER_ENABLED_FOR_ALL = "false"
+COMPUTER_ENABLED_ORGS = ""
 # Dev override of the per-org paused-sandbox cap (prod defaults to 100) so the
 # promotion path can be exercised without pausing hundreds of boxes.
 PAUSED_CAP = "10"

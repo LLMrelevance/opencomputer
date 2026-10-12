@@ -337,6 +337,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         projectId,
         durableSessionsEnabled: user?.durableSessionsEnabled ?? false,
         infrastructureEnabled: user?.infrastructureEnabled ?? false,
+        computerEnabled: user?.computerEnabled ?? false,
       })
     : LEGACY_NAV
   const activeCollapsibleGroup = nav.find(

@@ -39,6 +39,7 @@ export function managedAgentsNav(options: {
   projectId?: string
   durableSessionsEnabled: boolean
   infrastructureEnabled: boolean
+  computerEnabled?: boolean
 }): NavGroup[] {
   const groups: NavGroup[] = []
 
@@ -126,7 +127,9 @@ export function managedAgentsNav(options: {
     // reachable once an advanced area is open.
     groups.push({
       items: [
-        { to: '/computer', label: 'Computer', icon: Computer },
+        ...(options.computerEnabled
+          ? [{ to: '/computer', label: 'Computer', icon: Computer }]
+          : []),
         { to: '/', label: 'Projects', icon: FolderKanban, end: true },
       ],
     })

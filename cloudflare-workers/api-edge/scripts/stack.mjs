@@ -382,6 +382,8 @@ function writeConfig(stack) {
       MANAGED_AGENTS_API_URL: stack.edgeUrl ?? "",
       SESSIONS_API_URL: stack.edgeUrl ?? "",
       MANAGED_DEFAULT_BUDGET_USD: "5",
+      // Preview stacks give every organization its computer (work 052).
+      COMPUTER_ENABLED_FOR_ALL: "true",
       // Billing (optional): with an Autumn sandbox key, new organizations land
       // on Autumn's base plan and the 5-minute cron meters usage into credits.
       ...(autumnEnabled() ? { AUTUMN_NEW_ORGS: "true" } : {}),

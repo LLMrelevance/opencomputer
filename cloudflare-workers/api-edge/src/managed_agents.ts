@@ -2,12 +2,16 @@ import { getAutumnCustomer } from "./autumn_webhook";
 import {
   COMPUTER_ERROR_MESSAGES,
   computerFallbackMessage,
+  computerEnabledFor,
   isComputerRoute,
   isComputerRouteSuffix,
   publicComputerBody,
 } from "./computer";
 
 export interface ManagedAgentsEnv {
+  /** Computer rollout (work 052): see computerEnabledFor. */
+  COMPUTER_ENABLED_FOR_ALL?: string;
+  COMPUTER_ENABLED_ORGS?: string;
   MANAGED_AGENTS_API_URL?: string;
   OC_MANAGED_AGENTS_SECRET?: string;
   OPENCOMPUTER_DB?: D1Database;
@@ -3487,7 +3491,8 @@ export async function proxyManagedAgents(
   // The computer is a dashboard surface in v1; API keys do not reach it.
   if (
     isComputerRouteSuffix(suffix) &&
-    publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX
+    (publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX ||
+      !computerEnabledFor(env, caller.orgID))
   ) {
     return Response.json({ error: "route not found" }, { status: 404 });
   }

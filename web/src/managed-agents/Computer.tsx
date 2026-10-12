@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import {
   Check,
   Computer as ComputerIcon,
@@ -36,6 +43,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { AuthContext } from '@/hooks/useAuth'
 import { addManagedGitHubConnection } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
 import {
@@ -69,6 +77,15 @@ import {
 } from './computer-state'
 
 export default function ComputerPage() {
+  // Behind the rollout flag (work 052): an organization without its computer
+  // goes to its projects. Rendered outside an AuthProvider (tests), no gate.
+  const auth = useContext(AuthContext)
+  if (auth?.user && !auth.user.computerEnabled)
+    return <Navigate to="/" replace />
+  return <ComputerPageContent />
+}
+
+function ComputerPageContent() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const status = useQuery({
