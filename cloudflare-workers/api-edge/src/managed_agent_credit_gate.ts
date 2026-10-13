@@ -17,6 +17,10 @@ interface ManagedAgentCreditRow {
 // org is denied (base plan out of credits).
 export type ManagedAgentModelAccess = "full" | "fallback";
 
+// The Autumn usage plan: "max" ($200), "pro" ($20, being retired), "base"
+// (free). null: no org row, or a value this edge does not know.
+export type ManagedAgentUsagePlan = "base" | "pro" | "max";
+
 export interface ManagedAgentBillingAdmission {
   allowed: boolean;
   isHalted: boolean;
@@ -24,6 +28,23 @@ export interface ManagedAgentBillingAdmission {
   reason: "insufficient_credits" | null;
   paid: boolean;
   modelAccess: ManagedAgentModelAccess | null;
+  /**
+   * Additive (work 052): the computer sizes by it, and only "max" gets the
+   * bigger VM. Same legacy rule as `paid`: a plan='pro' org still on the
+   * 'base' default reads as "pro".
+   */
+  usagePlan: ManagedAgentUsagePlan | null;
+}
+
+function normalizedUsagePlan(
+  row: ManagedAgentCreditRow | null,
+): ManagedAgentUsagePlan | null {
+  if (!row) return null;
+  if (row.usage_plan === "pro" || row.usage_plan === "max") {
+    return row.usage_plan;
+  }
+  if (row.plan === "pro") return "pro";
+  return row.usage_plan === "base" || row.usage_plan === null ? "base" : null;
 }
 
 export function isManagedAgentBillableRequest(
@@ -67,6 +88,7 @@ export async function getManagedAgentBillingAdmission(
     reason: allowed ? null : "insufficient_credits",
     paid,
     modelAccess: !isHalted ? "full" : paid ? "fallback" : null,
+    usagePlan: normalizedUsagePlan(row),
   };
 }
 

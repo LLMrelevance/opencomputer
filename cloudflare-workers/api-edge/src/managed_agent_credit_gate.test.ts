@@ -94,6 +94,7 @@ describe("managed-agent credit admission", () => {
       reason: "insufficient_credits",
       paid: false,
       modelAccess: null,
+      usagePlan: "base",
     });
     await expect(
       getManagedAgentBillingAdmission(env(null), "org_test"),
@@ -104,6 +105,7 @@ describe("managed-agent credit admission", () => {
       reason: null,
       paid: false,
       modelAccess: "full",
+      usagePlan: null,
     });
     await expect(
       getManagedAgentBillingAdmission(env(0, null, "pro"), "org_test"),
@@ -114,6 +116,7 @@ describe("managed-agent credit admission", () => {
       reason: null,
       paid: true,
       modelAccess: "full",
+      usagePlan: "pro",
     });
   });
 
@@ -129,6 +132,7 @@ describe("managed-agent credit admission", () => {
         reason: null,
         paid: true,
         modelAccess: "fallback",
+        usagePlan: plan,
       });
       const request = new Request(
         "https://mo-oc-dev.com/api/managed-agents/sessions/session_1/turns",
@@ -153,7 +157,26 @@ describe("managed-agent credit admission", () => {
       reason: null,
       paid: true,
       modelAccess: "fallback",
+      usagePlan: "pro",
     });
+  });
+
+  it("reports the usage plan the computer sizes by", async () => {
+    const usagePlan = async (usage: string | null, plan = "free") =>
+      (
+        await getManagedAgentBillingAdmission(
+          env(0, null, usage as string, plan),
+          "org_test",
+        )
+      ).usagePlan;
+    await expect(usagePlan("max")).resolves.toBe("max");
+    await expect(usagePlan("pro")).resolves.toBe("pro");
+    await expect(usagePlan("base")).resolves.toBe("base");
+    await expect(usagePlan(null)).resolves.toBe("base");
+    // Legacy Pro org before its Autumn projection.
+    await expect(usagePlan("base", "pro")).resolves.toBe("pro");
+    await expect(usagePlan(null, "pro")).resolves.toBe("pro");
+    await expect(usagePlan("enterprise")).resolves.toBeNull();
   });
 
   it("hard-stops an exhausted base org with the upgrade 402", async () => {
