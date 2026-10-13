@@ -20,10 +20,25 @@ export type ComputerPresentation = {
   description: string
 }
 
+/**
+ * `slackInstalled`: an organization's computer comes alive when it installs
+ * the Slack app, not when someone opens the page (work 052, Mohamed
+ * 2026-10-13). With no computer and no Slack yet it is "not set up"; with
+ * Slack installed and no computer yet it is on its way.
+ */
 export function computerPresentation(
   computer: Computer | null,
   plan: ComputerStatus['plan'],
+  slackInstalled = false,
 ): ComputerPresentation {
+  if (!computer && !slackInstalled) {
+    return {
+      badge: 'not_deployed',
+      label: 'Not set up yet',
+      description:
+        'Invite OpenComputer to your Slack and your computer wakes up, ready in seconds.',
+    }
+  }
   if (!computer) {
     return {
       badge: 'starting',
@@ -100,13 +115,16 @@ export const SLOW_POLL_MS = 30_000
 /**
  * Re-read quickly while something is about to change on its own (setting up,
  * waking, removing, or a running computer that has not connected yet), and
- * slowly otherwise. A sleeping or failed computer changes only on request.
+ * slowly otherwise. A sleeping or failed computer changes only on request,
+ * and so does one not set up yet: it comes with the Slack install, whose
+ * redirect reloads the page.
  */
 export function computerPollInterval(
   status: ComputerStatus | undefined,
 ): number {
-  const computer = status?.computer
-  if (!computer) return FAST_POLL_MS
+  if (!status) return FAST_POLL_MS
+  const computer = status.computer
+  if (!computer) return status.slack.installed ? FAST_POLL_MS : SLOW_POLL_MS
   switch (computer.state) {
     case 'provisioning':
     case 'waking':
@@ -227,7 +245,17 @@ export type HeroCopy = { headline: string; subline: string }
 export function heroCopy(
   computer: Computer | null,
   plan: ComputerStatus['plan'],
+  slackInstalled = false,
 ): HeroCopy {
+  // Before the Slack install there is no computer: the install is the moment
+  // it comes alive, so that is what the page asks for.
+  if (!computer && !slackInstalled) {
+    return {
+      headline: 'Your computer is one click away.',
+      subline:
+        'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
+    }
+  }
   switch (computer?.state ?? 'provisioning') {
     case 'provisioning':
       return {

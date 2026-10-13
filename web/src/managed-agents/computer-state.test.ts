@@ -108,7 +108,7 @@ describe('computer contract schemas', () => {
 
 describe('computer state copy', () => {
   it.each([
-    [null, 'Setting up'],
+    [null, 'Not set up yet'],
     [{ ...computer, state: 'provisioning' as const }, 'Setting up'],
     [computer, 'Online'],
     [{ ...computer, connected: false }, 'Offline'],
@@ -120,6 +120,15 @@ describe('computer state copy', () => {
     const presentation = computerPresentation(value, 'free')
     expect(presentation.label).toBe(label)
     expect(presentation.description).not.toMatch(FORBIDDEN)
+  })
+
+  it('is not set up before the Slack install, and setting up once Slack is in', () => {
+    expect(computerPresentation(null, 'free')).toMatchObject({
+      badge: 'not_deployed',
+      label: 'Not set up yet',
+    })
+    expect(computerPresentation(null, 'free').description).toContain('Slack')
+    expect(computerPresentation(null, 'free', true).label).toBe('Setting up')
   })
 
   it('suggests an upgrade only to free organizations whose computer sleeps', () => {
@@ -159,7 +168,14 @@ describe('computer state copy', () => {
         )
       }
     }
-    expect(heroCopy(null, 'free').headline).toBe(
+    // Before the Slack install: the install is what brings it to life.
+    expect(heroCopy(null, 'free')).toEqual({
+      headline: 'Your computer is one click away.',
+      subline:
+        'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
+    })
+    // Installed, the computer not there yet: on its way.
+    expect(heroCopy(null, 'free', true).headline).toBe(
       heroCopy({ ...computer, state: 'provisioning' }, 'free').headline,
     )
   })
@@ -174,7 +190,12 @@ describe('computer state copy', () => {
 describe('computer polling', () => {
   it('polls quickly while the computer is changing or not connected', () => {
     expect(computerPollInterval(undefined)).toBe(FAST_POLL_MS)
-    expect(computerPollInterval(status({ computer: null }))).toBe(FAST_POLL_MS)
+    // Slack installed and the computer on its way.
+    expect(
+      computerPollInterval(
+        status({ computer: null, slack: { installed: true, teamId: 'T1' } }),
+      ),
+    ).toBe(FAST_POLL_MS)
     for (const state of ['provisioning', 'waking', 'deleting'] as const) {
       expect(
         computerPollInterval(status({ computer: { ...computer, state } })),
@@ -187,8 +208,9 @@ describe('computer polling', () => {
     ).toBe(FAST_POLL_MS)
   })
 
-  it('polls slowly once online, asleep or failed', () => {
+  it('polls slowly once online, asleep or failed, and before the Slack install', () => {
     expect(computerPollInterval(status())).toBe(SLOW_POLL_MS)
+    expect(computerPollInterval(status({ computer: null }))).toBe(SLOW_POLL_MS)
     for (const state of ['parked', 'failed'] as const) {
       expect(
         computerPollInterval(
