@@ -10,19 +10,10 @@ import { ServiceLogo } from '@/components/service-logo'
 import { SlackMark } from '@/components/slack-mark'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AuthContext } from '@/hooks/useAuth'
 import { notifyError } from '@/lib/errors'
+import { cn } from '@/lib/utils'
 import {
   addManagedGitHubConnection,
   claimManagedAgentChannelIdentity,
@@ -490,7 +481,10 @@ function GitHubConnection() {
   )
 }
 
-/** Google and Linear accounts agents use; secondary to Slack and GitHub. */
+/**
+ * Google and Linear accounts agents use; secondary to Slack and GitHub. Every
+ * service gets a row whether or not it is connected, with its accounts below.
+ */
 function OtherConnections() {
   const connections = useQuery({
     queryKey: ['managed-agent-connections'],
@@ -508,37 +502,102 @@ function OtherConnections() {
       displayManagedAgentName(agent),
     ]),
   )
-  const [addOpen, setAddOpen] = useState(false)
+  const [connecting, setConnecting] = useState<string>()
   const [toRemove, setToRemove] = useState<ManagedAgentConnection>()
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState<string>()
   const accounts = connections.data ?? []
+  const listed = new Set<string>(OTHER_SERVICES.map((service) => service.id))
+  const unlisted = accounts.filter(
+    (connection) => !listed.has(connectionServiceId(connection) ?? ''),
+  )
+
+  const connect = (service: (typeof OTHER_SERVICES)[number]) => {
+    // The alias is how agents pick an account in callService(); the first
+    // account of a service is named after it, later ones are numbered.
+    const taken = new Set(accounts.map((connection) => connection.label))
+    let alias: string = service.id
+    for (let n = 2; taken.has(alias); n++) alias = `${service.id}-${n}`
+    setConnecting(service.id)
+    let authorizationWindow: Window
+    try {
+      authorizationWindow = openAuthorizationWindow()
+    } catch (error) {
+      setConnecting(undefined)
+      notifyError(`Couldn't connect ${service.name}.`, error)
+      return
+    }
+    void linkManagedAgentConnection(service.id, alias)
+      .then((result) => {
+        if (result.authorizationUrl) {
+          navigateAuthorizationWindow(
+            authorizationWindow,
+            result.authorizationUrl,
+          )
+          return
+        }
+        authorizationWindow.close()
+        void connections.refetch()
+      })
+      .catch((error: unknown) => {
+        authorizationWindow.close()
+        notifyError(`Couldn't connect ${service.name}.`, error)
+      })
+      .finally(() => setConnecting(undefined))
+  }
+
+  const accountRow = (connection: ManagedAgentConnection) => {
+    const service = connectionServiceId(connection)
+    return (
+      <OtherRow
+        key={connection.id}
+        inset
+        title={displayResourceName(connection.label || connection.provider)}
+        detail={[
+          ...new Set([
+            connectionService(connection),
+            connection.displayName,
+            agentNames.get(connection.agentId),
+          ]),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+        trailing={
+          <>
+            {connection.status === 'connected' ? null : (
+              <StatusBadge status={connection.status} />
+            )}
+            {service ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => {
+                  setRemoveError(undefined)
+                  setToRemove(connection)
+                }}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </>
+        }
+      />
+    )
+  }
 
   return (
     <section aria-label="Other accounts" className="pt-4">
-      <div className="mb-2 flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-muted-foreground text-sm font-medium">
-            Other accounts
-          </h2>
-          <p className="text-muted-foreground text-xs">
-            Google and Linear accounts your agents use.
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={() => setAddOpen(true)}
-        >
-          <Plus className="size-3.5" aria-hidden />
-          Add account
-        </Button>
+      <div className="mb-2">
+        <h2 className="text-muted-foreground text-sm font-medium">
+          Other accounts
+        </h2>
+        <p className="text-muted-foreground text-xs">
+          Google and Linear accounts your agents use.
+        </p>
       </div>
       <Panel>
-        {connections.isLoading ? (
-          <OtherRow title={<Skeleton className="h-4 w-28" />} />
-        ) : connections.isError ? (
+        {connections.isError ? (
           <div className="flex items-center justify-between gap-4 px-5 py-3">
             <p className="text-muted-foreground text-sm">
               Accounts are temporarily unavailable.
@@ -551,69 +610,60 @@ function OtherConnections() {
               Try again
             </Button>
           </div>
-        ) : accounts.length ? (
+        ) : (
           <div className="divide-y">
-            {accounts.map((connection) => {
-              const service = connectionServiceId(connection)
-              const agentName = agentNames.get(connection.agentId)
+            {OTHER_SERVICES.map((service) => {
+              const serviceAccounts = accounts.filter(
+                (connection) => connectionServiceId(connection) === service.id,
+              )
               return (
-                <OtherRow
-                  key={connection.id}
-                  icon={
-                    service === 'github' ? (
-                      <GithubMark className="size-4" />
-                    ) : (
-                      <ServiceLogo service={service} className="size-4" />
-                    )
-                  }
-                  title={displayResourceName(
-                    connection.label || connection.provider,
-                  )}
-                  detail={[
-                    ...new Set([
-                      connectionService(connection),
-                      connection.displayName,
-                      agentName,
-                    ]),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                  trailing={
-                    <>
-                      {connection.status === 'connected' ? null : (
-                        <StatusBadge status={connection.status} />
-                      )}
-                      {service ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => {
-                            setRemoveError(undefined)
-                            setToRemove(connection)
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      ) : null}
-                    </>
-                  }
-                />
+                <div key={service.id} className="divide-y">
+                  <OtherRow
+                    icon={
+                      <ServiceLogo service={service.id} className="size-4" />
+                    }
+                    title={service.name}
+                    detail={
+                      connections.isLoading ? (
+                        <Skeleton className="mt-1 h-3 w-20" />
+                      ) : serviceAccounts.length ? (
+                        `${serviceAccounts.length} ${serviceAccounts.length === 1 ? 'account' : 'accounts'}`
+                      ) : (
+                        'Not connected'
+                      )
+                    }
+                    trailing={
+                      <Button
+                        variant={serviceAccounts.length ? 'ghost' : 'outline'}
+                        size="sm"
+                        className={
+                          serviceAccounts.length
+                            ? 'text-muted-foreground'
+                            : undefined
+                        }
+                        disabled={connections.isLoading || Boolean(connecting)}
+                        onClick={() => connect(service)}
+                      >
+                        {connecting === service.id ? (
+                          <Loader2
+                            className="size-3.5 animate-spin"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Plus className="size-3.5" aria-hidden />
+                        )}
+                        {serviceAccounts.length ? 'Add another' : 'Connect'}
+                      </Button>
+                    }
+                  />
+                  {serviceAccounts.map(accountRow)}
+                </div>
               )
             })}
+            {unlisted.map(accountRow)}
           </div>
-        ) : (
-          <p className="text-muted-foreground px-5 py-3 text-sm">
-            No accounts yet.
-          </p>
         )}
       </Panel>
-
-      <AddAccountDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        onConnected={() => void connections.refetch()}
-      />
 
       <ConfirmDialog
         open={Boolean(toRemove)}
@@ -660,159 +710,38 @@ function OtherConnections() {
 
 function OtherRow({
   icon,
+  inset,
   title,
   detail,
   trailing,
 }: {
   icon?: ReactNode
+  inset?: boolean
   title: ReactNode
   detail?: ReactNode
   trailing?: ReactNode
 }) {
   return (
-    <div className="flex min-h-12 items-center gap-3 py-2.5 pr-3 pl-5">
+    <div
+      className={cn(
+        'flex min-h-12 items-center gap-3 py-2.5 pr-3',
+        inset ? 'pl-13' : 'pl-5',
+      )}
+    >
       {icon ? (
-        <div className="text-muted-foreground flex size-5 shrink-0 items-center justify-center">
+        <div className="flex size-5 shrink-0 items-center justify-center">
           {icon}
         </div>
       ) : null}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{title}</p>
         {detail ? (
-          <p className="text-muted-foreground truncate text-xs">{detail}</p>
+          <div className="text-muted-foreground truncate text-xs">{detail}</div>
         ) : null}
       </div>
       {trailing ? (
         <div className="flex shrink-0 items-center gap-1">{trailing}</div>
       ) : null}
     </div>
-  )
-}
-
-function AddAccountDialog({
-  open,
-  onOpenChange,
-  onConnected,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConnected: () => void
-}) {
-  const [service, setService] = useState<string>('gmail')
-  const [alias, setAlias] = useState('gmail')
-  const [connecting, setConnecting] = useState(false)
-  const [error, setError] = useState<string>()
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (connecting) return
-        onOpenChange(next)
-        if (!next) setError(undefined)
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add account</DialogTitle>
-          <DialogDescription>
-            Choose a service and a memorable alias for this account.
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            const label = alias.trim()
-            if (!label || connecting) return
-            setError(undefined)
-            let authorizationWindow: Window
-            try {
-              authorizationWindow = openAuthorizationWindow()
-            } catch (cause) {
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : 'The account could not be connected.',
-              )
-              return
-            }
-            setConnecting(true)
-            void linkManagedAgentConnection(service, label)
-              .then((result) => {
-                if (result.authorizationUrl) {
-                  navigateAuthorizationWindow(
-                    authorizationWindow,
-                    result.authorizationUrl,
-                  )
-                } else {
-                  authorizationWindow.close()
-                  onConnected()
-                }
-                onOpenChange(false)
-              })
-              .catch((cause: unknown) => {
-                authorizationWindow.close()
-                setError(
-                  cause instanceof Error
-                    ? cause.message
-                    : 'The account could not be connected.',
-                )
-              })
-              .finally(() => setConnecting(false))
-          }}
-        >
-          <div className="grid gap-2">
-            <Label htmlFor="connection-service">Service</Label>
-            <select
-              id="connection-service"
-              value={service}
-              onChange={(event) => {
-                setService(event.target.value)
-                setAlias(event.target.value)
-              }}
-              className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
-            >
-              {OTHER_SERVICES.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="connection-alias">Account alias</Label>
-            <Input
-              id="connection-alias"
-              value={alias}
-              onChange={(event) => setAlias(event.target.value)}
-              pattern="[A-Za-z0-9._-]+"
-              placeholder="work-gmail"
-              required
-            />
-            <p className="text-muted-foreground text-xs">
-              Agents use this alias to select the account in callService().
-            </p>
-          </div>
-          {error ? <p className="text-destructive text-sm">{error}</p> : null}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={connecting}
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!alias.trim() || connecting}>
-              {connecting ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : null}
-              Continue
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   )
 }

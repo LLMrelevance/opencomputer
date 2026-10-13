@@ -142,7 +142,7 @@ describe('Connections', () => {
     )
   })
 
-  it('lists Google and Linear accounts below Slack and GitHub', async () => {
+  it('lists every other service, connected or not, below Slack and GitHub', async () => {
     await render()
     const text = container.textContent ?? ''
     expect(text.indexOf('Other accounts')).toBeGreaterThan(
@@ -151,13 +151,57 @@ describe('Connections', () => {
     const section = container.querySelector(
       'section[aria-label="Other accounts"]',
     )
-    expect(section?.textContent).toContain(
-      'Linear · Acme Linear · email-triage',
+    const sectionText = section?.textContent ?? ''
+    for (const service of [
+      'Gmail',
+      'Google Calendar',
+      'Google Drive',
+      'Google Sheets',
+      'Linear',
+    ]) {
+      expect(sectionText).toContain(service)
+    }
+    expect(sectionText).toContain('Not connected')
+    expect(sectionText).toContain('1 account')
+    expect(sectionText).toContain('Linear · Acme Linear · email-triage')
+    const buttons = [...(section?.querySelectorAll('button') ?? [])].map(
+      (button) => button.textContent,
     )
-    const buttons = [...(section?.querySelectorAll('button') ?? [])]
-    expect(buttons.some((button) => button.textContent === 'Remove')).toBe(true)
-    expect(
-      buttons.some((button) => button.textContent?.includes('Add account')),
-    ).toBe(true)
+    expect(buttons.filter((label) => label === 'Connect')).toHaveLength(4)
+    expect(buttons).toContain('Add another')
+    expect(buttons).toContain('Remove')
+  })
+
+  it('connects a service in a new window, named after the service', async () => {
+    const authorizationWindow = {
+      opener: null,
+      document: { title: '', body: { textContent: '' } },
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    }
+    vi.spyOn(window, 'open').mockReturnValue(
+      authorizationWindow as unknown as Window,
+    )
+    api.linkManagedAgentConnection.mockResolvedValue({
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/auth',
+    })
+    await render()
+    const section = container.querySelector(
+      'section[aria-label="Other accounts"]',
+    )
+    const connect = [...(section?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Connect',
+    )
+    await act(async () => {
+      connect?.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(api.linkManagedAgentConnection).toHaveBeenCalledWith(
+      'gmail',
+      'gmail',
+    )
+    expect(authorizationWindow.location.replace).toHaveBeenCalledWith(
+      'https://accounts.google.com/o/oauth2/auth',
+    )
   })
 })
