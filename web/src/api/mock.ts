@@ -1365,6 +1365,25 @@ const ROUTES: Array<[RegExp, Handler]> = [
     () => ({ sessions: previewComputerSessions() }),
   ],
   [
+    /^\/managed-agents\/github$/,
+    () => ({
+      // The same accounts the computer reports, with none before setup.
+      connections: previewComputer().github.installations.map(
+        (installation, index) => ({
+          id: `ghc_preview_${installation.id}`,
+          githubInstallationId: 1000 + Number(installation.id),
+          accountLogin: installation.accountLogin,
+          accountType: 'Organization',
+          repositorySelection: index === 0 ? 'all' : 'selected',
+          state: 'active',
+          createdAt: new Date(BASE).toISOString(),
+          updatedAt: new Date(BASE).toISOString(),
+        }),
+      ),
+      app: { slug: 'opencomputerdev' },
+    }),
+  ],
+  [
     /^\/managed-agents\/account\/runtime-profile$/,
     () => ({ customized: false, displayName: 'OpenComputer default' }),
   ],
