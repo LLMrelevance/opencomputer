@@ -572,3 +572,70 @@ describe("/api/managed-agents/linear — public mounts", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("/api/managed-agents/computer/slack — public mounts", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The organization-level Slack app calls these URLs without OpenComputer
+  // credentials, so they must be routed above the API-key check.
+  it("forwards the OAuth redirect without an API key", async () => {
+    const location = "https://app.opencomputer.dev/computer?slack=error&reason=state_expired";
+    const fetchSpy = vi.fn(
+      async (_target: URL | RequestInfo, _init?: RequestInit) =>
+        new Response(null, { status: 302, headers: { location } }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const resp = await worker.fetch(
+      new Request(
+        "https://app.opencomputer.dev/api/managed-agents/computer/slack/callback?state=x&code=y",
+      ),
+      { ...env, MANAGED_AGENTS_API_URL: "https://managedagents.test" },
+      ctx,
+    );
+
+    expect(resp.status).toBe(302);
+    expect(resp.headers.get("location")).toBe(location);
+    expect(fetchSpy.mock.calls[0][0].toString()).toBe(
+      "https://managedagents.test/v1/computer/slack/callback?state=x&code=y",
+    );
+  });
+
+  it.each([
+    ["events", "/v1/webhooks/computer/slack/events"],
+    ["interactivity", "/v1/webhooks/computer/slack/interactivity"],
+  ])("forwards signed Slack %s without an API key", async (kind, upstreamPath) => {
+    const fetchSpy = vi.fn(
+      async (_target: URL | RequestInfo, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const resp = await worker.fetch(
+      new Request(
+        `https://app.opencomputer.dev/api/managed-agents/computer/slack/${kind}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-slack-signature": "v0=abc",
+            "x-slack-request-timestamp": "1700000000",
+          },
+          body: '{"type":"event_callback"}',
+        },
+      ),
+      { ...env, MANAGED_AGENTS_API_URL: "https://managedagents.test" },
+      ctx,
+    );
+
+    expect(resp.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0].toString()).toBe(
+      `https://managedagents.test${upstreamPath}`,
+    );
+    const headers = new Headers(fetchSpy.mock.calls[0][1]?.headers);
+    expect(headers.get("x-slack-signature")).toBe("v0=abc");
+  });
+});

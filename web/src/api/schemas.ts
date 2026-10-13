@@ -21,6 +21,8 @@ export const MeResponseSchema = z.object({
   orgs: z.array(OrgInfoSchema).optional(),
   durableSessionsEnabled: z.boolean(),
   infrastructureEnabled: z.boolean(),
+  /** Work 052 rollout: the organization has its computer. Absent on older edges. */
+  computerEnabled: z.boolean().optional(),
   authMode: z.string().optional(),
   capabilities: z
     .object({

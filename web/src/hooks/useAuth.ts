@@ -10,6 +10,7 @@ export interface AuthUser {
   orgs?: OrgInfo[]
   durableSessionsEnabled: boolean
   infrastructureEnabled: boolean
+  computerEnabled?: boolean
   authMode?: string
   capabilities?: {
     signOut: boolean

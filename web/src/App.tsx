@@ -29,6 +29,7 @@ const SandboxDetail = lazy(() => import('./pages/SandboxDetail'))
 const SandboxWebhooks = lazy(() => import('./pages/SandboxWebhooks'))
 const DeferredAction = lazy(() => import('./pages/DeferredAction'))
 const ManagedAgentsHome = lazy(() => import('./managed-agents/Home'))
+const ManagedComputer = lazy(() => import('./managed-agents/Computer'))
 const ManagedAgentDetail = lazy(() => import('./managed-agents/Detail'))
 const ManagedProjectDetail = lazy(() => import('./managed-agents/Project'))
 const ManagedSessionDetail = lazy(() => import('./managed-agents/Session'))
@@ -84,6 +85,7 @@ export default function App() {
                 )
               }
             />
+            <Route path="computer" element={<ManagedComputer />} />
             <Route
               path="model-access/callback"
               element={<ModelAccessCallback />}

@@ -1,31 +1,80 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ProjectsHome from './Home'
 import { INSTALL_CLI_COMMAND } from './ProjectOnboarding'
 
-function renderProjects(projects: unknown[], archived: unknown[] = []) {
+import { AuthContext } from '@/hooks/useAuth'
+
+const authWith = (computerEnabled: boolean) =>
+  ({
+    user: {
+      id: 'u1',
+      email: 'a@b.c',
+      orgId: 'org_1',
+      durableSessionsEnabled: false,
+      infrastructureEnabled: false,
+      computerEnabled,
+    },
+    loading: false,
+    error: null,
+    switchOrg: async () => {},
+    refreshUser: async () => {},
+  }) as const
+
+function renderProjects(
+  projects: unknown[],
+  archived: unknown[] = [],
+  computerEnabled = true,
+) {
   const queryClient = new QueryClient()
   queryClient.setQueryData(['managed-projects'], projects)
   queryClient.setQueryData(['managed-projects', 'archived'], archived)
 
   return renderToStaticMarkup(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <ProjectsHome />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <AuthContext.Provider value={authWith(computerEnabled)}>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ProjectsHome />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   )
 }
 
+function stubSessionStorage(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial))
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  })
+}
+
+afterEach(() => vi.unstubAllGlobals())
+
 describe('projects home onboarding', () => {
-  it('shows CLI onboarding when the account has no projects', () => {
+  it('sends the first landing without projects to the computer, not CLI onboarding', () => {
+    // An organization's first screen is its computer (work 052).
+    stubSessionStorage()
+    const markup = renderProjects([])
+
+    expect(markup).not.toContain(INSTALL_CLI_COMMAND)
+    expect(markup).not.toContain('Create project')
+  })
+
+  it('keeps CLI onboarding for an organization without the computer (rollout flag)', () => {
+    stubSessionStorage()
+    const markup = renderProjects([], [], false)
+
+    expect(markup).toContain(INSTALL_CLI_COMMAND)
+  })
+
+  it('shows CLI onboarding when Projects is opened after the first landing', () => {
+    stubSessionStorage({ 'oc.computerLanding': '1' })
     const markup = renderProjects([])
 
     expect(markup).toContain(INSTALL_CLI_COMMAND)
-    expect(markup).not.toContain('Create project')
-    expect(markup).not.toContain('Start from a template')
   })
 
   it('sends New project to the same CLI onboarding route', () => {

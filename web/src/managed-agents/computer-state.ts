@@ -1,0 +1,392 @@
+import type {
+  Computer,
+  ComputerSession,
+  ComputerSessionStatus,
+  ComputerStatus,
+} from './computer-api'
+
+// Presentation of the organization's computer: plain-language copy for its
+// state, the setup checklist and how often the page re-reads it. Kept pure so
+// the mapping is tested without rendering. Public copy names the computer by
+// state and capacity only (design 002, forbidden vocabulary).
+
+export const START_SESSION_COPY =
+  'Mention @OpenComputer in any channel, or DM it.'
+
+export type ComputerPresentation = {
+  /** StatusBadge key: picks the tone and icon. */
+  badge: string
+  label: string
+  description: string
+}
+
+export function computerPresentation(
+  computer: Computer | null,
+  plan: ComputerStatus['plan'],
+): ComputerPresentation {
+  if (!computer) {
+    return {
+      badge: 'starting',
+      label: 'Setting up',
+      description: 'We are setting up your computer. This takes a few minutes.',
+    }
+  }
+  switch (computer.state) {
+    case 'provisioning':
+      return {
+        badge: 'starting',
+        label: 'Setting up',
+        description:
+          'We are setting up your computer. This takes a few minutes.',
+      }
+    case 'ready':
+      return computer.connected
+        ? {
+            badge: 'running',
+            label: 'Online',
+            description: 'Your computer is on and ready for work.',
+          }
+        : {
+            badge: 'stopped',
+            label: 'Offline',
+            description:
+              'Your computer is on but not connected. It reconnects by itself, usually within a minute.',
+          }
+    case 'parked':
+      return {
+        badge: 'hibernated',
+        label: 'Sleeping',
+        description:
+          plan === 'paid'
+            ? 'Your computer is asleep. It wakes when you message it.'
+            : 'Your computer is asleep. It wakes when you message it; upgrade to keep it always on.',
+      }
+    case 'waking':
+      return {
+        badge: 'starting',
+        label: 'Waking',
+        description:
+          'Your computer is waking up with everything on its disk intact. This takes a minute or two.',
+      }
+    case 'failed':
+      return {
+        badge: 'failed',
+        label: 'Failed',
+        description:
+          computer.lastError ??
+          'Something went wrong with your computer. Try again, or contact support if it keeps failing.',
+      }
+    case 'deleting':
+      return {
+        badge: 'deleting',
+        label: 'Removing',
+        description: 'Your computer is being removed.',
+      }
+  }
+}
+
+/** Whether the computer has been set up (it may be asleep or waking). */
+export function computerIsSetUp(computer: Computer | null): boolean {
+  return (
+    computer?.state === 'ready' ||
+    computer?.state === 'parked' ||
+    computer?.state === 'waking'
+  )
+}
+
+export const FAST_POLL_MS = 5_000
+export const SLOW_POLL_MS = 30_000
+
+/**
+ * Re-read quickly while something is about to change on its own (setting up,
+ * waking, removing, or a running computer that has not connected yet), and
+ * slowly otherwise. A sleeping or failed computer changes only on request.
+ */
+export function computerPollInterval(
+  status: ComputerStatus | undefined,
+): number {
+  const computer = status?.computer
+  if (!computer) return FAST_POLL_MS
+  switch (computer.state) {
+    case 'provisioning':
+    case 'waking':
+    case 'deleting':
+      return FAST_POLL_MS
+    case 'ready':
+      return computer.connected ? SLOW_POLL_MS : FAST_POLL_MS
+    case 'parked':
+    case 'failed':
+      return SLOW_POLL_MS
+  }
+}
+
+export type ChecklistStep = {
+  id: 'computer' | 'slack' | 'github' | 'session'
+  title: string
+  done: boolean
+}
+
+export function computerChecklist(
+  status: ComputerStatus,
+  sessions: ComputerSession[] | undefined,
+): ChecklistStep[] {
+  return [
+    {
+      id: 'computer',
+      title: 'Computer ready',
+      done: computerIsSetUp(status.computer),
+    },
+    {
+      id: 'slack',
+      title: 'Install the Slack app',
+      done: status.slack.installed,
+    },
+    { id: 'github', title: 'Connect GitHub', done: status.github.connected },
+    {
+      id: 'session',
+      title: 'Start a session',
+      done: (sessions?.length ?? 0) > 0,
+    },
+  ]
+}
+
+export const SESSION_STATUS: Record<
+  ComputerSessionStatus,
+  { badge: string; label: string }
+> = {
+  starting: { badge: 'starting', label: 'Starting' },
+  busy: { badge: 'running', label: 'Working' },
+  idle: { badge: 'idle', label: 'Idle' },
+  ended: { badge: 'stopped', label: 'Ended' },
+  error: { badge: 'error', label: 'Error' },
+}
+
+const SLACK_RETURN_REASONS = new Map<string, string>([
+  ['access_denied', 'The Slack install was cancelled.'],
+  ['cancelled', 'The Slack install was cancelled.'],
+  ['invalid_state', 'The install link expired. Start the install again.'],
+  ['state_expired', 'The install link expired. Start the install again.'],
+])
+
+/** Reasons that mean the workspace is already another organization's. */
+const ALREADY_LINKED_REASONS = new Set([
+  'team_already_linked',
+  'already_linked',
+])
+
+export type SlackReturn =
+  | { kind: 'connected' }
+  | { kind: 'error'; message: string }
+  /**
+   * The workspace already works with OpenComputer in another organization.
+   * `notified`: the person who set it up there was asked in Slack to invite
+   * this person.
+   */
+  | { kind: 'already_linked'; notified: boolean }
+  | null
+
+/** The query parameters Slack's install redirect adds, removed once handled. */
+export const SLACK_RETURN_PARAMS = ['slack', 'reason', 'notified'] as const
+
+/** Reads `?slack=connected|error&reason=&notified=` from Slack's install redirect. */
+export function slackReturnFromSearch(search: URLSearchParams): SlackReturn {
+  const slack = search.get('slack')
+  if (slack === 'connected') return { kind: 'connected' }
+  if (slack !== 'error') return null
+  const reason = search.get('reason') ?? ''
+  if (ALREADY_LINKED_REASONS.has(reason)) {
+    return { kind: 'already_linked', notified: search.get('notified') === '1' }
+  }
+  return {
+    kind: 'error',
+    message:
+      SLACK_RETURN_REASONS.get(reason) ??
+      'Slack could not be connected. Try again.',
+  }
+}
+
+/** What the already-linked panel says; the other organization is never named. */
+export function alreadyLinkedCopy(notified: boolean): {
+  headline: string
+  body: string
+} {
+  return {
+    headline: 'Your team is already here.',
+    body: notified
+      ? "Your Slack workspace already works with OpenComputer in another organization. We've messaged the person who set it up in Slack to invite you. Once you're invited, switch to that organization from the menu at the top left."
+      : 'Your Slack workspace already works with OpenComputer in another organization. Ask a teammate who uses it to invite you, then switch to that organization from the menu at the top left.',
+  }
+}
+
+export type HeroCopy = { headline: string; subline: string }
+
+/**
+ * The page's headline for each state: what the computer means to the team,
+ * never what it is made of (Mohamed, 2026-10-11: no specs, make people want it).
+ */
+export function heroCopy(
+  computer: Computer | null,
+  plan: ComputerStatus['plan'],
+): HeroCopy {
+  switch (computer?.state ?? 'provisioning') {
+    case 'provisioning':
+      return {
+        headline: 'Your computer is coming to life.',
+        subline:
+          'A minute or two, and your team has a colleague that never logs off. Invite it into Slack while you wait.',
+      }
+    case 'ready':
+      return computer?.connected
+        ? {
+            headline: 'Your team just got a colleague that never logs off.',
+            subline:
+              'It knows your code, lives in your Slack, and keeps going while you sleep. Ask it anything. Hand it anything.',
+          }
+        : {
+            headline: 'Reconnecting.',
+            subline:
+              'Your computer is on and finding its way back. Usually within a minute.',
+          }
+    case 'parked':
+      return {
+        headline: 'Resting, not gone.',
+        subline:
+          plan === 'paid'
+            ? 'Everything it knows is right where it left it. Mention it and it is back in a minute.'
+            : 'Everything it knows is right where it left it. Mention it and it is back in a minute. Upgrade and it never sleeps.',
+      }
+    case 'waking':
+      return {
+        headline: 'Waking up.',
+        subline:
+          'Picking up exactly where it left off. Your message is already waiting for it.',
+      }
+    case 'failed':
+      return {
+        headline: 'Something went wrong.',
+        subline:
+          computer?.lastError ??
+          'Your computer could not start. Try again, or tell us if it keeps happening.',
+      }
+    case 'deleting':
+      return {
+        headline: 'Saying goodbye.',
+        subline: 'Your computer is being removed.',
+      }
+  }
+}
+
+/** Things to ask first: concrete, so the first message is easy to write. */
+export const EXAMPLE_ASKS = [
+  'why is the checkout test flaky? Fix it and open a PR.',
+  'walk me through how billing works in our codebase.',
+  'upgrade us to the latest React and tell me what broke.',
+  'every morning, summarize what changed in main yesterday.',
+] as const
+
+/**
+ * Onboarded: the computer is in Slack and knows the code. From then on the
+ * page stops selling and setting up, and shows the work instead (Mohamed,
+ * 2026-10-11: "mainly showcase the sessions that are live").
+ */
+export function computerIsOnboarded(status: ComputerStatus): boolean {
+  return status.slack.installed && status.github.connected
+}
+
+/** A session the computer is working on right now. */
+export function sessionIsLive(session: ComputerSession): boolean {
+  return session.status === 'starting' || session.status === 'busy'
+}
+
+/** Live sessions and everything else, each newest first. */
+export function splitSessions(sessions: readonly ComputerSession[]): {
+  live: ComputerSession[]
+  recent: ComputerSession[]
+} {
+  const sorted = [...sessions].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )
+  return {
+    live: sorted.filter(sessionIsLive),
+    recent: sorted.filter((session) => !sessionIsLive(session)),
+  }
+}
+
+export const LIVE_SESSION_POLL_MS = 5_000
+export const SESSION_POLL_MS = 15_000
+
+/** Watch closely while something is being worked on. */
+export function sessionPollInterval(
+  sessions: readonly ComputerSession[] | undefined,
+): number {
+  return sessions?.some(sessionIsLive) ? LIVE_SESSION_POLL_MS : SESSION_POLL_MS
+}
+
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+/** "just now", "2 min ago", "3 hr ago", "yesterday", "4 days ago", then a date. */
+export function relativeTime(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const elapsed = Math.max(0, now - then)
+  if (elapsed < MINUTE) return 'just now'
+  if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} min ago`
+  if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} hr ago`
+  const days = Math.floor(elapsed / DAY)
+  if (days === 1) return 'yesterday'
+  if (days < 7) return `${days} days ago`
+  return new Date(then).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year:
+      new Date(then).getFullYear() === new Date(now).getFullYear()
+        ? undefined
+        : 'numeric',
+  })
+}
+
+export type StatusLine = { headline: string; detail?: string }
+
+/**
+ * The one line under the status dot once onboarded: short, in the hero's
+ * voice, and about the work when there is work.
+ */
+export function compactStatusLine(
+  computer: Computer | null,
+  plan: ComputerStatus['plan'],
+  liveCount: number,
+): StatusLine {
+  switch (computer?.state ?? 'provisioning') {
+    case 'provisioning':
+      return { headline: 'Coming to life. A minute or two.' }
+    case 'ready':
+      if (!computer?.connected) {
+        return { headline: 'Reconnecting. Usually within a minute.' }
+      }
+      if (liveCount === 0) return { headline: 'Ready when you are.' }
+      return {
+        headline:
+          liveCount === 1
+            ? 'On it. One thing in flight.'
+            : `On it. ${liveCount} things in flight.`,
+      }
+    case 'parked':
+      return {
+        headline: 'Resting — wakes when you mention it.',
+        detail: plan === 'paid' ? undefined : 'Upgrade and it never sleeps.',
+      }
+    case 'waking':
+      return { headline: 'Waking up. Picking up where it left off.' }
+    case 'failed':
+      return {
+        headline: 'Something went wrong.',
+        detail:
+          computer?.lastError ??
+          'Your computer could not start. Try again, or tell us if it keeps happening.',
+      }
+    case 'deleting':
+      return { headline: 'Saying goodbye.' }
+  }
+}

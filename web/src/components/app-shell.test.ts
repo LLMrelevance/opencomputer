@@ -9,17 +9,27 @@ describe('managed agents navigation', () => {
   }
 
   it('lists the project list on the homepage even without advanced areas', () => {
-    expect(
-      managedAgentsNav(defaults).map((group) =>
-        group.items.map((item) => item.label),
-      ),
-    ).toEqual([['Projects'], ['Connections']])
-    expect(managedAgentsNav(defaults)[0]?.items[0]?.end).toBe(true)
-    expect(managedAgentsNav(defaults)[1]?.items[0]).toMatchObject({
+    const nav = managedAgentsNav({ ...defaults, computerEnabled: true })
+    expect(nav.map((group) => group.items.map((item) => item.label))).toEqual([
+      ['Computer', 'Projects'],
+      ['Connections'],
+    ])
+    expect(nav[0]?.items[0]).toMatchObject({
+      to: '/computer',
+      label: 'Computer',
+    })
+    expect(nav[0]?.items[1]?.end).toBe(true)
+    expect(nav[1]?.items[0]).toMatchObject({
       to: '/managed-agents/connections',
       label: 'Connections',
       icon: Plug,
     })
+  })
+
+  it('hides the computer from organizations without it (rollout flag)', () => {
+    expect(
+      managedAgentsNav(defaults)[0]?.items.map((item) => item.label),
+    ).toEqual(['Projects'])
   })
 
   it('shows project navigation only after a project is selected', () => {

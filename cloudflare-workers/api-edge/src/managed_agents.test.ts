@@ -1,7 +1,10 @@
+import { computerEnabledFor } from "./computer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   handleAgentWebhookInvocation,
+  handleComputerSlackCallback,
+  handleComputerSlackWebhook,
   handleManagedAgentChannelConnection,
   handleManagedGitHubCallback,
   handleManagedLinearCallback,
@@ -6441,6 +6444,342 @@ describe("Linear agent connections", () => {
       { MANAGED_AGENTS_API_URL: "https://managedagents.test" },
     );
     expect(posted.status).toBe(405);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("organization computer (work 052)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const env = {
+    MANAGED_AGENTS_API_URL: "https://managedagents.test",
+    OC_MANAGED_AGENTS_SECRET: "test-secret",
+    COMPUTER_ENABLED_ORGS: "org_other, org_test",
+  };
+  const caller = { orgID: "org_test", userID: "user_test", role: "admin" };
+  const dashboard = "/api/dashboard/managed-agents";
+
+  it("hides the computer from organizations outside the rollout", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await proxyManagedAgents(
+      new Request(`https://app.opencomputer.dev${dashboard}/computer`),
+      { ...env, COMPUTER_ENABLED_ORGS: "org_other" },
+      caller,
+      dashboard,
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("enables everyone with COMPUTER_ENABLED_FOR_ALL", () => {
+    expect(computerEnabledFor({ COMPUTER_ENABLED_FOR_ALL: "true" }, "org_x")).toBe(true);
+    expect(computerEnabledFor({ COMPUTER_ENABLED_ORGS: " org_x ,org_y" }, "org_x")).toBe(true);
+    expect(computerEnabledFor({ COMPUTER_ENABLED_ORGS: "org_y" }, "org_x")).toBe(false);
+    expect(computerEnabledFor({}, "org_x")).toBe(false);
+  });
+
+  const computerStatus = {
+    computer: {
+      state: "ready",
+      connected: true,
+      vcpus: 2,
+      memoryGiB: 8,
+      diskGiB: 128,
+      lastError: null,
+      createdAt: "2026-10-11T10:00:00.000Z",
+      updatedAt: "2026-10-11T10:05:00.000Z",
+    },
+    slack: { installed: true, teamId: "T123", teamName: "Acme" },
+    github: {
+      connected: true,
+      installations: [{ id: "42", accountLogin: "acme" }],
+    },
+    plan: "free",
+  };
+
+  async function call(
+    method: string,
+    path: string,
+    upstream: Response,
+    prefix = dashboard,
+  ) {
+    const fetchMock = vi.fn().mockResolvedValue(upstream);
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await proxyManagedAgents(
+      new Request(`https://app.opencomputer.dev${prefix}${path}`, { method }),
+      env,
+      caller,
+      prefix,
+    );
+    return { response, fetchMock };
+  }
+
+  it.each([
+    ["GET", "/computer"],
+    ["POST", "/computer"],
+  ])("passes the contract body of %s /computer through unchanged", async (method) => {
+    const { response, fetchMock } = await call(
+      method,
+      "/computer",
+      Response.json({
+        ...computerStatus,
+        computer: {
+          ...computerStatus.computer,
+          vmSize: "private-size",
+          region: "private-region",
+          hostId: "private-host",
+        },
+        accountId: "acct_private",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual(computerStatus);
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(target.toString()).toBe("https://managedagents.test/v1/computer");
+    expect(init.method).toBe(method);
+    expect(
+      new Headers(init.headers).get("x-opencomputer-agent-token"),
+    ).toBeTruthy();
+  });
+
+  it("passes a missing computer and an unlinked Slack through", async () => {
+    const body = {
+      computer: null,
+      slack: { installed: false },
+      github: { connected: false, installations: [] },
+      plan: "free",
+    };
+    const { response } = await call("GET", "/computer", Response.json(body));
+    await expect(response.json()).resolves.toEqual(body);
+  });
+
+  it("lists computer sessions with their Slack links", async () => {
+    const session = {
+      key: "C1:1700000000.000100",
+      title: "Fix the flaky test",
+      channelId: "C1",
+      threadTs: "1700000000.000100",
+      ownerSlackUserId: "U1",
+      status: "busy",
+      updatedAt: "2026-10-11T10:05:00.000Z",
+      slackUrl: "https://acme.slack.com/archives/C1/p1700000000000100",
+    };
+    const { response, fetchMock } = await call(
+      "GET",
+      "/computer/sessions",
+      Response.json({
+        sessions: [
+          { ...session, runnerPid: 4242 },
+          { ...session, key: "k2", ownerSlackUserId: null, slackUrl: "javascript:alert(1)" },
+        ],
+      }),
+    );
+    await expect(response.json()).resolves.toEqual({
+      sessions: [
+        session,
+        { ...session, key: "k2", ownerSlackUserId: null, slackUrl: null },
+      ],
+    });
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe(
+      "https://managedagents.test/v1/computer/sessions",
+    );
+  });
+
+  it("returns the Slack authorize URL for the install", async () => {
+    const url =
+      "https://slack.com/oauth/v2/authorize?client_id=1.2&scope=chat%3Awrite&state=opaque";
+    const { response } = await call(
+      "POST",
+      "/computer/slack/install",
+      Response.json({ url }),
+    );
+    await expect(response.json()).resolves.toEqual({ url });
+  });
+
+  it("answers an unlink with no content", async () => {
+    const { response, fetchMock } = await call(
+      "DELETE",
+      "/computer/slack",
+      Response.json({ ok: true }),
+    );
+    expect(response.status).toBe(204);
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(target.toString()).toBe(
+      "https://managedagents.test/v1/computer/slack",
+    );
+    expect(init.method).toBe("DELETE");
+  });
+
+  it.each([
+    ["PUT", "/computer"],
+    ["DELETE", "/computer"],
+    ["GET", "/computer/host"],
+    ["GET", "/computer/slack/callback"],
+    ["POST", "/computer/sessions"],
+  ])("refuses %s %s outside the contract", async (method, path) => {
+    const { response, fetchMock } = await call(
+      method,
+      path,
+      Response.json({}),
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the computer off the API-key mount", async () => {
+    const { response, fetchMock } = await call(
+      "GET",
+      "/computer",
+      Response.json(computerStatus),
+      "/api/managed-agents",
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a known backend code to fixed copy", async () => {
+    const { response } = await call(
+      "POST",
+      "/computer",
+      Response.json(
+        {
+          error: {
+            code: "computer_not_configured",
+            message: "AZURE_CLIENT_SECRET missing in eastus",
+          },
+        },
+        { status: 503 },
+      ),
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: "computer_not_configured",
+        message: "Computers are not available for this organization yet.",
+      },
+    });
+  });
+
+  it("never passes an unknown backend message through", async () => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json(
+        { error: { code: "allocation_failed", message: "Standard_D2as_v7 in eastus" } },
+        { status: 500 },
+      ),
+    );
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(
+      "Your computer is temporarily unavailable. Try again shortly.",
+    );
+  });
+
+  it("forwards the Slack OAuth redirect to the computer callback", async () => {
+    const location = "https://app.opencomputer.dev/computer?slack=connected";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(null, { status: 302, headers: { location } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleComputerSlackCallback(
+      new Request(
+        "https://app.opencomputer.dev/api/managed-agents/computer/slack/callback?code=c&state=s",
+      ),
+      { MANAGED_AGENTS_API_URL: "https://managedagents.test" },
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(location);
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe(
+      "https://managedagents.test/v1/computer/slack/callback?code=c&state=s",
+    );
+  });
+
+  it.each([
+    [
+      "events" as const,
+      "application/json",
+      '{"type":"url_verification","challenge":"abc"}',
+      "/v1/webhooks/computer/slack/events",
+    ],
+    [
+      "interactivity" as const,
+      "application/x-www-form-urlencoded",
+      "payload=%7B%22type%22%3A%22block_actions%22%7D",
+      "/v1/webhooks/computer/slack/interactivity",
+    ],
+  ])(
+    "forwards Slack %s byte for byte with its signature",
+    async (kind, contentType, body, upstreamPath) => {
+      const fetchMock = vi.fn(
+        async (_target: URL | RequestInfo, _init?: RequestInit) =>
+          new Response('{"challenge":"abc"}', {
+            status: 200,
+            headers: { "content-type": "application/json", "set-cookie": "x=1" },
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await handleComputerSlackWebhook(
+        new Request(
+          `https://app.opencomputer.dev/api/managed-agents/computer/slack/${kind}`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": contentType,
+              "x-slack-signature": "v0=deadbeef",
+              "x-slack-request-timestamp": "1700000000",
+              "x-slack-retry-num": "1",
+              "x-slack-retry-reason": "http_timeout",
+              cookie: "oc_session=private",
+              authorization: "Bearer private",
+            },
+            body,
+          },
+        ),
+        { MANAGED_AGENTS_API_URL: "https://managedagents.test" },
+        kind,
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toBe('{"challenge":"abc"}');
+      expect(response.headers.get("set-cookie")).toBeNull();
+      const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+      expect(target.toString()).toBe(`https://managedagents.test${upstreamPath}`);
+      expect(init.method).toBe("POST");
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body);
+      const headers = new Headers(init.headers);
+      expect(headers.get("content-type")).toBe(contentType);
+      expect(headers.get("x-slack-signature")).toBe("v0=deadbeef");
+      expect(headers.get("x-slack-request-timestamp")).toBe("1700000000");
+      expect(headers.get("x-slack-retry-num")).toBe("1");
+      expect(headers.get("x-slack-retry-reason")).toBe("http_timeout");
+      expect(headers.get("cookie")).toBeNull();
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("x-opencomputer-agent-token")).toBeNull();
+    },
+  );
+
+  it("refuses to forward Slack events over plain HTTP", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await handleComputerSlackWebhook(
+      new Request(
+        "https://app.opencomputer.dev/api/managed-agents/computer/slack/events",
+        { method: "POST", body: "{}" },
+      ),
+      { MANAGED_AGENTS_API_URL: "http://managedagents.test" },
+      "events",
+    );
+    expect(response.status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import {
   Archive,
   ChevronRight,
@@ -21,8 +21,26 @@ import {
   restoreManagedProject,
 } from './api'
 import ProjectOnboarding from './ProjectOnboarding'
+import { AuthContext } from '@/hooks/useAuth'
+
+// Set once per browser session: the first landing goes to the computer, an
+// explicit visit to Projects afterwards shows project onboarding.
+const COMPUTER_LANDING_KEY = 'oc.computerLanding'
+
+function firstLandingThisSession(): boolean {
+  try {
+    if (sessionStorage.getItem(COMPUTER_LANDING_KEY)) return false
+    sessionStorage.setItem(COMPUTER_LANDING_KEY, '1')
+    return true
+  } catch {
+    return false
+  }
+}
 
 export default function ProjectsHome() {
+  // The computer is behind a rollout flag (work 052); no auth, no computer.
+  const computerEnabled =
+    useContext(AuthContext)?.user?.computerEnabled ?? false
   const queryClient = useQueryClient()
   const projects = useQuery({
     queryKey: ['managed-projects'],
@@ -83,8 +101,15 @@ export default function ProjectsHome() {
     )
   }
 
+  // An organization's first screen is its computer (017, work 052): the
+  // first landing of a session goes there. Clicking Projects afterwards shows
+  // the CLI-first project onboarding, as before.
   if (items.length === 0 && archivedItems.length === 0) {
-    return <ProjectOnboarding />
+    return computerEnabled && firstLandingThisSession() ? (
+      <Navigate to="/computer" replace />
+    ) : (
+      <ProjectOnboarding />
+    )
   }
 
   return (
