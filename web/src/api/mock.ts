@@ -1268,8 +1268,9 @@ const previewServiceConnection = {
 
 // The organization's computer (work 052 contract). Onboarded by default with
 // one live and two recent sessions; `?computer=setup` shows the page before
-// Slack and GitHub are connected, `?computer=quiet` nothing live and
-// `?computer=parked` a sleeping computer.
+// Slack and GitHub are connected (no computer yet: it comes with the Slack
+// install), `?computer=quiet` nothing live and `?computer=parked` a sleeping
+// computer.
 function previewComputerMode() {
   return new URLSearchParams(window.location.search).get('computer')
 }
@@ -1279,16 +1280,18 @@ function previewComputer() {
   const setup = mode === 'setup'
   const parked = mode === 'parked'
   return {
-    computer: {
-      state: parked ? 'parked' : 'ready',
-      connected: !parked,
-      vcpus: 2,
-      memoryGiB: 8,
-      diskGiB: 128,
-      lastError: null,
-      createdAt: new Date(BASE).toISOString(),
-      updatedAt: new Date(BASE).toISOString(),
-    },
+    computer: setup
+      ? null
+      : {
+          state: parked ? 'parked' : 'ready',
+          connected: !parked,
+          vcpus: 2,
+          memoryGiB: 8,
+          diskGiB: 128,
+          lastError: null,
+          createdAt: new Date(BASE).toISOString(),
+          updatedAt: new Date(BASE).toISOString(),
+        },
     slack: setup
       ? { installed: false }
       : { installed: true, teamId: 'T0PREVIEW', teamName: 'Acme' },

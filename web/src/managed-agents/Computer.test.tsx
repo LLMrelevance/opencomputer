@@ -172,25 +172,65 @@ describe('Computer page', () => {
   const location = () =>
     container.querySelector('[data-testid="location"]')?.textContent
 
-  it('creates the computer on the first visit and shows it setting up', async () => {
+  it('does not create the computer on a visit: installing Slack brings it to life', async () => {
     computerApi.getComputer.mockResolvedValue(empty)
     computerApi.createComputer.mockResolvedValue(provisioning)
+    computerApi.startComputerSlackInstall.mockReturnValue(new Promise(() => {}))
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('one click away') === true,
+      'not set up hero',
+    )
+
+    expect(container.textContent).toContain('Your computer is one click away.')
+    expect(container.textContent).toContain(
+      'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
+    )
+    expect(container.textContent).toContain('Not set up yet')
+    expect(container.textContent).not.toContain('Setting up')
+    // The hero's call to action and the checklist's step 1, both the install.
+    const hero = container.querySelector('section')!
+    const invite = [...hero.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Invite it to Slack',
+    )
+    expect(invite).toBeDefined()
+    expect(container.textContent).toContain('Install Slack app')
+    // GitHub can be connected anytime.
+    expect(container.textContent).toContain('Connect GitHub')
+    expect(container.textContent).not.toMatch(/vCPU|GiB/)
+    expect(container.textContent).not.toMatch(/azure|region|instance/i)
+
+    // Nothing is created however long the page stays open.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(computerApi.createComputer).not.toHaveBeenCalled()
+
+    act(() => invite!.click())
+    await settle(
+      () => computerApi.startComputerSlackInstall.mock.calls.length === 1,
+      'Slack install started',
+    )
+  })
+
+  it('creates the computer when Slack is installed but it is still missing', async () => {
+    computerApi.getComputer.mockResolvedValue({
+      ...empty,
+      slack: { installed: true, teamId: 'T1', teamName: 'Acme' },
+    })
+    computerApi.createComputer.mockResolvedValue({
+      ...provisioning,
+      slack: { installed: true, teamId: 'T1', teamName: 'Acme' },
+    })
 
     render('/computer')
     await settle(
       () => container.textContent?.includes('coming to life') === true,
       'provisioning computer',
     )
-
     expect(computerApi.createComputer).toHaveBeenCalledTimes(1)
     expect(container.textContent).toContain('Setting up')
-    expect(container.textContent).toContain('Install Slack app')
-    expect(container.textContent).not.toMatch(/vCPU|GiB/)
-    expect(container.textContent).toContain('Connect GitHub')
-    expect(container.textContent).toContain(
-      'Mention @OpenComputer in any channel, or DM it.',
-    )
-    expect(container.textContent).not.toMatch(/azure|region|instance/i)
   })
 
   it('does not create a computer the organization already has', async () => {

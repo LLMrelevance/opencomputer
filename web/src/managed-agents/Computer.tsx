@@ -102,19 +102,25 @@ function ComputerPageContent() {
     refetchInterval: (query) => sessionPollInterval(query.state.data),
   })
 
-  // The first visit creates the organization's computer. The call is
-  // idempotent, so a second tab or a reload racing this one is harmless.
+  // The computer comes alive when the organization installs the Slack app
+  // (the install's callback claims or creates it; work 052, Mohamed
+  // 2026-10-13), never on a visit: most organizations only look, and each
+  // computer is a VM. A visit only creates one when Slack is already
+  // installed and the computer is still missing (the install's claim
+  // failed), and Try again retries a failed one. The call is idempotent.
   const create = useMutation({
     mutationFn: createComputer,
     onSuccess: (next) => queryClient.setQueryData(computerQueryKey, next),
   })
   const { mutate: createNow } = create
   const createStarted = useRef(false)
+  const missingAfterInstall =
+    status.data?.computer === null && status.data.slack.installed
   useEffect(() => {
-    if (status.data?.computer !== null || createStarted.current) return
+    if (!missingAfterInstall || createStarted.current) return
     createStarted.current = true
     createNow()
-  }, [status.data?.computer, createNow])
+  }, [missingAfterInstall, createNow])
 
   // Slack's install redirect lands here with ?slack=connected|error. A
   // workspace that is another organization's gets a panel, not a toast: the
@@ -307,6 +313,8 @@ function computerDot(status: ComputerStatus, failedToCreate: boolean): DotTone {
   const { computer } = status
   if (failedToCreate || computer?.state === 'failed') return 'failed'
   if (computer?.state === 'ready' && computer.connected) return 'alive'
+  // Not set up yet: nothing is happening until Slack is installed.
+  if (!computer && !status.slack.installed) return 'quiet'
   if (
     !computer ||
     computer.state === 'provisioning' ||
@@ -330,7 +338,11 @@ function StatusPill({
       <PulseDot tone={computerDot(status, failedToCreate)} />
       {failedToCreate
         ? 'Failed'
-        : computerPresentation(status.computer, status.plan).label}
+        : computerPresentation(
+            status.computer,
+            status.plan,
+            status.slack.installed,
+          ).label}
     </div>
   )
 }
@@ -591,8 +603,9 @@ function Hero({
   const failedToCreate = !computer && createError !== null
   const copy = failedToCreate
     ? { headline: 'Something went wrong.', subline: createError.message }
-    : heroCopy(computer, status.plan)
+    : heroCopy(computer, status.plan, status.slack.installed)
   const canRetry = failedToCreate || computer?.state === 'failed'
+  const notSetUp = !computer && !status.slack.installed
   return (
     <section className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-12 sm:px-12 sm:py-16">
       <div
@@ -609,6 +622,14 @@ function Hero({
         </p>
         {canRetry ? (
           <RetryButton className="mt-8" creating={creating} onRetry={onRetry} />
+        ) : null}
+        {notSetUp ? (
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <SlackInstallButton size="lg" label="Invite it to Slack" />
+            <span className="text-muted-foreground text-sm">
+              One click. Connect GitHub anytime.
+            </span>
+          </div>
         ) : null}
       </div>
     </section>
@@ -763,12 +784,18 @@ function Checklist({
           >
             {status.slack.installed
               ? `It is in ${status.slack.teamName ?? 'your Slack workspace'}.`
-              : 'Where your team already talks. One click, no setup.'}
+              : 'This is what brings it to life. One click, ready in seconds.'}
           </Step>
           <Step
             number={2}
             step={{ ...githubStep, title: 'Give it your code' }}
-            action={<GitHubAction connected={status.github.connected} />}
+            action={
+              <GitHubAction
+                connected={status.github.connected}
+                // Slack comes first: it is what starts the computer. GitHub works anytime.
+                secondary={!status.slack.installed}
+              />
+            }
           >
             {githubSummary(status.github)}
           </Step>
@@ -879,8 +906,12 @@ function SlackAction({
 
 function SlackInstallButton({
   variant = 'default',
+  size = 'default',
+  label = 'Install Slack app',
 }: {
   variant?: 'default' | 'outline'
+  size?: 'default' | 'lg'
+  label?: string
 }) {
   const install = useMutation({
     mutationFn: startComputerSlackInstall,
@@ -890,6 +921,7 @@ function SlackInstallButton({
   return (
     <Button
       variant={variant}
+      size={size}
       // Stays pending through the navigation to Slack.
       disabled={install.isPending || install.isSuccess}
       onClick={() => install.mutate()}
@@ -899,12 +931,18 @@ function SlackInstallButton({
       ) : (
         <Send className="size-4" aria-hidden />
       )}
-      Install Slack app
+      {label}
     </Button>
   )
 }
 
-function GitHubAction({ connected }: { connected: boolean }) {
+function GitHubAction({
+  connected,
+  secondary = false,
+}: {
+  connected: boolean
+  secondary?: boolean
+}) {
   const [starting, setStarting] = useState(false)
   if (connected) {
     return (
@@ -915,6 +953,7 @@ function GitHubAction({ connected }: { connected: boolean }) {
   }
   return (
     <Button
+      variant={secondary ? 'outline' : 'default'}
       disabled={starting}
       onClick={() => {
         setStarting(true)
