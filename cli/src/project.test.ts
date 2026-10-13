@@ -3084,3 +3084,63 @@ test("opencomputer.toml region is optional, accepts Modal regions, and rejects a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("opencomputer.toml [egress] allow is split into domains and CIDRs and validated", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "opencomputer-egress-"));
+  const manifest = (extra: string) =>
+    writeFile(
+      resolve(root, "opencomputer.toml"),
+      `schema = 1\nid = "cypen"\nname = "Cypen"\n${extra}`,
+    );
+  try {
+    await manifest("");
+    assert.equal((await readManifest(root)).egress, undefined);
+    await manifest(
+      [
+        'region = "au"',
+        "[egress]",
+        "allow = [",
+        '  "*.Cypen.io",',
+        '  "api.github.com.",',
+        '  "203.0.113.10",',
+        '  "10.20.0.0/16",',
+        '  "2001:db8::/32",',
+        '  "api.github.com",',
+        "]",
+        "",
+      ].join("\n"),
+    );
+    const read = await readManifest(root);
+    assert.equal(read.region, "au");
+    assert.deepEqual(read.egress, {
+      domains: ["*.cypen.io", "api.github.com"],
+      cidrs: ["10.20.0.0/16", "2001:db8::/32", "203.0.113.10/32"],
+    });
+    await manifest('[egress]\nallow = []\n');
+    assert.deepEqual((await readManifest(root)).egress, { domains: [], cidrs: [] });
+    await manifest("[egress]\n");
+    assert.deepEqual((await readManifest(root)).egress, { domains: [], cidrs: [] });
+    await manifest('[egress]\nallow = ["https://api.github.com"]\n');
+    await assert.rejects(readManifest(root), /allow entry "https:\/\/api.github.com" is not a domain/);
+    await manifest('[egress]\nallow = ["api.github.com:443"]\n');
+    await assert.rejects(readManifest(root), /is not a domain/);
+    await manifest('[egress]\nallow = ["10.0.0.0/33"]\n');
+    await assert.rejects(readManifest(root), /is not a domain/);
+    await manifest('[egress]\nallow = ["*"]\n');
+    await assert.rejects(readManifest(root), /is not a domain/);
+    await manifest('[egress]\nallow = "api.github.com"\n');
+    await assert.rejects(readManifest(root), /allow must be a list/);
+    await manifest('[egress]\ndeny = ["a.com"]\n');
+    await assert.rejects(readManifest(root), /unknown key "deny"/);
+    await manifest('egress = ["a.com"]\n');
+    await assert.rejects(readManifest(root), /egress must be a table/);
+    await manifest(
+      `[egress]\nallow = [${Array.from({ length: 65 }, (_, i) => `"h${i}.com"`).join(", ")}]\n`,
+    );
+    await assert.rejects(readManifest(root), /at most 64 domains/);
+    await manifest('[egress\nallow = []\n');
+    await assert.rejects(readManifest(root), /not valid TOML/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

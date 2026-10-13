@@ -46,6 +46,85 @@ the United States. To run it elsewhere, set `region` in the agent's
 `opencomputer.toml` and deploy again. See [Regions](/agents/regions) for the
 allowed values and what a region covers.
 
+## Restrict outbound network
+
+By default, an agent's sandbox can reach any address on the internet. To allow
+only the hosts the agent needs, add an `[egress]` table to the agent's
+`opencomputer.toml` and deploy again:
+
+```toml
+schema = 1
+id = "support"
+name = "Support"
+
+[egress]
+allow = [
+  "api.github.com",   # exact domain
+  "*.example.com",    # wildcard: example.com and every subdomain
+  "203.0.113.10",     # IP address
+  "10.20.0.0/16",     # CIDR
+]
+```
+
+Every process in the sandbox is held to the list: commands, `sandbox_exec`,
+background jobs, and anything they start. Connections to anything else are
+refused.
+
+### What each entry allows
+
+| Entry | Allows |
+| --- | --- |
+| `"api.github.com"` | HTTPS (TLS on port 443) to that host |
+| `"*.example.com"` | HTTPS to `example.com` and any subdomain |
+| `"203.0.113.10"`, `"2001:db8::1"` | any protocol and port to that address |
+| `"10.20.0.0/16"`, `"2001:db8::/32"` | any protocol and port to that range |
+
+- **Domains cover HTTPS on port 443 only.** Plain `http://`, other ports, and
+  non-TLS protocols to a domain are refused. To reach those, list the
+  destination's IP address or CIDR instead.
+- **Domains are matched on the TLS server name.** The connection goes to the
+  allowed host whatever IP address the client picks, so pointing an allowed
+  name at another address does not reach that address.
+- **DNS lookups are not filtered.** Names outside the list still resolve; the
+  connection is what is refused. Resolvers other than the sandbox's own are
+  blocked.
+- **Platform hosts are always allowed.** The sandbox can always reach
+  OpenComputer and the storage it loads your agent from, so you never list
+  them.
+
+`allow = []` (or an `[egress]` table with no `allow`) allows nothing beyond the
+platform hosts. Without an `[egress]` table the network stays open.
+
+### Rules
+
+- Up to 64 domains and 64 IP addresses or CIDRs.
+- Domains take no scheme, port or path. `"https://api.github.com"` and
+  `"api.github.com:443"` are rejected. A bare `"*"` is rejected; remove the
+  `[egress]` table instead.
+- A bare IP address means that single address (`/32` or `/128`).
+
+An invalid entry stops the deploy before anything is uploaded:
+
+```text
+opencomputer.toml [egress] allow entry "https://api.github.com" is not a domain ("api.github.com", "*.example.com"), IP address or CIDR; leave out schemes, ports and paths
+```
+
+The API rejects it too, with `400 invalid_egress`, if you call
+`POST /v1/deployments` directly. There the allowlist is
+`"egress": { "domains": [...], "cidrs": [...] }`; the CLI splits `allow` into
+these two lists for you.
+
+### Changing the list
+
+A change applies to sandboxes started after the deploy. A sandbox that is
+already running keeps the list it started with until it stops. Each agent in a
+project has its own `opencomputer.toml`, so agents in one project can have
+different lists.
+
+The list covers the agent's sandbox. Model calls, and MCP servers the agent
+connects to, are made by OpenComputer outside the sandbox and are not held to
+it.
+
 ## Select an agent and environment
 
 Clients identify an agent with `agent-id@alias`:
