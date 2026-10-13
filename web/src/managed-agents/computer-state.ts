@@ -184,6 +184,13 @@ const SLACK_RETURN_REASONS = new Map<string, string>([
   ['cancelled', 'The Slack install was cancelled.'],
   ['invalid_state', 'The install link expired. Start the install again.'],
   ['state_expired', 'The install link expired. Start the install again.'],
+  ['oauth_failed', "Slack didn't confirm the install. Try again."],
+  ['slack_error', 'Slack stopped the install. Try again.'],
+  [
+    'enterprise_install_unsupported',
+    'Enterprise Grid installs are not supported yet. Install it into a single workspace.',
+  ],
+  ['not_configured', 'Slack is not available right now. Try again later.'],
 ])
 
 /** Reasons that mean the workspace is already another organization's. */
