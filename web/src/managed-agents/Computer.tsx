@@ -208,24 +208,25 @@ function ComputerPageContent() {
   const step = setupStep(status.data, sessions.data)
   if (step === null) {
     return (
-      <div className="space-y-8">
-        {slackProblemPanel}
-        <Overview
-          status={status.data}
-          createError={createError}
-          creating={create.isPending}
-          onRetry={() => create.mutate()}
-        />
-        <SessionsPanel
-          live={live}
-          recent={recent}
-          readAt={sessions.dataUpdatedAt}
-          loading={sessionsLoading}
-          failed={sessions.isError}
-        />
-        <IdeasToTry />
-        <CustomAgentLink />
-      </div>
+      <WithDeveloperFooter>
+        <div className="space-y-8">
+          {slackProblemPanel}
+          <Overview
+            status={status.data}
+            createError={createError}
+            creating={create.isPending}
+            onRetry={() => create.mutate()}
+          />
+          <SessionsPanel
+            live={live}
+            recent={recent}
+            readAt={sessions.dataUpdatedAt}
+            loading={sessionsLoading}
+            failed={sessions.isError}
+          />
+          <IdeasToTry />
+        </div>
+      </WithDeveloperFooter>
     )
   }
 
@@ -242,20 +243,26 @@ function ComputerPageContent() {
 }
 
 /**
- * Projects are for building agents of your own: a side door, kept out of the
- * way of the computer.
+ * The page with its footer pinned to the bottom of the viewport. Projects are
+ * for developers building agents of their own: a separate track, so it sits
+ * below everything, set apart, and says who it is for.
  */
-function CustomAgentLink() {
+function WithDeveloperFooter({ children }: { children: ReactNode }) {
   return (
-    <p className="text-muted-foreground text-xs">
-      <Link
-        to="/new"
-        className="hover:text-foreground inline-flex items-center gap-1 transition-colors"
-      >
-        Set up a custom agent on OpenComputer infrastructure
-        <ArrowRight className="size-3" aria-hidden />
-      </Link>
-    </p>
+    // The viewport less the top bar and main's vertical padding.
+    <div className="flex min-h-[calc(100svh-6.5rem)] flex-col md:min-h-[calc(100svh-7rem)]">
+      <div className="flex-1">{children}</div>
+      <footer className="text-muted-foreground mt-16 border-t pt-4 text-xs">
+        Building your own agent?{' '}
+        <Link
+          to="/new"
+          className="hover:text-foreground decoration-muted-foreground/40 inline-flex items-center gap-1 underline underline-offset-4 transition-colors"
+        >
+          Set it up on OpenComputer infrastructure
+          <ArrowRight className="size-3" aria-hidden />
+        </Link>
+      </footer>
+    </div>
   )
 }
 
@@ -594,118 +601,118 @@ function Setup({
   const progress = (id: SetupStep): SetupItemState =>
     id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
-    <div className="max-w-2xl space-y-6">
-      {notice}
-      <header>
-        <div className="flex items-center justify-between gap-4">
-          <p className="text-muted-foreground text-sm font-medium">
-            Step {position} of {SETUP_STEPS.length}
-          </p>
-          {/* Before Slack there is no computer to report on. */}
-          {computer || status.slack.installed ? (
-            <StatusLabel status={status} failedToCreate={failedToCreate} />
-          ) : null}
-        </div>
-        <h1 className="mt-1 text-xl font-semibold tracking-tight">
-          Set up your computer
-        </h1>
-        <div className="mt-4 flex gap-1.5" aria-hidden>
-          {SETUP_STEPS.map((id) => (
-            <span
-              key={id}
-              className={cn(
-                'h-1 flex-1 rounded-full transition-colors',
-                done[id]
-                  ? 'bg-primary'
-                  : id === step
-                    ? 'bg-primary/35'
-                    : 'bg-muted',
-              )}
-            />
-          ))}
-        </div>
-      </header>
-
-      {failed ? (
-        <div
-          role="alert"
-          className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
-        >
-          <TriangleAlert
-            className="text-destructive size-4 shrink-0"
-            aria-hidden
-          />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">
-              Your computer could not start.
+    <WithDeveloperFooter>
+      <div className="max-w-2xl space-y-6">
+        {notice}
+        <header>
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-muted-foreground text-sm font-medium">
+              Step {position} of {SETUP_STEPS.length}
             </p>
-            <p className="text-muted-foreground mt-0.5 text-sm">
-              {failedToCreate
-                ? createError.message
-                : (computer?.lastError ??
-                  'Try again, or tell us if it keeps happening.')}
-            </p>
-          </div>
-          <RetryButton creating={creating} onRetry={onRetry} />
-        </div>
-      ) : null}
-
-      <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
-        <SetupItem
-          number={1}
-          title="Add OpenComputer to Slack"
-          state={progress('slack')}
-          summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
-          doneAction={<ConnectionsMenu status={status} />}
-        >
-          <p>
-            Your team mentions it in a thread; it does the work and replies
-            there.
-          </p>
-          <SlackInstallButton size="lg" label="Add to Slack" />
-        </SetupItem>
-        <SetupItem
-          number={2}
-          title="Connect GitHub"
-          state={progress('github')}
-          summary={githubSummary(status.github)}
-        >
-          <p>
-            Pick the repositories it can work in. It opens pull requests for you
-            to review and never pushes to main unless you ask.
-          </p>
-          <GitHubAction size="lg" />
-        </SetupItem>
-        <SetupItem
-          number={3}
-          title="Say hello in Slack"
-          state={progress('hello')}
-        >
-          <p>{START_SESSION_COPY} For example:</p>
-          <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-            {status.slack.teamId ? (
-              <Button size="lg" asChild>
-                <a
-                  href={`https://app.slack.com/client/${encodeURIComponent(status.slack.teamId)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Slack
-                  <ExternalLink className="size-4" aria-hidden />
-                </a>
-              </Button>
+            {/* Before Slack there is no computer to report on. */}
+            {computer || status.slack.installed ? (
+              <StatusLabel status={status} failedToCreate={failedToCreate} />
             ) : null}
-            <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
-              <PulseDot tone="busy" />
-              Waiting for the first mention
-            </span>
           </div>
-        </SetupItem>
-      </ol>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight">
+            Set up your computer
+          </h1>
+          <div className="mt-4 flex gap-1.5" aria-hidden>
+            {SETUP_STEPS.map((id) => (
+              <span
+                key={id}
+                className={cn(
+                  'h-1 flex-1 rounded-full transition-colors',
+                  done[id]
+                    ? 'bg-primary'
+                    : id === step
+                      ? 'bg-primary/35'
+                      : 'bg-muted',
+                )}
+              />
+            ))}
+          </div>
+        </header>
 
-      <CustomAgentLink />
-    </div>
+        {failed ? (
+          <div
+            role="alert"
+            className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
+          >
+            <TriangleAlert
+              className="text-destructive size-4 shrink-0"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                Your computer could not start.
+              </p>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                {failedToCreate
+                  ? createError.message
+                  : (computer?.lastError ??
+                    'Try again, or tell us if it keeps happening.')}
+              </p>
+            </div>
+            <RetryButton creating={creating} onRetry={onRetry} />
+          </div>
+        ) : null}
+
+        <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
+          <SetupItem
+            number={1}
+            title="Add OpenComputer to Slack"
+            state={progress('slack')}
+            summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
+            doneAction={<ConnectionsMenu status={status} />}
+          >
+            <p>
+              Your team mentions it in a thread; it does the work and replies
+              there.
+            </p>
+            <SlackInstallButton size="lg" label="Add to Slack" />
+          </SetupItem>
+          <SetupItem
+            number={2}
+            title="Connect GitHub"
+            state={progress('github')}
+            summary={githubSummary(status.github)}
+          >
+            <p>
+              Pick the repositories it can work in. It opens pull requests for
+              you to review and never pushes to main unless you ask.
+            </p>
+            <GitHubAction size="lg" />
+          </SetupItem>
+          <SetupItem
+            number={3}
+            title="Say hello in Slack"
+            state={progress('hello')}
+          >
+            <p>{START_SESSION_COPY} For example:</p>
+            <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+              {status.slack.teamId ? (
+                <Button size="lg" asChild>
+                  <a
+                    href={`https://app.slack.com/client/${encodeURIComponent(status.slack.teamId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Slack
+                    <ExternalLink className="size-4" aria-hidden />
+                  </a>
+                </Button>
+              ) : null}
+              <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
+                <PulseDot tone="busy" />
+                Waiting for the first mention
+              </span>
+            </div>
+          </SetupItem>
+        </ol>
+      </div>
+    </WithDeveloperFooter>
   )
 }
 

@@ -201,7 +201,10 @@ describe('Computer page', () => {
     expect(container.textContent).toContain('Say hello in Slack')
     // Projects are a side door.
     expect(container.querySelector('a[href="/new"]')?.textContent).toContain(
-      'Set up a custom agent on OpenComputer infrastructure',
+      'Set it up on OpenComputer infrastructure',
+    )
+    expect(container.querySelector('footer')?.textContent).toContain(
+      'Building your own agent?',
     )
     expect(container.textContent).not.toMatch(/vCPU|GiB/)
     expect(container.textContent).not.toMatch(/azure|region|instance/i)
