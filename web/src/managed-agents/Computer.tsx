@@ -260,7 +260,7 @@ function WithDeveloperFooter({ children }: { children: ReactNode }) {
     // Fills the viewport below the top bar; the footer then runs into main's
     // bottom padding so it sits on the window's edge.
     <div className="flex min-h-[calc(100svh-6.5rem)] flex-col md:min-h-[calc(100svh-7rem)]">
-      <div className="flex-1">{children}</div>
+      <div className="flex flex-1 flex-col">{children}</div>
       {/* Built like the sidebar's profile block (border, py-3, a 40px row)
           so the two rules line up. */}
       <footer className="text-muted-foreground mt-16 -mb-6 border-t py-3 text-xs">
@@ -612,11 +612,13 @@ function Setup({
     hello: false,
   }
   const slack = slackLinks(status.slack)
+  // The last step holds the most; the others leave the bottom free.
+  const stepsRunLong = step === 'hello'
   const progress = (id: SetupStep): SetupItemState =>
     id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
     <WithDeveloperFooter>
-      <div className="space-y-6">
+      <div className="flex flex-1 flex-col gap-6">
         {notice}
         <header className="max-w-2xl">
           <div className="flex items-center justify-between gap-4">
@@ -673,9 +675,19 @@ function Setup({
         ) : null}
 
         {/* The steps and their context share a row, so the two cards' top
-              edges line up by construction. */}
-        <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,42rem)_18rem] lg:items-start">
-          <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
+            edges line up by construction. The scene takes the area left
+            empty: the whole bottom row while the steps are short, the column
+            under the context once the last step runs long. The bottom row
+            grows to the footer, and the scene stands on its floor. */}
+        <div
+          className={cn(
+            'grid flex-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,42rem)_18rem] lg:grid-rows-[auto_1fr]',
+            stepsRunLong
+              ? "lg:[grid-template-areas:'steps_context'_'steps_scene']"
+              : "lg:[grid-template-areas:'steps_context'_'scene_scene']",
+          )}
+        >
+          <ol className="bg-panel divide-y self-start overflow-hidden rounded-xl border shadow-sm lg:[grid-area:steps]">
             <SetupItem
               number={1}
               title="Add OpenComputer to Slack"
@@ -746,7 +758,12 @@ function Setup({
               </p>
             </SetupItem>
           </ol>
-          <SetupContext step={step} />
+          <SetupContext step={step} className="lg:[grid-area:context]" />
+          <PixelScene
+            asleep={step === 'slack'}
+            shape={stepsRunLong ? 'compact' : 'wide'}
+            className="hidden self-end lg:block lg:[grid-area:scene]"
+          />
         </div>
       </div>
     </WithDeveloperFooter>
@@ -757,9 +774,18 @@ function Setup({
  * Why each step matters, beside the steps: quiet, never a call to action
  * (Igor, 2026-10-13: setup lost the what and the why).
  */
-function SetupContext({ step }: { step: SetupStep }) {
+function SetupContext({
+  step,
+  className,
+}: {
+  step: SetupStep
+  className?: string
+}) {
   return (
-    <aside aria-label="About your computer" className="relative text-sm">
+    <aside
+      aria-label="About your computer"
+      className={cn('relative self-start text-sm', className)}
+    >
       {step === 'slack' ? (
         <>
           <ContextHeading>How it works</ContextHeading>
@@ -794,7 +820,6 @@ function SetupContext({ step }: { step: SetupStep }) {
           </ul>
         </>
       )}
-      <PixelScene asleep={step === 'slack'} className="mt-12" />
     </aside>
   )
 }

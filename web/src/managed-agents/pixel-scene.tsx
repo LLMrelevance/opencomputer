@@ -38,9 +38,44 @@ const CACTUS: Sprite = [
 const CLOUD: Sprite = ['..####..', '.######.', '########']
 const ZED: Sprite = ['###', '..#', '.#.', '###']
 
-const WIDTH = 72
-const HEIGHT = 24
-const GROUND = 21
+const SMALL_CACTUS: Sprite = ['.#.', '##.', '.##', '.#.', '.#.']
+
+/**
+ * Two compositions at about the same pixel size: a panorama for a whole
+ * bottom row, and a taller one for a single column.
+ */
+const SHAPES = {
+  wide: {
+    width: 240,
+    height: 26,
+    monitorX: 10,
+    clouds: [
+      { x: 58, y: 4, drift: -6, dur: 40 },
+      { x: 118, y: 9, drift: 5, dur: 55 },
+      { x: 186, y: 2, drift: -4, dur: 48 },
+    ],
+    cacti: [
+      { sprite: CACTUS, x: 148 },
+      { sprite: SMALL_CACTUS, x: 156 },
+      { sprite: CACTUS, x: 214 },
+    ],
+    pebbles: [3, 24, 37, 52, 71, 90, 104, 131, 163, 177, 196, 228, 236],
+  },
+  compact: {
+    width: 64,
+    height: 44,
+    monitorX: 4,
+    clouds: [
+      { x: 28, y: 4, drift: -5, dur: 40 },
+      { x: 6, y: 13, drift: 4, dur: 55 },
+    ],
+    cacti: [
+      { sprite: CACTUS, x: 46 },
+      { sprite: SMALL_CACTUS, x: 54 },
+    ],
+    pebbles: [3, 11, 19, 30, 41, 58],
+  },
+} as const
 
 function Pixels({
   sprite,
@@ -96,43 +131,37 @@ function useReducedMotion(): boolean {
  */
 export function PixelScene({
   asleep,
+  shape,
   className,
 }: {
   asleep: boolean
+  shape: keyof typeof SHAPES
   className?: string
 }) {
   const still = useReducedMotion()
-  const monitorX = 6
-  const monitorY = GROUND - MONITOR.length
+  const { width, height, monitorX, clouds, cacti, pebbles } = SHAPES[shape]
+  const ground = height - 3
+  const monitorY = ground - MONITOR.length
   return (
     <svg
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+      viewBox={`0 0 ${width} ${height}`}
       shapeRendering="crispEdges"
       className={cn('text-foreground/15 w-full fill-current', className)}
       aria-hidden
     >
-      <Pixels sprite={CLOUD} x={34} y={2}>
-        {still ? null : (
-          <animateTransform
-            attributeName="transform"
-            type="translate"
-            values="0 0; -6 0; 0 0"
-            dur="40s"
-            repeatCount="indefinite"
-          />
-        )}
-      </Pixels>
-      <Pixels sprite={CLOUD} x={54} y={6}>
-        {still ? null : (
-          <animateTransform
-            attributeName="transform"
-            type="translate"
-            values="0 0; 5 0; 0 0"
-            dur="55s"
-            repeatCount="indefinite"
-          />
-        )}
-      </Pixels>
+      {clouds.map((cloud) => (
+        <Pixels key={cloud.x} sprite={CLOUD} x={cloud.x} y={cloud.y}>
+          {still ? null : (
+            <animateTransform
+              attributeName="transform"
+              type="translate"
+              values={`0 0; ${cloud.drift} 0; 0 0`}
+              dur={`${cloud.dur}s`}
+              repeatCount="indefinite"
+            />
+          )}
+        </Pixels>
+      ))}
 
       <Pixels sprite={MONITOR} x={monitorX} y={monitorY} />
       {asleep ? (
@@ -175,15 +204,22 @@ export function PixelScene({
         </>
       )}
 
-      <Pixels sprite={CACTUS} x={50} y={GROUND - CACTUS.length} />
+      {cacti.map((cactus) => (
+        <Pixels
+          key={cactus.x}
+          sprite={cactus.sprite}
+          x={cactus.x}
+          y={ground - cactus.sprite.length}
+        />
+      ))}
 
       {/* The ground: a line with a few pebbles, Chrome-dino style. */}
-      <rect x={0} y={GROUND} width={WIDTH} height={1} />
-      {[3, 11, 19, 30, 41, 47, 58, 66].map((x, i) => (
+      <rect x={0} y={ground} width={width} height={1} />
+      {pebbles.map((x, i) => (
         <rect
           key={x}
           x={x}
-          y={GROUND + 2 + (i % 2)}
+          y={ground + 1 + (i % 2)}
           width={i % 3 ? 1 : 2}
           height={1}
         />
