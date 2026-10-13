@@ -162,13 +162,12 @@ describe('Connections', () => {
       expect(sectionText).toContain(service)
     }
     expect(sectionText).toContain('Not connected')
-    expect(sectionText).toContain('1 account')
-    expect(sectionText).toContain('Linear · Acme Linear · email-triage')
+    expect(sectionText).toContain('Acme LinearAlias linear · email-triage')
     const buttons = [...(section?.querySelectorAll('button') ?? [])].map(
       (button) => button.textContent,
     )
     expect(buttons.filter((label) => label === 'Connect')).toHaveLength(4)
-    expect(buttons).toContain('Add another')
+    expect(buttons).toContain('Add account')
     expect(buttons).toContain('Remove')
   })
 

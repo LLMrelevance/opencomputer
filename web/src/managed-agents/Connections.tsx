@@ -255,7 +255,7 @@ function ServiceRow({
   trailing?: ReactNode
 }) {
   return (
-    <div className="flex min-h-12 items-center gap-3 py-2.5 pr-3 pl-[4.25rem]">
+    <div className="flex min-h-12 items-center gap-3 py-2.5 pr-3 pl-18">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{title}</p>
         {detail ? (
@@ -472,7 +472,7 @@ function GitHubConnection() {
           ))}
         </div>
       ) : installations.isSuccess ? (
-        <p className="text-muted-foreground py-3 pr-5 pl-[4.25rem] text-sm">
+        <p className="text-muted-foreground py-3 pr-5 pl-18 text-sm">
           No accounts yet. Add a GitHub organization or user, then choose its
           repositories.
         </p>
@@ -546,19 +546,29 @@ function OtherConnections() {
       .finally(() => setConnecting(undefined))
   }
 
-  const accountRow = (connection: ManagedAgentConnection) => {
+  // An account is named by who it is; its alias is how agents select it.
+  const accountRow = (connection: ManagedAgentConnection, nested: boolean) => {
     const service = connectionServiceId(connection)
     return (
       <OtherRow
         key={connection.id}
-        inset
-        title={displayResourceName(connection.label || connection.provider)}
+        nested={nested}
+        icon={
+          nested ? undefined : (
+            <ServiceLogo
+              service={service === 'github' ? undefined : service}
+              className="size-4"
+            />
+          )
+        }
+        title={
+          connection.displayName ||
+          displayResourceName(connection.label || connection.provider)
+        }
         detail={[
-          ...new Set([
-            connectionService(connection),
-            connection.displayName,
-            agentNames.get(connection.agentId),
-          ]),
+          nested ? undefined : connectionService(connection),
+          `Alias ${connection.label}`,
+          agentNames.get(connection.agentId),
         ]
           .filter(Boolean)
           .join(' · ')}
@@ -617,7 +627,7 @@ function OtherConnections() {
                 (connection) => connectionServiceId(connection) === service.id,
               )
               return (
-                <div key={service.id} className="divide-y">
+                <div key={service.id} className="pb-1 last:pb-0">
                   <OtherRow
                     icon={
                       <ServiceLogo service={service.id} className="size-4" />
@@ -626,21 +636,15 @@ function OtherConnections() {
                     detail={
                       connections.isLoading ? (
                         <Skeleton className="mt-1 h-3 w-20" />
-                      ) : serviceAccounts.length ? (
-                        `${serviceAccounts.length} ${serviceAccounts.length === 1 ? 'account' : 'accounts'}`
-                      ) : (
+                      ) : serviceAccounts.length ? undefined : (
                         'Not connected'
                       )
                     }
                     trailing={
                       <Button
-                        variant={serviceAccounts.length ? 'ghost' : 'outline'}
+                        variant="ghost"
                         size="sm"
-                        className={
-                          serviceAccounts.length
-                            ? 'text-muted-foreground'
-                            : undefined
-                        }
+                        className="text-muted-foreground"
                         disabled={connections.isLoading || Boolean(connecting)}
                         onClick={() => connect(service)}
                       >
@@ -652,15 +656,17 @@ function OtherConnections() {
                         ) : (
                           <Plus className="size-3.5" aria-hidden />
                         )}
-                        {serviceAccounts.length ? 'Add another' : 'Connect'}
+                        {serviceAccounts.length ? 'Add account' : 'Connect'}
                       </Button>
                     }
                   />
-                  {serviceAccounts.map(accountRow)}
+                  {serviceAccounts.map((connection) =>
+                    accountRow(connection, true),
+                  )}
                 </div>
               )
             })}
-            {unlisted.map(accountRow)}
+            {unlisted.map((connection) => accountRow(connection, false))}
           </div>
         )}
       </Panel>
@@ -675,7 +681,7 @@ function OtherConnections() {
           toRemove
             ? removeError
               ? `The account could not be removed: ${removeError}`
-              : `Agents will no longer be able to use the “${toRemove.label}” account. You can reconnect it later.`
+              : `Agents will no longer be able to use ${toRemove.displayName || `the “${toRemove.label}” account`}. You can reconnect it later.`
             : undefined
         }
         confirmLabel="Remove account"
@@ -708,15 +714,20 @@ function OtherConnections() {
   )
 }
 
+/**
+ * A row on the card grid: icon in the 2.25rem column, text at 4.5rem like the
+ * Slack and GitHub rows. Nested rows are a service's accounts: no icon, no
+ * divider above, tighter.
+ */
 function OtherRow({
   icon,
-  inset,
+  nested,
   title,
   detail,
   trailing,
 }: {
   icon?: ReactNode
-  inset?: boolean
+  nested?: boolean
   title: ReactNode
   detail?: ReactNode
   trailing?: ReactNode
@@ -724,15 +735,15 @@ function OtherRow({
   return (
     <div
       className={cn(
-        'flex min-h-12 items-center gap-3 py-2.5 pr-3',
-        inset ? 'pl-13' : 'pl-5',
+        'flex items-center pr-3',
+        nested ? 'min-h-10 gap-3 py-1.5 pl-18' : 'min-h-12 gap-4 py-2.5 pl-5',
       )}
     >
-      {icon ? (
-        <div className="flex size-5 shrink-0 items-center justify-center">
+      {nested ? null : (
+        <div className="flex size-9 shrink-0 items-center justify-center">
           {icon}
         </div>
-      ) : null}
+      )}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{title}</p>
         {detail ? (
