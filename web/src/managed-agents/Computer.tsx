@@ -22,6 +22,7 @@ import {
   Send,
   Sparkles,
   Terminal,
+  TriangleAlert,
   Unplug,
   UsersRound,
   X,
@@ -74,6 +75,7 @@ import {
   slackReturnFromSearch,
   splitSessions,
   type ChecklistStep,
+  type SlackReturn,
 } from './computer-state'
 
 export default function ComputerPage() {
@@ -123,15 +125,17 @@ function ComputerPageContent() {
   }, [missingAfterInstall, createNow])
 
   // Slack's install redirect lands here with ?slack=connected|error. A
-  // workspace that is another organization's gets a panel, not a toast: the
-  // person is welcome, they just need an invite. The redirect is a full page
-  // load, so the panel's state is read once, from the URL it arrived with;
-  // the effect below then cleans the URL.
-  const [alreadyLinked, setAlreadyLinked] = useState(() => {
+  // failed install gets a panel that stays until dismissed, not a toast that
+  // is gone before anyone reads it; a workspace that is another
+  // organization's gets its own panel: the person is welcome, they just need
+  // an invite. The redirect is a full page load, so the panel's state is read
+  // once, from the URL it arrived with; the effect below then cleans the URL.
+  const [slackProblem, setSlackProblem] = useState<Exclude<
+    SlackReturn,
+    { kind: 'connected' } | null
+  > | null>(() => {
     const slackReturn = slackReturnFromSearch(searchParams)
-    return slackReturn?.kind === 'already_linked'
-      ? { notified: slackReturn.notified }
-      : null
+    return slackReturn?.kind === 'connected' ? null : slackReturn
   })
   const handledSlackReturn = useRef<string | null>(null)
   useEffect(() => {
@@ -142,8 +146,6 @@ function ComputerPageContent() {
     handledSlackReturn.current = key
     if (slackReturn.kind === 'connected') {
       notifySuccess('Slack is connected.', START_SESSION_COPY)
-    } else if (slackReturn.kind === 'error') {
-      notifyError("Couldn't connect Slack.", new Error(slackReturn.message))
     }
     void queryClient.invalidateQueries({ queryKey: computerQueryKey })
     const next = new URLSearchParams(searchParams)
@@ -179,19 +181,27 @@ function ComputerPageContent() {
   const { live, recent } = splitSessions(sessions.data ?? [])
   const sessionsLoading = hasComputer && sessions.isLoading
   const createError = create.isError ? create.error : null
-  const alreadyLinkedPanel = alreadyLinked ? (
-    <AlreadyLinked
-      notified={alreadyLinked.notified}
-      status={status.data}
-      onDismiss={() => setAlreadyLinked(null)}
-    />
-  ) : null
+  const dismissSlackProblem = () => setSlackProblem(null)
+  const slackProblemPanel =
+    slackProblem?.kind === 'already_linked' ? (
+      <AlreadyLinked
+        notified={slackProblem.notified}
+        status={status.data}
+        onDismiss={dismissSlackProblem}
+      />
+    ) : slackProblem?.kind === 'error' ? (
+      <SlackInstallFailed
+        message={slackProblem.message}
+        status={status.data}
+        onDismiss={dismissSlackProblem}
+      />
+    ) : null
 
   // Once it is in Slack and knows the code, the page is about the work.
   if (computerIsOnboarded(status.data)) {
     return (
       <div className="mx-auto max-w-5xl space-y-8">
-        {alreadyLinkedPanel}
+        {slackProblemPanel}
         <CompactHeader
           status={status.data}
           liveCount={live.length}
@@ -224,7 +234,7 @@ function ComputerPageContent() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      {alreadyLinkedPanel}
+      {slackProblemPanel}
       <Hero
         status={status.data}
         createError={createError}
@@ -684,6 +694,53 @@ function AlreadyLinked({
                 Or connect a different Slack workspace
               </span>
               <SlackInstallButton variant="outline" />
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function SlackInstallFailed({
+  message,
+  status,
+  onDismiss,
+}: {
+  message: string
+  status: ComputerStatus
+  onDismiss: () => void
+}) {
+  return (
+    <section
+      role="alert"
+      aria-labelledby="slack-install-failed-title"
+      className="border-destructive/40 bg-destructive/5 relative rounded-2xl border px-8 py-6 sm:px-10"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground absolute top-3 right-3"
+        aria-label="Dismiss"
+        onClick={onDismiss}
+      >
+        <X className="size-4" aria-hidden />
+      </Button>
+      <div className="flex gap-5">
+        <div className="bg-destructive/15 text-destructive flex size-11 shrink-0 items-center justify-center rounded-full">
+          <TriangleAlert className="size-5" aria-hidden />
+        </div>
+        <div className="max-w-2xl min-w-0 pr-8">
+          <h2
+            id="slack-install-failed-title"
+            className="text-lg font-semibold tracking-tight"
+          >
+            Slack is not connected
+          </h2>
+          <p className="text-muted-foreground mt-1 text-balance">{message}</p>
+          {status.slack.installed ? null : (
+            <div className="mt-4">
+              <SlackInstallButton label="Try again" />
             </div>
           )}
         </div>

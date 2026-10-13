@@ -291,6 +291,36 @@ describe('Computer page', () => {
     expect(location()).toBe('/computer')
   })
 
+  it('keeps a failed Slack install on the page until dismissed', async () => {
+    computerApi.getComputer.mockResolvedValue(provisioning)
+
+    render('/computer?slack=error&reason=oauth_failed')
+    await settle(() => location() === '/computer', 'clean URL')
+    await settle(
+      () =>
+        container.querySelector(
+          'section[aria-labelledby="slack-install-failed-title"]',
+        ) !== null,
+      'install-failed panel',
+    )
+    const panel = container.querySelector(
+      'section[aria-labelledby="slack-install-failed-title"]',
+    )!
+    expect(panel.getAttribute('role')).toBe('alert')
+    expect(panel.textContent).toContain('Slack is not connected')
+    expect(panel.textContent).toContain(
+      "Slack didn't confirm the install. Try again.",
+    )
+    expect(panel.textContent).toContain('Try again')
+
+    act(() =>
+      (
+        panel.querySelector('button[aria-label="Dismiss"]') as HTMLButtonElement
+      ).click(),
+    )
+    expect(container.textContent).not.toContain('Slack is not connected')
+  })
+
   it('asks for a teammate when nobody could be messaged', async () => {
     computerApi.getComputer.mockResolvedValue(provisioning)
 
