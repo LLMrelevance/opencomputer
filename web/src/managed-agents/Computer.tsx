@@ -47,6 +47,7 @@ import {
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useTransientFlag } from '@/lib/use-transient-flag'
+import { PixelScene } from './pixel-scene'
 import { AuthContext } from '@/hooks/useAuth'
 import { addManagedGitHubConnection } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
@@ -615,65 +616,65 @@ function Setup({
     id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
     <WithDeveloperFooter>
-      <div className="grid gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,42rem)_18rem]">
-        <div className="space-y-6">
-          {notice}
-          <header>
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-muted-foreground text-sm font-medium">
-                Step {position} of {SETUP_STEPS.length}
-              </p>
-              {/* Before Slack there is no computer to report on. */}
-              {computer || status.slack.installed ? (
-                <StatusLabel status={status} failedToCreate={failedToCreate} />
-              ) : null}
-            </div>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight">
-              {step === 'hello'
-                ? 'Give it a first task'
-                : 'Set up your computer'}
-            </h1>
-            <div className="mt-4 flex gap-1.5" aria-hidden>
-              {SETUP_STEPS.map((id) => (
-                <span
-                  key={id}
-                  className={cn(
-                    'h-1 flex-1 rounded-full transition-colors',
-                    done[id]
-                      ? 'bg-primary'
-                      : id === step
-                        ? 'bg-primary/35'
-                        : 'bg-muted',
-                  )}
-                />
-              ))}
-            </div>
-          </header>
-
-          {failed ? (
-            <div
-              role="alert"
-              className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
-            >
-              <TriangleAlert
-                className="text-destructive size-4 shrink-0"
-                aria-hidden
+      <div className="space-y-6">
+        {notice}
+        <header className="max-w-2xl">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-muted-foreground text-sm font-medium">
+              Step {position} of {SETUP_STEPS.length}
+            </p>
+            {/* Before Slack there is no computer to report on. */}
+            {computer || status.slack.installed ? (
+              <StatusLabel status={status} failedToCreate={failedToCreate} />
+            ) : null}
+          </div>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight">
+            {step === 'hello' ? 'Give it a first task' : 'Set up your computer'}
+          </h1>
+          <div className="mt-4 flex gap-1.5" aria-hidden>
+            {SETUP_STEPS.map((id) => (
+              <span
+                key={id}
+                className={cn(
+                  'h-1 flex-1 rounded-full transition-colors',
+                  done[id]
+                    ? 'bg-primary'
+                    : id === step
+                      ? 'bg-primary/35'
+                      : 'bg-muted',
+                )}
               />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">
-                  Your computer could not start.
-                </p>
-                <p className="text-muted-foreground mt-0.5 text-sm">
-                  {failedToCreate
-                    ? createError.message
-                    : (computer?.lastError ??
-                      'Try again, or tell us if it keeps happening.')}
-                </p>
-              </div>
-              <RetryButton creating={creating} onRetry={onRetry} />
-            </div>
-          ) : null}
+            ))}
+          </div>
+        </header>
 
+        {failed ? (
+          <div
+            role="alert"
+            className="border-destructive/40 bg-destructive/5 flex max-w-2xl flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
+          >
+            <TriangleAlert
+              className="text-destructive size-4 shrink-0"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                Your computer could not start.
+              </p>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                {failedToCreate
+                  ? createError.message
+                  : (computer?.lastError ??
+                    'Try again, or tell us if it keeps happening.')}
+              </p>
+            </div>
+            <RetryButton creating={creating} onRetry={onRetry} />
+          </div>
+        ) : null}
+
+        {/* The steps and their context share a row, so the two cards' top
+              edges line up by construction. */}
+        <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,42rem)_18rem] lg:items-start">
           <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
             <SetupItem
               number={1}
@@ -745,8 +746,8 @@ function Setup({
               </p>
             </SetupItem>
           </ol>
+          <SetupContext step={step} />
         </div>
-        <SetupContext step={step} />
       </div>
     </WithDeveloperFooter>
   )
@@ -758,7 +759,7 @@ function Setup({
  */
 function SetupContext({ step }: { step: SetupStep }) {
   return (
-    <aside aria-label="About your computer" className="text-sm lg:pt-[4.5rem]">
+    <aside aria-label="About your computer" className="relative text-sm">
       {step === 'slack' ? (
         <>
           <ContextHeading>How it works</ContextHeading>
@@ -793,13 +794,16 @@ function SetupContext({ step }: { step: SetupStep }) {
           </ul>
         </>
       )}
+      <PixelScene asleep={step === 'slack'} className="mt-12" />
     </aside>
   )
 }
 
 function ContextHeading({ children }: { children: ReactNode }) {
   return (
-    <h2 className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+    // Above the aside on wide screens, so the card below it starts level
+    // with the steps.
+    <h2 className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase lg:absolute lg:bottom-full lg:left-0">
       {children}
     </h2>
   )
