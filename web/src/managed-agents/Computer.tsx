@@ -249,18 +249,23 @@ function ComputerPageContent() {
  */
 function WithDeveloperFooter({ children }: { children: ReactNode }) {
   return (
-    // The viewport less the top bar and main's vertical padding.
+    // Fills the viewport below the top bar; the footer then runs into main's
+    // bottom padding so it sits on the window's edge.
     <div className="flex min-h-[calc(100svh-6.5rem)] flex-col md:min-h-[calc(100svh-7rem)]">
       <div className="flex-1">{children}</div>
-      <footer className="text-muted-foreground mt-16 border-t pt-4 text-xs">
-        Building your own agent?{' '}
-        <Link
-          to="/new"
-          className="hover:text-foreground decoration-muted-foreground/40 inline-flex items-center gap-1 underline underline-offset-4 transition-colors"
-        >
-          Set it up on OpenComputer infrastructure
-          <ArrowRight className="size-3" aria-hidden />
-        </Link>
+      {/* Built like the sidebar's profile block (border, py-3, a 40px row)
+          so the two rules line up. */}
+      <footer className="text-muted-foreground mt-16 -mb-6 border-t py-3 text-xs">
+        <p className="flex h-10 items-center gap-1">
+          Building your own agent?
+          <Link
+            to="/new"
+            className="hover:text-foreground decoration-muted-foreground/40 inline-flex items-center gap-1 underline underline-offset-4 transition-colors"
+          >
+            Set it up on OpenComputer infrastructure
+            <ArrowRight className="size-3" aria-hidden />
+          </Link>
+        </p>
       </footer>
     </div>
   )
