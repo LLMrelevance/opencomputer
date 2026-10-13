@@ -23,20 +23,6 @@ import {
 import ProjectOnboarding from './ProjectOnboarding'
 import { AuthContext } from '@/hooks/useAuth'
 
-// Set once per browser session: the first landing goes to the computer, an
-// explicit visit to Projects afterwards shows project onboarding.
-const COMPUTER_LANDING_KEY = 'oc.computerLanding'
-
-function firstLandingThisSession(): boolean {
-  try {
-    if (sessionStorage.getItem(COMPUTER_LANDING_KEY)) return false
-    sessionStorage.setItem(COMPUTER_LANDING_KEY, '1')
-    return true
-  } catch {
-    return false
-  }
-}
-
 export default function ProjectsHome() {
   // The computer is behind a rollout flag (work 052); no auth, no computer.
   const computerEnabled =
@@ -101,11 +87,11 @@ export default function ProjectsHome() {
     )
   }
 
-  // An organization's first screen is its computer (017, work 052): the
-  // first landing of a session goes there. Clicking Projects afterwards shows
-  // the CLI-first project onboarding, as before.
+  // An organization without projects starts at its computer (017, work 052),
+  // every time: the computer page is its onboarding. Project onboarding
+  // stays at /new, linked quietly from there.
   if (items.length === 0 && archivedItems.length === 0) {
-    return computerEnabled && firstLandingThisSession() ? (
+    return computerEnabled ? (
       <Navigate to="/computer" replace />
     ) : (
       <ProjectOnboarding />

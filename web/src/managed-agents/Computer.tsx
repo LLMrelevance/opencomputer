@@ -9,15 +9,14 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import {
+  ArrowRight,
   Check,
   Computer as ComputerIcon,
   ExternalLink,
-  GitPullRequest,
   Hash,
   Lightbulb,
   Loader2,
   MessagesSquare,
-  Moon,
   RotateCcw,
   Send,
   Sparkles,
@@ -60,21 +59,21 @@ import {
 } from './computer-api'
 import {
   EXAMPLE_ASKS,
+  SETUP_STEPS,
   SLACK_RETURN_PARAMS,
   alreadyLinkedCopy,
   SESSION_STATUS,
   START_SESSION_COPY,
   compactStatusLine,
-  computerChecklist,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
-  heroCopy,
   relativeTime,
   sessionPollInterval,
+  setupStep,
   slackReturnFromSearch,
   splitSessions,
-  type ChecklistStep,
+  type SetupStep,
   type SlackReturn,
 } from './computer-state'
 
@@ -197,8 +196,20 @@ function ComputerPageContent() {
       />
     ) : null
 
-  // Once it is in Slack and knows the code, the page is about the work.
-  if (computerIsOnboarded(status.data)) {
+  // Whether the first mention is still to come decides between setup and the
+  // work, so wait for the sessions rather than flash one and then the other.
+  if (sessionsLoading && computerIsOnboarded(status.data)) {
+    return (
+      <div className="flex min-h-64 items-center justify-center">
+        <Loader2 className="text-muted-foreground size-5 animate-spin" />
+      </div>
+    )
+  }
+
+  // Once it is in Slack, knows the code and has had its first mention, the
+  // page is about the work.
+  const step = setupStep(status.data, sessions.data)
+  if (step === null) {
     return (
       <div className="mx-auto max-w-5xl space-y-8">
         {slackProblemPanel}
@@ -233,30 +244,14 @@ function ComputerPageContent() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      {slackProblemPanel}
-      <Hero
-        status={status.data}
-        createError={createError}
-        creating={create.isPending}
-        onRetry={() => create.mutate()}
-      />
-      <Reasons />
-      <Checklist status={status.data} sessions={sessions.data} />
-      <TryAsking />
-      <SessionsPanel
-        title="Sessions"
-        description="Work your computer is doing for your team, newest first."
-        emptyTitle="No sessions yet"
-        emptyDescription={START_SESSION_COPY}
-        hasComputer={hasComputer}
-        sessions={[...live, ...recent]}
-        readAt={sessions.dataUpdatedAt}
-        loading={sessionsLoading}
-        failed={sessions.isError}
-      />
-      <CliFooter />
-    </div>
+    <Setup
+      status={status.data}
+      step={step}
+      notice={slackProblemPanel}
+      createError={createError}
+      creating={create.isPending}
+      onRetry={() => create.mutate()}
+    />
   )
 }
 
@@ -598,54 +593,6 @@ function IdeasToTry() {
   )
 }
 
-function Hero({
-  status,
-  createError,
-  creating,
-  onRetry,
-}: {
-  status: ComputerStatus
-  createError: Error | null
-  creating: boolean
-  onRetry: () => void
-}) {
-  const { computer } = status
-  const failedToCreate = !computer && createError !== null
-  const copy = failedToCreate
-    ? { headline: 'Something went wrong.', subline: createError.message }
-    : heroCopy(computer, status.plan, status.slack.installed)
-  const canRetry = failedToCreate || computer?.state === 'failed'
-  const notSetUp = !computer && !status.slack.installed
-  return (
-    <section className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-12 sm:px-12 sm:py-16">
-      <div
-        className="bg-primary/15 pointer-events-none absolute -top-24 -right-24 size-72 rounded-full blur-3xl"
-        aria-hidden
-      />
-      <div className="relative max-w-3xl">
-        <StatusPill status={status} failedToCreate={failedToCreate} />
-        <h1 className="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-          {copy.headline}
-        </h1>
-        <p className="text-muted-foreground mt-4 max-w-2xl text-lg text-balance">
-          {copy.subline}
-        </p>
-        {canRetry ? (
-          <RetryButton className="mt-8" creating={creating} onRetry={onRetry} />
-        ) : null}
-        {notSetUp ? (
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <SlackInstallButton size="lg" label="Invite it to Slack" />
-            <span className="text-muted-foreground text-sm">
-              One click. Connect GitHub anytime.
-            </span>
-          </div>
-        ) : null}
-      </div>
-    </section>
-  )
-}
-
 /**
  * Someone tried to link a Slack workspace that already works with
  * OpenComputer in another organization. Not an error: their team is already
@@ -749,167 +696,247 @@ function SlackInstallFailed({
   )
 }
 
-const REASONS = [
-  {
-    icon: MessagesSquare,
-    title: 'Lives in Slack',
-    body: 'Mention it in any thread. It picks up the context, does the work and reports back, right there.',
-  },
-  {
-    icon: GitPullRequest,
-    title: 'Works in your real code',
-    body: 'Your repositories, your stack. It reads, runs and fixes, then hands you a pull request to review.',
-  },
-  {
-    icon: Moon,
-    title: 'Never logs off',
-    body: 'Hand it the slow stuff at 6pm. It is still on it at 3am, and it remembers where everything is.',
-  },
-] as const
-
-function Reasons() {
+/**
+ * Setup is the onboarding of every new organization: three steps, one call to
+ * action at a time, and where the person is in them. No pitch; the page is not
+ * a landing page (Igor, 2026-10-13).
+ */
+function Setup({
+  status,
+  step,
+  notice,
+  createError,
+  creating,
+  onRetry,
+}: {
+  status: ComputerStatus
+  step: SetupStep
+  notice: ReactNode
+  createError: Error | null
+  creating: boolean
+  onRetry: () => void
+}) {
+  const { computer } = status
+  const failedToCreate = !computer && createError !== null
+  const failed = failedToCreate || computer?.state === 'failed'
+  const position = SETUP_STEPS.indexOf(step) + 1
+  const done: Record<SetupStep, boolean> = {
+    slack: status.slack.installed,
+    github: status.github.connected,
+    hello: false,
+  }
+  const progress = (id: SetupStep): SetupItemState =>
+    id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      {REASONS.map(({ icon: Icon, title, body }) => (
-        <div key={title} className="bg-panel rounded-xl border p-5">
-          <Icon className="text-primary size-5" aria-hidden />
-          <p className="mt-3 font-medium">{title}</p>
-          <p className="text-muted-foreground mt-1 text-sm">{body}</p>
+    <div className="mx-auto max-w-2xl space-y-6 pt-2 sm:pt-8">
+      {notice}
+      <header>
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-muted-foreground text-sm font-medium">
+            Step {position} of {SETUP_STEPS.length}
+          </p>
+          {/* Before Slack there is no computer to report on. */}
+          {computer || status.slack.installed ? (
+            <StatusPill status={status} failedToCreate={failedToCreate} />
+          ) : null}
         </div>
-      ))}
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+          Set up your computer
+        </h1>
+        <div className="mt-5 flex gap-1.5" aria-hidden>
+          {SETUP_STEPS.map((id) => (
+            <span
+              key={id}
+              className={cn(
+                'h-1 flex-1 rounded-full transition-colors',
+                done[id]
+                  ? 'bg-primary'
+                  : id === step
+                    ? 'bg-primary/35'
+                    : 'bg-muted',
+              )}
+            />
+          ))}
+        </div>
+      </header>
+
+      {failed ? (
+        <div
+          role="alert"
+          className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
+        >
+          <TriangleAlert
+            className="text-destructive size-4 shrink-0"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">
+              Your computer could not start.
+            </p>
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              {failedToCreate
+                ? createError.message
+                : (computer?.lastError ??
+                  'Try again, or tell us if it keeps happening.')}
+            </p>
+          </div>
+          <RetryButton creating={creating} onRetry={onRetry} />
+        </div>
+      ) : null}
+
+      <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
+        <SetupItem
+          number={1}
+          title="Add OpenComputer to Slack"
+          state={progress('slack')}
+          summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
+          doneAction={<SlackAction status={status} compact />}
+        >
+          <p>
+            Your team mentions it in a thread; it does the work and replies
+            there.
+          </p>
+          <SlackInstallButton size="lg" label="Add to Slack" />
+        </SetupItem>
+        <SetupItem
+          number={2}
+          title="Connect GitHub"
+          state={progress('github')}
+          summary={githubSummary(status.github)}
+          doneAction={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              asChild
+            >
+              <Link to="/managed-agents/connections">Manage</Link>
+            </Button>
+          }
+        >
+          <p>
+            Pick the repositories it can work in. It opens pull requests for you
+            to review and never pushes to main unless you ask.
+          </p>
+          <GitHubAction size="lg" />
+        </SetupItem>
+        <SetupItem
+          number={3}
+          title="Say hello in Slack"
+          state={progress('hello')}
+        >
+          <p>{START_SESSION_COPY} For example:</p>
+          <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            {status.slack.teamId ? (
+              <Button size="lg" asChild>
+                <a
+                  href={`https://app.slack.com/client/${encodeURIComponent(status.slack.teamId)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Slack
+                  <ExternalLink className="size-4" aria-hidden />
+                </a>
+              </Button>
+            ) : null}
+            <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
+              <PulseDot tone="busy" />
+              Waiting for the first mention
+            </span>
+          </div>
+        </SetupItem>
+      </ol>
+
+      {/* Projects are for building agents of your own: a side door, kept out
+          of the way of the setup above. */}
+      <p className="text-muted-foreground pt-6 text-center text-xs">
+        <Link
+          to="/new"
+          className="hover:text-foreground inline-flex items-center gap-1 transition-colors"
+        >
+          Set up a custom agent on OpenComputer infrastructure
+          <ArrowRight className="size-3" aria-hidden />
+        </Link>
+      </p>
     </div>
   )
 }
 
-function TryAsking() {
-  return (
-    <Panel>
-      <PanelHeader>
-        <div>
-          <PanelTitle>Not sure where to start?</PanelTitle>
-          <PanelDescription className="mt-1">
-            Paste one of these into Slack. Then give it the thing you have been
-            putting off.
-          </PanelDescription>
-        </div>
-      </PanelHeader>
-      <PanelContent className="grid gap-2">
-        {EXAMPLE_ASKS.map((ask) => (
-          <CopyRow key={ask} value={`@OpenComputer ${ask}`} />
-        ))}
-      </PanelContent>
-    </Panel>
-  )
-}
+type SetupItemState = 'done' | 'current' | 'upcoming'
 
-function Checklist({
-  status,
-  sessions,
+function SetupItem({
+  number,
+  title,
+  state,
+  summary,
+  doneAction,
+  children,
 }: {
-  status: ComputerStatus
-  sessions: ComputerSession[] | undefined
+  number: number
+  title: string
+  state: SetupItemState
+  summary?: string
+  doneAction?: ReactNode
+  children: ReactNode
 }) {
-  // The computer itself is the hero; these are the three things a person does.
-  const [, slackStep, githubStep, sessionStep] = computerChecklist(
-    status,
-    sessions,
-  )
-  const steps = [slackStep, githubStep, sessionStep]
-  const done = steps.filter((step) => step.done).length
+  const current = state === 'current'
   return (
-    <Panel>
-      <PanelHeader>
-        <div>
-          <PanelTitle>
-            {done === steps.length
-              ? 'You are all set.'
-              : 'Three steps to your first hand-off'}
-          </PanelTitle>
-          <PanelDescription className="mt-1">
-            {done === steps.length
-              ? 'It is part of the team now. Keep it busy.'
-              : `${done} of ${steps.length} done. Takes about two minutes.`}
-          </PanelDescription>
+    <li
+      aria-current={current ? 'step' : undefined}
+      className={cn('px-5', current ? 'bg-primary/[0.03] py-5' : 'py-3.5')}
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className={cn(
+            'flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+            state === 'done' && 'bg-primary/15 text-primary',
+            current && 'bg-primary text-primary-foreground',
+            state === 'upcoming' && 'text-muted-foreground border',
+          )}
+          aria-hidden
+        >
+          {state === 'done' ? <Check className="size-3.5" /> : number}
         </div>
-      </PanelHeader>
-      <PanelContent className="p-0">
-        <ol className="divide-y">
-          <Step
-            number={1}
-            step={{ ...slackStep, title: 'Invite it to Slack' }}
-            action={<SlackAction status={status} />}
+        <div className="min-w-0 flex-1">
+          <p
+            className={cn(
+              'text-sm',
+              current ? 'font-semibold' : 'font-medium',
+              state === 'upcoming' && 'text-muted-foreground',
+            )}
           >
-            {status.slack.installed
-              ? `It is in ${status.slack.teamName ?? 'your Slack workspace'}.`
-              : 'This is what brings it to life. One click, ready in seconds.'}
-          </Step>
-          <Step
-            number={2}
-            step={{ ...githubStep, title: 'Give it your code' }}
-            action={
-              <GitHubAction
-                connected={status.github.connected}
-                // Slack comes first: it is what starts the computer. GitHub works anytime.
-                secondary={!status.slack.installed}
-              />
-            }
-          >
-            {githubSummary(status.github)}
-          </Step>
-          <Step number={3} step={{ ...sessionStep, title: 'Say hello' }}>
-            {START_SESSION_COPY}
-          </Step>
-        </ol>
-      </PanelContent>
-    </Panel>
+            {title}
+            <span className="sr-only">
+              {state === 'done'
+                ? ' (done)'
+                : current
+                  ? ' (current step)'
+                  : ' (to do)'}
+            </span>
+          </p>
+          {state === 'done' && summary ? (
+            <p className="text-muted-foreground truncate text-sm">{summary}</p>
+          ) : null}
+        </div>
+        {state === 'done' ? doneAction : null}
+      </div>
+      {current ? (
+        <div className="text-muted-foreground mt-3 space-y-4 pl-10 text-sm">
+          {children}
+        </div>
+      ) : null}
+    </li>
   )
 }
 
 function githubSummary(github: ComputerStatus['github']) {
-  if (!github.connected) {
-    return 'Pick the repositories it should know. It never pushes to main unless you ask.'
-  }
   const accounts = github.installations.map(
     (installation) => installation.accountLogin,
   )
   return accounts.length
-    ? `It knows the code in ${accounts.join(', ')}.`
-    : 'GitHub is connected.'
-}
-
-function Step({
-  number,
-  step,
-  action,
-  children,
-}: {
-  number: number
-  step: ChecklistStep
-  action?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <li className="flex flex-wrap items-center gap-4 px-5 py-4">
-      <div
-        className={cn(
-          'flex size-8 shrink-0 items-center justify-center rounded-full border text-sm font-semibold',
-          step.done && 'bg-primary text-primary-foreground border-primary',
-        )}
-        aria-hidden
-      >
-        {step.done ? <Check className="size-4" /> : number}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">
-          {step.title}
-          <span className="sr-only">{step.done ? ' (done)' : ' (to do)'}</span>
-        </p>
-        <p className="text-muted-foreground mt-0.5 text-sm">{children}</p>
-      </div>
-      {/* Reserve the action column so rows align with or without one. */}
-      <div className="flex min-w-36 justify-end">{action}</div>
-    </li>
-  )
+    ? `Repositories in ${accounts.join(', ')}`
+    : 'GitHub is connected'
 }
 
 function SlackAction({
@@ -993,24 +1020,11 @@ function SlackInstallButton({
   )
 }
 
-function GitHubAction({
-  connected,
-  secondary = false,
-}: {
-  connected: boolean
-  secondary?: boolean
-}) {
+function GitHubAction({ size = 'default' }: { size?: 'default' | 'lg' }) {
   const [starting, setStarting] = useState(false)
-  if (connected) {
-    return (
-      <Button variant="outline" asChild>
-        <Link to="/managed-agents/connections">Manage</Link>
-      </Button>
-    )
-  }
   return (
     <Button
-      variant={secondary ? 'outline' : 'default'}
+      size={size}
       disabled={starting}
       onClick={() => {
         setStarting(true)

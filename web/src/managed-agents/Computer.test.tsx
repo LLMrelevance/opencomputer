@@ -179,25 +179,30 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('one click away') === true,
-      'not set up hero',
+      () => container.textContent?.includes('Set up your computer') === true,
+      'setup',
     )
 
-    expect(container.textContent).toContain('Your computer is one click away.')
-    expect(container.textContent).toContain(
-      'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
-    )
-    expect(container.textContent).toContain('Not set up yet')
+    expect(container.textContent).toContain('Step 1 of 3')
+    // Before Slack there is no computer to report on, and no pitch.
+    expect(container.textContent).not.toContain('Not set up yet')
     expect(container.textContent).not.toContain('Setting up')
-    // The hero's call to action and the checklist's step 1, both the install.
-    const hero = container.querySelector('section')!
-    const invite = [...hero.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Invite it to Slack',
+    expect(container.textContent).not.toContain('Lives in Slack')
+    // One call to action: the current step's.
+    const current = container.querySelector('li[aria-current="step"]')!
+    expect(current.textContent).toContain('Add OpenComputer to Slack')
+    const invite = [...current.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Add to Slack',
     )
     expect(invite).toBeDefined()
-    expect(container.textContent).toContain('Install Slack app')
-    // GitHub can be connected anytime.
+    expect(container.querySelectorAll('button')).toHaveLength(1)
+    // The later steps are named, not offered yet.
     expect(container.textContent).toContain('Connect GitHub')
+    expect(container.textContent).toContain('Say hello in Slack')
+    // Projects are a side door.
+    expect(container.querySelector('a[href="/new"]')?.textContent).toContain(
+      'Set up a custom agent on OpenComputer infrastructure',
+    )
     expect(container.textContent).not.toMatch(/vCPU|GiB/)
     expect(container.textContent).not.toMatch(/azure|region|instance/i)
 
@@ -226,11 +231,11 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('coming to life') === true,
+      () => container.textContent?.includes('Setting up') === true,
       'provisioning computer',
     )
     expect(computerApi.createComputer).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('Setting up')
+    expect(container.textContent).toContain('Step 2 of 3')
   })
 
   it('does not create a computer the organization already has', async () => {
@@ -372,11 +377,9 @@ describe('Computer page', () => {
     expect(container.textContent).toContain('Acme')
     expect(container.textContent).toContain('acme')
 
-    // Setup and selling are gone; specs never appear.
-    expect(container.textContent).not.toContain('Three steps')
-    expect(container.textContent).not.toContain('Install Slack app')
-    expect(container.textContent).not.toContain('Lives in Slack')
-    expect(container.textContent).not.toContain('never logs off')
+    // Setup is gone; specs never appear.
+    expect(container.textContent).not.toContain('Set up your computer')
+    expect(container.textContent).not.toContain('Add to Slack')
     expect(container.textContent).not.toMatch(/vCPU|GiB/)
   })
 
@@ -398,6 +401,7 @@ describe('Computer page', () => {
       ...onboarded,
       computer: { ...onboarded.computer, state: 'parked', connected: false },
     })
+    computerApi.getComputerSessions.mockResolvedValue([doneSession])
 
     render('/computer')
     await settle(
@@ -417,11 +421,35 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('Three steps') === true,
-      'setup checklist',
+      () => container.textContent?.includes('Step 2 of 3') === true,
+      'setup',
     )
-    expect(container.textContent).toContain('never logs off')
-    expect(container.textContent).toContain('Connect GitHub')
+    const current = container.querySelector('li[aria-current="step"]')!
+    expect(current.textContent).toContain('Connect GitHub')
+    // Slack is done: where it is, and the way out.
+    expect(container.textContent).toContain('In Acme')
+    expect(container.textContent).toContain('Unlink Slack')
+    expect(container.textContent).not.toContain('Live now')
+  })
+
+  it('finishes setup with the first mention in Slack', async () => {
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    computerApi.getComputerSessions.mockResolvedValue([])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Step 3 of 3') === true,
+      'last setup step',
+    )
+    const current = container.querySelector('li[aria-current="step"]')!
+    expect(current.textContent).toContain('Say hello in Slack')
+    expect(current.textContent).toContain('@OpenComputer why is the')
+    expect(current.textContent).toContain('Waiting for the first mention')
+    expect(
+      current.querySelector('a[href="https://app.slack.com/client/T1"]')
+        ?.textContent,
+    ).toContain('Open Slack')
+    expect(container.textContent).toContain('Repositories in acme')
     expect(container.textContent).not.toContain('Live now')
   })
 })

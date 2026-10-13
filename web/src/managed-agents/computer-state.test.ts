@@ -13,11 +13,10 @@ import {
   SESSION_POLL_MS,
   SLOW_POLL_MS,
   compactStatusLine,
-  computerChecklist,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
-  heroCopy,
+  setupStep,
   relativeTime,
   sessionPollInterval,
   alreadyLinkedCopy,
@@ -149,42 +148,6 @@ describe('computer state copy', () => {
       ).description,
     ).toBe('Setup timed out.')
   })
-
-  it('writes a headline for every state without naming hardware or vendors', () => {
-    const states = [
-      'provisioning',
-      'ready',
-      'parked',
-      'waking',
-      'failed',
-      'deleting',
-    ] as const
-    for (const state of states) {
-      for (const plan of ['free', 'paid'] as const) {
-        const copy = heroCopy({ ...computer, state }, plan)
-        expect(copy.headline.length).toBeGreaterThan(0)
-        expect(`${copy.headline} ${copy.subline}`).not.toMatch(
-          /vCPU|GiB|azure|region|instance/i,
-        )
-      }
-    }
-    // Before the Slack install: the install is what brings it to life.
-    expect(heroCopy(null, 'free')).toEqual({
-      headline: 'Your computer is one click away.',
-      subline:
-        'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
-    })
-    // Installed, the computer not there yet: on its way.
-    expect(heroCopy(null, 'free', true).headline).toBe(
-      heroCopy({ ...computer, state: 'provisioning' }, 'free').headline,
-    )
-  })
-
-  it('offers the upgrade only to a sleeping free computer', () => {
-    const parked = { ...computer, state: 'parked' as const }
-    expect(heroCopy(parked, 'free').subline).toContain('Upgrade')
-    expect(heroCopy(parked, 'paid').subline).not.toContain('Upgrade')
-  })
 })
 
 describe('computer polling', () => {
@@ -221,35 +184,24 @@ describe('computer polling', () => {
   })
 })
 
-describe('computer checklist', () => {
-  it('ticks each step from the status and the sessions', () => {
-    const done = (value: ComputerStatus, sessions?: unknown[]) =>
-      computerChecklist(value, sessions as never).map((step) => step.done)
+describe('computer setup', () => {
+  const slack = { installed: true, teamName: 'Acme' }
+  const github = {
+    connected: true,
+    installations: [{ id: '1', accountLogin: 'acme' }],
+  }
 
-    expect(done(status({ computer: null }))).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ])
-    expect(
-      done(
-        status({
-          slack: { installed: true, teamName: 'Acme' },
-          github: {
-            connected: true,
-            installations: [{ id: '1', accountLogin: 'acme' }],
-          },
-        }),
-        [{}],
-      ),
-    ).toEqual([true, true, true, true])
-    expect(
-      done(status({ computer: { ...computer, state: 'parked' } }))[0],
-    ).toBe(true)
-    expect(
-      done(status({ computer: { ...computer, state: 'failed' } }))[0],
-    ).toBe(false)
+  it('walks Slack, then GitHub, then the first mention', () => {
+    expect(setupStep(status({ computer: null }), undefined)).toBe('slack')
+    // GitHub connected first still leaves Slack to do.
+    expect(setupStep(status({ github }), [])).toBe('slack')
+    expect(setupStep(status({ slack }), [])).toBe('github')
+    expect(setupStep(status({ slack, github }), [])).toBe('hello')
+    expect(setupStep(status({ slack, github }), [{} as never])).toBeNull()
+  })
+
+  it('never holds the page on setup for sessions it could not read', () => {
+    expect(setupStep(status({ slack, github }), undefined)).toBeNull()
   })
 })
 

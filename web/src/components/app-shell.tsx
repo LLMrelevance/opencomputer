@@ -62,7 +62,7 @@ import {
   trackUpsellShown,
   upgradeHref,
 } from '@/lib/billing-onramp'
-import { getManagedProject } from '@/managed-agents/api'
+import { getManagedProject, getManagedProjects } from '@/managed-agents/api'
 import {
   projectEnvironmentMode,
   projectEnvironmentSearch,
@@ -332,12 +332,28 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const projectId = projectIdFromPath(location.pathname)
+  const computerEnabled = user?.computerEnabled ?? false
+  // The same queries as the project list, so the sidebar and the list agree.
+  const listProjects = managedAgentsExperimentEnabled && computerEnabled
+  const projects = useQuery({
+    queryKey: ['managed-projects'],
+    queryFn: () => getManagedProjects(),
+    enabled: listProjects,
+  })
+  const archivedProjects = useQuery({
+    queryKey: ['managed-projects', 'archived'],
+    queryFn: () => getManagedProjects({ archived: true }),
+    enabled: listProjects,
+  })
   const nav = managedAgentsExperimentEnabled
     ? managedAgentsNav({
         projectId,
         durableSessionsEnabled: user?.durableSessionsEnabled ?? false,
         infrastructureEnabled: user?.infrastructureEnabled ?? false,
-        computerEnabled: user?.computerEnabled ?? false,
+        computerEnabled,
+        hasProjects:
+          (projects.data?.length ?? 0) > 0 ||
+          (archivedProjects.data?.length ?? 0) > 0,
       })
     : LEGACY_NAV
   const activeCollapsibleGroup = nav.find(

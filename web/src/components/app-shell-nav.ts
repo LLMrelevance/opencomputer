@@ -40,6 +40,8 @@ export function managedAgentsNav(options: {
   durableSessionsEnabled: boolean
   infrastructureEnabled: boolean
   computerEnabled?: boolean
+  /** Whether the organization has any project, active or archived. */
+  hasProjects?: boolean
 }): NavGroup[] {
   const groups: NavGroup[] = []
 
@@ -122,15 +124,20 @@ export function managedAgentsNav(options: {
 
   if (!options.projectId) {
     // The organization's computer comes first (work 052): it is the first
-    // screen of an organization without projects. The project list is the
-    // home screen otherwise; it needs a place in the sidebar so it stays
-    // reachable once an advanced area is open.
+    // screen of an organization without projects, and Projects stays out of
+    // the sidebar until there is one (the way in is a quiet link on the
+    // computer page). The project list is the home screen otherwise; it needs
+    // a place in the sidebar so it stays reachable once an advanced area is
+    // open.
+    const showProjects = !options.computerEnabled || options.hasProjects
     groups.push({
       items: [
         ...(options.computerEnabled
           ? [{ to: '/computer', label: 'Computer', icon: Computer }]
           : []),
-        { to: '/', label: 'Projects', icon: FolderKanban, end: true },
+        ...(showProjects
+          ? [{ to: '/', label: 'Projects', icon: FolderKanban, end: true }]
+          : []),
       ],
     })
   }
