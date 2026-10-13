@@ -25,13 +25,11 @@ import {
   Route,
   ShieldCheck,
   Terminal,
-  Send,
   TriangleAlert,
   Unplug,
   UsersRound,
   X,
 } from 'lucide-react'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
 import { GithubMark } from '@/components/github-mark'
 import { CopyRow } from '@/components/copy-row'
@@ -58,14 +56,13 @@ import { PixelScene } from './pixel-scene'
 import { AuthContext } from '@/hooks/useAuth'
 import { addManagedGitHubConnection } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
+import { SlackInstallButton, UnlinkSlackDialog } from './computer-slack'
 import {
   computerQueryKey,
   computerSessionsQueryKey,
   createComputer,
   getComputer,
   getComputerSessions,
-  startComputerSlackInstall,
-  unlinkComputerSlack,
   type ComputerSession,
   type ComputerStatus,
 } from './computer-api'
@@ -1080,22 +1077,7 @@ function ConnectionsMenu({
   status: ComputerStatus
   manage?: boolean
 }) {
-  const queryClient = useQueryClient()
   const [confirmUnlink, setConfirmUnlink] = useState(false)
-  const unlink = useMutation({
-    mutationFn: unlinkComputerSlack,
-    onSuccess: async () => {
-      setConfirmUnlink(false)
-      await queryClient.invalidateQueries({ queryKey: computerQueryKey })
-      notifySuccess(
-        'Slack workspace unlinked.',
-        'Remove the app in Slack to uninstall it there too.',
-      )
-    },
-    onError: (error) => notifyError("Couldn't unlink Slack.", error),
-  })
-
-  const teamName = status.slack.teamName ?? 'this Slack workspace'
   return (
     <>
       <DropdownMenu>
@@ -1127,49 +1109,12 @@ function ConnectionsMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ConfirmDialog
+      <UnlinkSlackDialog
+        teamName={status.slack.teamName}
         open={confirmUnlink}
         onOpenChange={setConfirmUnlink}
-        title={`Unlink ${teamName}?`}
-        description="Your computer stops answering in this workspace. The app stays installed in Slack until you remove it there, and you can link a workspace again at any time."
-        confirmLabel="Unlink Slack"
-        destructive
-        pending={unlink.isPending}
-        onConfirm={() => unlink.mutate()}
       />
     </>
-  )
-}
-
-function SlackInstallButton({
-  variant = 'default',
-  size = 'default',
-  label = 'Install Slack app',
-}: {
-  variant?: 'default' | 'outline'
-  size?: 'default' | 'lg'
-  label?: string
-}) {
-  const install = useMutation({
-    mutationFn: startComputerSlackInstall,
-    onSuccess: (url) => window.location.assign(url),
-    onError: (error) => notifyError("Couldn't start the Slack install.", error),
-  })
-  return (
-    <Button
-      variant={variant}
-      size={size}
-      // Stays pending through the navigation to Slack.
-      disabled={install.isPending || install.isSuccess}
-      onClick={() => install.mutate()}
-    >
-      {install.isPending || install.isSuccess ? (
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-      ) : (
-        <Send className="size-4" aria-hidden />
-      )}
-      {label}
-    </Button>
   )
 }
 

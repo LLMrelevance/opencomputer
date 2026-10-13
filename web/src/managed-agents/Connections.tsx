@@ -1,46 +1,31 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Plug, Plus, Trash2 } from 'lucide-react'
+import { ExternalLink, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { GithubMark } from '@/components/github-mark'
 import { PageHeader } from '@/components/page-header'
-import { ServiceLogo } from '@/components/service-logo'
-import {
-  Panel,
-  PanelContent,
-  PanelDescription,
-  PanelHeader,
-  PanelTitle,
-} from '@/components/panel'
+import { Panel } from '@/components/panel'
+import { SlackMark } from '@/components/slack-mark'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { AuthContext } from '@/hooks/useAuth'
+import { notifyError } from '@/lib/errors'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  displayManagedAgentName,
   addManagedGitHubConnection,
   claimManagedAgentChannelIdentity,
-  disconnectManagedAgentConnection,
-  getManagedAgentConnections,
   getManagedGitHubConnections,
-  getManagedAgents,
   linkManagedAgentConnection,
-  refreshManagedAgentConnection,
-  type ManagedAgentConnection,
 } from './api'
-import {
-  navigateAuthorizationWindow,
-  openAuthorizationWindow,
-} from './authorization-window'
+import { launchAuthorizationWindow } from './authorization-window'
+import { computerQueryKey, getComputer } from './computer-api'
+import { SlackInstallButton, UnlinkSlackDialog } from './computer-slack'
+import { slackLinks } from './computer-state'
+
+// The organization's connections: the Slack app the computer answers in and
+// the GitHub accounts it works in. Serverless agents still send people here
+// to link a channel identity or connect an account (`?channel_link=…`,
+// `?connect=1&service=…`); those links are handled, nothing else is listed.
 
 function displayResourceName(value: string) {
   return value
@@ -48,61 +33,20 @@ function displayResourceName(value: string) {
     .replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
-// A Google grant's scopes say which service it is; the provider does not.
-// Sheets is checked before Drive because a Sheets grant carries drive scopes
-// too, and Drive first would claim it.
-const GOOGLE_SERVICES = [
-  { id: 'calendar', name: 'Google Calendar', scope: '/auth/calendar' },
-  { id: 'sheets', name: 'Google Sheets', scope: '/auth/spreadsheets' },
-  { id: 'drive', name: 'Google Drive', scope: '/auth/drive' },
-  { id: 'gmail', name: 'Gmail', scope: '/auth/gmail.' },
-] as const
-
-function googleServiceFor(scopes: string[]) {
-  return GOOGLE_SERVICES.find((service) =>
-    scopes.some((scope) => scope.toLowerCase().includes(service.scope)),
-  )
-}
-
-function connectionService(connection: { provider: string; scopes: string[] }) {
-  return (
-    googleServiceFor(connection.scopes)?.name ??
-    displayResourceName(connection.provider)
-  )
-}
-
-function connectionServiceId(
-  connection: ManagedAgentConnection,
-): 'gmail' | 'calendar' | 'drive' | 'sheets' | 'github' | 'linear' | undefined {
-  if (connection.provider === 'github') return 'github'
-  if (connection.provider === 'linear') return 'linear'
-  if (connection.provider !== 'google') return undefined
-  // Returning undefined here strands the connection: the page skips it when
-  // reconciling and cannot disconnect it either.
-  return googleServiceFor(connection.scopes)?.id
-}
-
-async function loadManagedAgentConnections() {
-  const current = await getManagedAgentConnections()
-  const pending = current.filter(
-    (connection) => connection.status === 'pending',
-  )
-  if (!pending.length) return current
-  await Promise.allSettled(
-    pending.map((connection) => {
-      const service = connectionServiceId(connection)
-      if (!service) return Promise.resolve()
-      return refreshManagedAgentConnection(
-        service === 'github' || service === 'linear' ? service : 'google',
-        service,
-        connection.id,
-      )
-    }),
-  )
-  return getManagedAgentConnections()
+/** GitHub's settings page for one installation, where repositories are chosen. */
+function githubInstallationSettingsUrl(installation: {
+  githubInstallationId: number
+  accountLogin: string
+  accountType: string
+}) {
+  return installation.accountType === 'Organization'
+    ? `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${installation.githubInstallationId}`
+    : `https://github.com/settings/installations/${installation.githubInstallationId}`
 }
 
 export default function ManagedAgentConnections() {
+  const computerEnabled =
+    useContext(AuthContext)?.user?.computerEnabled ?? false
   const [searchParams, setSearchParams] = useSearchParams()
   const channelLinkStarted = useRef(false)
   const connectionStarted = useRef(false)
@@ -112,38 +56,8 @@ export default function ManagedAgentConnections() {
   const [connectionRequestState, setConnectionRequestState] = useState<
     'idle' | 'connecting' | 'connected' | 'failed'
   >('idle')
-  const [newService, setNewService] = useState('gmail')
-  const [newAlias, setNewAlias] = useState('gmail')
-  const [addConnectionOpen, setAddConnectionOpen] = useState(false)
-  const [addConnectionError, setAddConnectionError] = useState<string>()
-  const [addingGitHubConnection, setAddingGitHubConnection] = useState(false)
-  const [syncingGitHubConnections, setSyncingGitHubConnections] =
-    useState(false)
-  const [githubConnectionError, setGithubConnectionError] = useState<string>()
-  const [removeConnectionError, setRemoveConnectionError] = useState<string>()
-  const [connectionToRemove, setConnectionToRemove] =
-    useState<ManagedAgentConnection>()
-  const [removingConnection, setRemovingConnection] = useState(false)
   const requestedService = searchParams.get('service')
   const requestedAlias = searchParams.get('alias') || 'default'
-  const connections = useQuery({
-    queryKey: ['managed-agent-connections'],
-    queryFn: loadManagedAgentConnections,
-  })
-  const githubConnections = useQuery({
-    queryKey: ['managed-github-connections'],
-    queryFn: getManagedGitHubConnections,
-  })
-  const agents = useQuery({
-    queryKey: ['managed-agents'],
-    queryFn: getManagedAgents,
-  })
-  const agentNames = new Map(
-    (agents.data ?? []).map((agent) => [
-      agent.id,
-      displayManagedAgentName(agent),
-    ]),
-  )
 
   useEffect(() => {
     const token = searchParams.get('channel_link')
@@ -184,56 +98,35 @@ export default function ManagedAgentConnections() {
           return
         }
         setConnectionRequestState('connected')
-        void connections.refetch()
       })
       .catch(() => setConnectionRequestState('failed'))
-  }, [
-    channelLinkState,
-    connections,
-    requestedAlias,
-    requestedService,
-    searchParams,
-  ])
+  }, [channelLinkState, requestedAlias, requestedService, searchParams])
 
   return (
-    <div>
+    <div className="max-w-3xl">
       <PageHeader
         title="Connections"
-        description="Manage services and GitHub organizations available to your agents."
-        actions={
-          <Button
-            onClick={() => {
-              setConnectionRequestState('idle')
-              setAddConnectionError(undefined)
-              setAddConnectionOpen(true)
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            Add connection
-          </Button>
-        }
+        description="Where OpenComputer works for your organization."
       />
 
-      {channelLinkState !== 'idle' && (
-        <Panel className="mb-4">
-          <PanelContent className="text-sm">
+      <div className="space-y-4">
+        {channelLinkState !== 'idle' && (
+          <Notice>
             {channelLinkState === 'linking' && 'Linking your channel identity…'}
             {channelLinkState === 'linked' &&
               'Channel identity linked. This agent can now use your connections when you message it.'}
             {channelLinkState === 'failed' &&
               'This channel link is invalid or expired. Ask the agent for a new link.'}
-          </PanelContent>
-        </Panel>
-      )}
+          </Notice>
+        )}
 
-      {requestedService && (
-        <Panel className="mb-4">
-          <PanelContent>
-            <p className="text-sm font-medium">
+        {requestedService && (
+          <Notice>
+            <p className="font-medium">
               Connect {displayResourceName(requestedService)} as “
               {requestedAlias}”
             </p>
-            <p className="text-muted-foreground mt-1 text-sm">
+            <p className="text-muted-foreground mt-0.5">
               {connectionRequestState === 'connecting'
                 ? 'Opening secure authorization…'
                 : connectionRequestState === 'connected'
@@ -242,422 +135,293 @@ export default function ManagedAgentConnections() {
                     ? 'The connection could not be started. Reload this link to try again.'
                     : 'Continue to securely authorize this account.'}
             </p>
-          </PanelContent>
-        </Panel>
-      )}
+          </Notice>
+        )}
 
-      <Panel className="mb-4">
-        <PanelHeader className="items-center">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
-              <GithubMark className="size-4" />
-            </div>
-            <div>
-              <PanelTitle>Managed GitHub</PanelTitle>
-              <PanelDescription className="mt-1">
-                Install OpenComputer for the GitHub organizations your agents
-                can work in.
-              </PanelDescription>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={addingGitHubConnection || syncingGitHubConnections}
-              onClick={() => {
-                setGithubConnectionError(undefined)
-                let authorizationWindow: Window
-                try {
-                  authorizationWindow = openAuthorizationWindow()
-                } catch (error) {
-                  setGithubConnectionError(
-                    error instanceof Error
-                      ? error.message
-                      : 'GitHub sync could not be started.',
-                  )
-                  return
-                }
-                setSyncingGitHubConnections(true)
-                void addManagedGitHubConnection('existing')
-                  .then((authorizationUrl) =>
-                    navigateAuthorizationWindow(
-                      authorizationWindow,
-                      authorizationUrl,
-                    ),
-                  )
-                  .catch((error: unknown) => {
-                    authorizationWindow.close()
-                    setGithubConnectionError(
-                      error instanceof Error
-                        ? error.message
-                        : 'GitHub sync could not be started.',
-                    )
-                  })
-                  .finally(() => setSyncingGitHubConnections(false))
-              }}
-            >
-              {syncingGitHubConnections ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : null}
-              Sync installations
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={addingGitHubConnection || syncingGitHubConnections}
-              onClick={() => {
-                setGithubConnectionError(undefined)
-                let authorizationWindow: Window
-                try {
-                  authorizationWindow = openAuthorizationWindow()
-                } catch (error) {
-                  setGithubConnectionError(
-                    error instanceof Error
-                      ? error.message
-                      : 'GitHub setup could not be started.',
-                  )
-                  return
-                }
-                setAddingGitHubConnection(true)
-                void addManagedGitHubConnection('install')
-                  .then((authorizationUrl) =>
-                    navigateAuthorizationWindow(
-                      authorizationWindow,
-                      authorizationUrl,
-                    ),
-                  )
-                  .catch((error: unknown) => {
-                    authorizationWindow.close()
-                    setGithubConnectionError(
-                      error instanceof Error
-                        ? error.message
-                        : 'GitHub setup could not be started.',
-                    )
-                  })
-                  .finally(() => setAddingGitHubConnection(false))
-              }}
-            >
-              {addingGitHubConnection ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <Plus className="size-4" aria-hidden />
-              )}
-              Add organization
-            </Button>
-          </div>
-        </PanelHeader>
-        <PanelContent>
-          {githubConnections.isLoading ? (
-            <div className="flex min-h-20 items-center justify-center">
-              <Loader2 className="text-muted-foreground size-5 animate-spin" />
-            </div>
-          ) : githubConnections.isError ? (
-            <div className="flex min-h-20 items-center justify-between gap-4">
-              <p className="text-muted-foreground text-sm">
-                GitHub installations are temporarily unavailable.
-              </p>
-              <Button
-                variant="outline"
-                onClick={() => void githubConnections.refetch()}
-              >
-                Try again
-              </Button>
-            </div>
-          ) : githubConnections.data?.connections.length ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {githubConnections.data.connections.map((connection) => (
-                <div
-                  key={connection.id}
-                  className="flex items-center gap-3 rounded-md border px-4 py-3"
-                >
-                  <GithubMark className="text-muted-foreground size-4 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {connection.accountLogin}
-                    </p>
-                    <p className="text-muted-foreground truncate text-xs">
-                      {connection.repositorySelection === 'all'
-                        ? 'All repositories'
-                        : 'Selected repositories'}
-                    </p>
-                  </div>
-                  <StatusBadge
-                    status={
-                      connection.state === 'active' ? 'connected' : 'stopped'
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-4 text-center">
-              <p className="text-sm font-medium">No organizations added</p>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Add a GitHub user or organization account, then choose which
-                repositories OpenComputer can access.
-              </p>
-            </div>
-          )}
-          {githubConnectionError ? (
-            <p className="text-destructive mt-3 text-sm">
-              {githubConnectionError}
-            </p>
-          ) : null}
-        </PanelContent>
-      </Panel>
-
-      {connections.isLoading ? (
-        <div className="flex min-h-48 items-center justify-center">
-          <Loader2 className="text-muted-foreground size-5 animate-spin" />
-        </div>
-      ) : connections.isError ? (
-        <Panel>
-          <PanelContent className="flex min-h-40 flex-col items-center justify-center gap-4 text-center">
-            <div>
-              <p className="text-sm font-medium">
-                Connections are temporarily unavailable
-              </p>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Try loading this page again.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => void connections.refetch()}
-            >
-              Try again
-            </Button>
-          </PanelContent>
-        </Panel>
-      ) : connections.data?.length ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {connections.data.map((connection) => {
-            const agentName = agentNames.get(connection.agentId)
-            const service = connectionServiceId(connection)
-            return (
-              <Panel key={connection.id}>
-                <PanelContent className="flex items-center gap-3">
-                  <div className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
-                    {service === 'github' ? (
-                      <GithubMark className="size-4" />
-                    ) : (
-                      <ServiceLogo service={service} className="size-4" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {displayResourceName(
-                        connection.label || connection.provider,
-                      )}
-                    </p>
-                    <p className="text-muted-foreground truncate text-xs">
-                      {connectionService(connection)}
-                      {connection.displayName
-                        ? ` · ${connection.displayName}`
-                        : ''}
-                      {agentName ? ` · ${agentName}` : ''}
-                    </p>
-                  </div>
-                  <StatusBadge status={connection.status} />
-                  {service ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove ${connection.label} connection`}
-                      onClick={() => setConnectionToRemove(connection)}
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                    </Button>
-                  ) : null}
-                </PanelContent>
-              </Panel>
-            )
-          })}
-        </div>
-      ) : (
-        <Panel>
-          <PanelContent className="flex min-h-40 flex-col items-center justify-center text-center">
-            <div className="bg-muted text-muted-foreground mb-3 flex size-10 items-center justify-center rounded-full">
-              <Plug className="size-4" aria-hidden />
-            </div>
-            <p className="text-sm font-medium">No connections yet</p>
-            <p className="text-muted-foreground mt-1 max-w-sm text-sm">
-              Add Google, GitHub, or Linear accounts for your agents.
-            </p>
-            <Button
-              className="mt-4"
-              variant="outline"
-              onClick={() => setAddConnectionOpen(true)}
-            >
-              <Plus className="size-4" aria-hidden />
-              Add connection
-            </Button>
-          </PanelContent>
-        </Panel>
-      )}
-
-      <Dialog
-        open={addConnectionOpen}
-        onOpenChange={(open) => {
-          if (connectionRequestState === 'connecting') return
-          setAddConnectionOpen(open)
-          if (!open) setAddConnectionError(undefined)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add connection</DialogTitle>
-            <DialogDescription>
-              Choose a service and a memorable alias for this account.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const alias = newAlias.trim()
-              if (!alias || connectionRequestState === 'connecting') return
-              setAddConnectionError(undefined)
-              setConnectionRequestState('connecting')
-              let authorizationWindow: Window
-              try {
-                authorizationWindow = openAuthorizationWindow()
-              } catch (error) {
-                setConnectionRequestState('failed')
-                setAddConnectionError(
-                  error instanceof Error
-                    ? error.message
-                    : 'The connection could not be started.',
-                )
-                return
-              }
-              void linkManagedAgentConnection(newService, alias)
-                .then((result) => {
-                  if (result.authorizationUrl) {
-                    navigateAuthorizationWindow(
-                      authorizationWindow,
-                      result.authorizationUrl,
-                    )
-                    return
-                  }
-                  authorizationWindow.close()
-                  setConnectionRequestState('connected')
-                  setAddConnectionOpen(false)
-                  void connections.refetch()
-                })
-                .catch((error: unknown) => {
-                  authorizationWindow.close()
-                  setConnectionRequestState('failed')
-                  setAddConnectionError(
-                    error instanceof Error
-                      ? error.message
-                      : 'The connection could not be started.',
-                  )
-                })
-            }}
-          >
-            <div className="grid gap-2">
-              <Label htmlFor="connection-service">Service</Label>
-              <select
-                id="connection-service"
-                value={newService}
-                onChange={(event) => {
-                  const service = event.target.value
-                  setNewService(service)
-                  setNewAlias(service === 'calendar' ? 'calendar' : service)
-                }}
-                className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
-              >
-                <option value="gmail">Gmail</option>
-                <option value="calendar">Google Calendar</option>
-                <option value="drive">Google Drive</option>
-                <option value="sheets">Google Sheets</option>
-                <option value="linear">Linear</option>
-              </select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="connection-alias">Account alias</Label>
-              <Input
-                id="connection-alias"
-                value={newAlias}
-                onChange={(event) => setNewAlias(event.target.value)}
-                pattern="[A-Za-z0-9._-]+"
-                placeholder="work-gmail"
-                required
-              />
-              <p className="text-muted-foreground text-xs">
-                Agents use this alias to select the account in callService().
-              </p>
-            </div>
-            {addConnectionError ? (
-              <p className="text-destructive text-sm">{addConnectionError}</p>
-            ) : null}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={connectionRequestState === 'connecting'}
-                onClick={() => setAddConnectionOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  !newAlias.trim() || connectionRequestState === 'connecting'
-                }
-              >
-                {connectionRequestState === 'connecting' ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : null}
-                Continue
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <ConfirmDialog
-        open={Boolean(connectionToRemove)}
-        onOpenChange={(open) => {
-          if (!open) setConnectionToRemove(undefined)
-        }}
-        title="Remove connection?"
-        description={
-          connectionToRemove
-            ? removeConnectionError
-              ? `The connection could not be removed: ${removeConnectionError}`
-              : `Agents will no longer be able to use the “${connectionToRemove.label}” account. You can reconnect it later.`
-            : undefined
-        }
-        confirmLabel="Remove connection"
-        destructive
-        pending={removingConnection}
-        onConfirm={() => {
-          if (!connectionToRemove) return
-          const service = connectionServiceId(connectionToRemove)
-          if (!service) return
-          setRemovingConnection(true)
-          setRemoveConnectionError(undefined)
-          void disconnectManagedAgentConnection(
-            service === 'github' || service === 'linear' ? service : 'google',
-            service,
-            connectionToRemove.id,
-          )
-            .then(() => connections.refetch())
-            .then(() => setConnectionToRemove(undefined))
-            .catch((error: unknown) => {
-              setRemoveConnectionError(
-                error instanceof Error
-                  ? error.message
-                  : 'The connection could not be removed.',
-              )
-            })
-            .finally(() => setRemovingConnection(false))
-        }}
-      />
+        {computerEnabled ? <SlackConnection /> : null}
+        <GitHubConnection />
+      </div>
     </div>
+  )
+}
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div className="bg-muted/50 rounded-lg border px-4 py-3 text-sm">
+      {children}
+    </div>
+  )
+}
+
+/** One service: its mark, what it does here, and its actions; rows below. */
+function ServiceCard({
+  icon,
+  title,
+  summary,
+  actions,
+  children,
+}: {
+  icon: ReactNode
+  title: string
+  summary: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <Panel>
+      <section aria-label={title}>
+        <div className="flex items-center gap-4 px-5 py-4">
+          <div className="bg-muted text-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
+            {icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold">{title}</h2>
+            <div className="text-muted-foreground mt-0.5 truncate text-sm">
+              {summary}
+            </div>
+          </div>
+          {actions ? (
+            <div className="flex shrink-0 items-center gap-1">{actions}</div>
+          ) : null}
+        </div>
+        {children ? <div className="border-t">{children}</div> : null}
+      </section>
+    </Panel>
+  )
+}
+
+function ServiceRow({
+  title,
+  detail,
+  trailing,
+}: {
+  title: ReactNode
+  detail?: ReactNode
+  trailing?: ReactNode
+}) {
+  return (
+    <div className="flex min-h-12 items-center gap-3 py-2.5 pr-3 pl-[4.25rem]">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{title}</p>
+        {detail ? (
+          <p className="text-muted-foreground truncate text-xs">{detail}</p>
+        ) : null}
+      </div>
+      {trailing ? (
+        <div className="flex shrink-0 items-center gap-1">{trailing}</div>
+      ) : null}
+    </div>
+  )
+}
+
+function SlackConnection() {
+  const status = useQuery({
+    queryKey: computerQueryKey,
+    queryFn: getComputer,
+  })
+  const [confirmUnlink, setConfirmUnlink] = useState(false)
+  const slack = status.data?.slack
+  const web = slack ? slackLinks(slack).web : null
+
+  return (
+    <ServiceCard
+      icon={<SlackMark className="size-4" />}
+      title="Slack"
+      summary={
+        status.isError
+          ? 'Slack status is temporarily unavailable.'
+          : slack?.installed || status.isLoading
+            ? 'The workspace where your team works with OpenComputer.'
+            : 'Add OpenComputer to your workspace to work with it in Slack.'
+      }
+      actions={
+        status.isError ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void status.refetch()}
+          >
+            Try again
+          </Button>
+        ) : status.isSuccess && !slack?.installed ? (
+          <SlackInstallButton
+            variant="outline"
+            size="sm"
+            label="Add to Slack"
+          />
+        ) : null
+      }
+    >
+      {status.isLoading ? (
+        <ServiceRow title={<Skeleton className="h-4 w-28" />} />
+      ) : slack?.installed ? (
+        <>
+          <ServiceRow
+            title={slack.teamName ?? 'Slack workspace'}
+            detail="Workspace"
+            trailing={
+              <>
+                {web ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    asChild
+                  >
+                    <a href={web} target="_blank" rel="noreferrer">
+                      Open
+                      <ExternalLink className="size-3.5" aria-hidden />
+                    </a>
+                  </Button>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => setConfirmUnlink(true)}
+                >
+                  Unlink
+                </Button>
+              </>
+            }
+          />
+          <UnlinkSlackDialog
+            teamName={slack.teamName}
+            open={confirmUnlink}
+            onOpenChange={setConfirmUnlink}
+          />
+        </>
+      ) : null}
+    </ServiceCard>
+  )
+}
+
+function GitHubConnection() {
+  const installations = useQuery({
+    queryKey: ['managed-github-connections'],
+    queryFn: getManagedGitHubConnections,
+  })
+  const [starting, setStarting] = useState<'install' | 'existing'>()
+  const start = (mode: 'install' | 'existing') => {
+    setStarting(mode)
+    void launchAuthorizationWindow(() => addManagedGitHubConnection(mode))
+      .catch((error: unknown) =>
+        notifyError(
+          mode === 'install'
+            ? "Couldn't start the GitHub installation."
+            : "Couldn't start the GitHub sync.",
+          error,
+        ),
+      )
+      .finally(() => setStarting(undefined))
+  }
+  const accounts = installations.data?.connections ?? []
+
+  return (
+    <ServiceCard
+      icon={<GithubMark className="size-4" />}
+      title="GitHub"
+      summary={
+        installations.isError
+          ? 'GitHub installations are temporarily unavailable.'
+          : 'Accounts and repositories OpenComputer can work in.'
+      }
+      actions={
+        installations.isError ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void installations.refetch()}
+          >
+            Try again
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              title="Pick up installations made on GitHub"
+              disabled={Boolean(starting)}
+              onClick={() => start('existing')}
+            >
+              {starting === 'existing' ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="size-3.5" aria-hidden />
+              )}
+              Sync
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={Boolean(starting)}
+              onClick={() => start('install')}
+            >
+              {starting === 'install' ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Plus className="size-3.5" aria-hidden />
+              )}
+              Add account
+            </Button>
+          </>
+        )
+      }
+    >
+      {installations.isLoading ? (
+        <div className="divide-y">
+          <ServiceRow title={<Skeleton className="h-4 w-28" />} />
+        </div>
+      ) : accounts.length ? (
+        <div className="divide-y">
+          {accounts.map((installation) => (
+            <ServiceRow
+              key={installation.id}
+              title={installation.accountLogin}
+              detail={
+                installation.repositorySelection === 'all'
+                  ? 'All repositories'
+                  : 'Selected repositories'
+              }
+              trailing={
+                <>
+                  {installation.state === 'active' ? null : (
+                    <StatusBadge
+                      status="stopped"
+                      label={
+                        installation.state === 'suspended'
+                          ? 'Suspended'
+                          : 'Removed'
+                      }
+                    />
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    asChild
+                  >
+                    <a
+                      href={githubInstallationSettingsUrl(installation)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Configure
+                      <ExternalLink className="size-3.5" aria-hidden />
+                    </a>
+                  </Button>
+                </>
+              }
+            />
+          ))}
+        </div>
+      ) : installations.isSuccess ? (
+        <p className="text-muted-foreground py-3 pr-5 pl-[4.25rem] text-sm">
+          No accounts yet. Add a GitHub organization or user, then choose its
+          repositories.
+        </p>
+      ) : null}
+    </ServiceCard>
   )
 }
