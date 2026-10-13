@@ -38,6 +38,12 @@ import { CopyRow } from '@/components/copy-row'
 import { Panel } from '@/components/panel'
 import { ResourceTable, type Column } from '@/components/resource-table'
 import { StatusBadge } from '@/components/status-badge'
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -267,13 +273,13 @@ function ComputerPageContent() {
  */
 function WithDeveloperFooter({ children }: { children: ReactNode }) {
   return (
-    // Fills the viewport below the top bar; the footer then runs into main's
-    // bottom padding so it sits on the window's edge.
-    <div className="flex min-h-[calc(100svh-6.5rem)] flex-col md:min-h-[calc(100svh-7rem)]">
+    // Takes the rest of the shell's full-height column; the footer then runs
+    // into main's bottom padding so it sits on the window's edge.
+    <div className="flex flex-1 flex-col">
       <div className="flex flex-1 flex-col">{children}</div>
       {/* Built like the sidebar's profile block (border, py-3, a 40px row)
           so the two rules line up. */}
-      <footer className="text-muted-foreground mt-16 -mb-6 border-t py-3 text-xs">
+      <footer className="text-muted-foreground mt-8 -mb-6 border-t py-3 text-xs">
         <p className="flex h-10 items-center gap-1">
           Building your own agent?
           <Link
@@ -657,27 +663,22 @@ function Setup({
         {notice}
 
         {failed ? (
-          <div
-            role="alert"
-            className="border-destructive/40 bg-destructive/5 flex max-w-2xl flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
+          <Alert
+            variant="destructive"
+            className="border-destructive/40 bg-destructive/5 max-w-2xl px-4 py-3 pr-32"
           >
-            <TriangleAlert
-              className="text-destructive size-4 shrink-0"
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">
-                Your computer could not start.
-              </p>
-              <p className="text-muted-foreground mt-0.5 text-sm">
-                {failedToCreate
-                  ? createError.message
-                  : (computer?.lastError ??
-                    'Try again, or tell us if it keeps happening.')}
-              </p>
-            </div>
-            <RetryButton creating={creating} onRetry={onRetry} />
-          </div>
+            <TriangleAlert aria-hidden />
+            <AlertTitle>Your computer could not start.</AlertTitle>
+            <AlertDescription className="text-muted-foreground">
+              {failedToCreate
+                ? createError.message
+                : (computer?.lastError ??
+                  'Try again, or tell us if it keeps happening.')}
+            </AlertDescription>
+            <AlertAction className="top-1/2 right-3 -translate-y-1/2">
+              <RetryButton creating={creating} onRetry={onRetry} />
+            </AlertAction>
+          </Alert>
         ) : null}
 
         {/* The steps and their context share a row, so the two cards' top
@@ -687,7 +688,7 @@ function Setup({
             grows to the footer, and the scene stands on its floor. */}
         <div
           className={cn(
-            'grid flex-1 gap-x-12 gap-y-10 xl:grid-cols-[minmax(0,42rem)_18rem] xl:grid-rows-[auto_1fr]',
+            'grid flex-1 gap-x-12 gap-y-10 xl:grid-cols-[minmax(0,42rem)_18rem] xl:grid-rows-[auto_minmax(0,1fr)] xl:gap-y-0',
             stepsRunLong
               ? "xl:[grid-template-areas:'steps_context'_'steps_scene']"
               : "xl:[grid-template-areas:'steps_context'_'scene_scene']",
@@ -762,11 +763,21 @@ function Setup({
             </SetupItem>
           </ol>
           <SetupContext step={step} className="xl:[grid-area:context]" />
-          <PixelScene
-            asleep={step === 'slack'}
-            shape={stepsRunLong ? 'compact' : 'wide'}
-            className="hidden self-end xl:block xl:[grid-area:scene]"
-          />
+          {/* The scene only uses height nobody else needs: its area is a size
+              container that adds nothing to the page (no row gap either), and
+              the scene shows when the space left fits it plus clearance. */}
+          <div className="[container-type:size] relative hidden min-h-0 xl:block xl:[grid-area:scene]">
+            <PixelScene
+              asleep={step === 'slack'}
+              shape={stepsRunLong ? 'compact' : 'wide'}
+              className={cn(
+                'absolute inset-x-0 bottom-0 hidden',
+                stepsRunLong
+                  ? '[@container(min-height:15.5rem)]:block'
+                  : '[@container(min-height:9.5rem)]:block',
+              )}
+            />
+          </div>
         </div>
       </div>
     </WithDeveloperFooter>

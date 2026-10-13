@@ -699,7 +699,9 @@ export default function AppShell() {
   }
 
   return (
-    <div className="bg-background text-foreground min-h-screen font-sans">
+    // A column filling the viewport, so a page can take the remaining height
+    // with flex-1 (e.g. to keep a footer on the window's bottom edge).
+    <div className="bg-background text-foreground flex min-h-svh flex-col font-sans">
       {/* Desktop top bar — a continuous line across the app; the brand sits in
           the column above the sidebar so its right + bottom borders line up. */}
       <header className="bg-sidebar fixed inset-x-0 top-0 z-30 hidden h-16 items-center border-b md:flex">
@@ -760,14 +762,14 @@ export default function AppShell() {
       </header>
 
       {/* Main content */}
-      <div className="md:pt-16 md:pl-60">
+      <div className="flex flex-1 flex-col md:pt-16 md:pl-60">
         <div className="sticky top-14 z-20 md:top-16">
           <HaltBanner />
           <AgentSecurityAlertBanner />
         </div>
         <main
           className={cn(
-            'mx-auto px-4 py-6 sm:px-8',
+            'mx-auto flex w-full flex-1 flex-col px-4 py-6 sm:px-8',
             location.pathname.startsWith('/managed-agents/') ||
               location.pathname.startsWith('/projects/')
               ? 'max-w-[1600px]'
