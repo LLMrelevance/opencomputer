@@ -6,15 +6,12 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Trash2,
   Unplug,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { GithubMark } from '@/components/github-mark'
 import { PageHeader } from '@/components/page-header'
 import { Panel } from '@/components/panel'
-import { ServiceLogo } from '@/components/service-logo'
 import { SlackMark } from '@/components/slack-mark'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -28,16 +25,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { AuthContext } from '@/hooks/useAuth'
 import { notifyError } from '@/lib/errors'
 import {
-  displayManagedAgentName,
   addManagedGitHubConnection,
   claimManagedAgentChannelIdentity,
-  disconnectManagedAgentConnection,
-  getManagedAgentConnections,
   getManagedGitHubConnections,
-  getManagedAgents,
   linkManagedAgentConnection,
-  refreshManagedAgentConnection,
-  type ManagedAgentConnection,
 } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
 import { computerQueryKey, getComputer } from './computer-api'
@@ -45,87 +36,14 @@ import { SlackInstallButton, UnlinkSlackDialog } from './computer-slack'
 import { slackLinks } from './computer-state'
 
 // The organization's connections: the Slack app the computer answers in and
-// the GitHub accounts it works in. Personal accounts (Google, Linear) are
-// only listed when an agent already connected one; agents start new ones
-// with a link to this page (`?connect=1&service=…`), so there is no picker.
+// the GitHub accounts it works in. Serverless agents still send people here
+// to link a channel identity or connect an account (`?channel_link=…`,
+// `?connect=1&service=…`); those links are handled, nothing else is listed.
 
 function displayResourceName(value: string) {
   return value
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase())
-}
-
-// A Google grant's scopes say which service it is; the provider does not.
-// Sheets is checked before Drive because a Sheets grant carries drive scopes
-// too, and Drive first would claim it.
-const GOOGLE_SERVICES = [
-  { id: 'calendar', name: 'Google Calendar', scope: '/auth/calendar' },
-  { id: 'sheets', name: 'Google Sheets', scope: '/auth/spreadsheets' },
-  { id: 'drive', name: 'Google Drive', scope: '/auth/drive' },
-  { id: 'gmail', name: 'Gmail', scope: '/auth/gmail.' },
-] as const
-
-function googleServiceFor(scopes: string[]) {
-  return GOOGLE_SERVICES.find((service) =>
-    scopes.some((scope) => scope.toLowerCase().includes(service.scope)),
-  )
-}
-
-function connectionService(connection: { provider: string; scopes: string[] }) {
-  return (
-    googleServiceFor(connection.scopes)?.name ??
-    displayResourceName(connection.provider)
-  )
-}
-
-function connectionServiceId(
-  connection: ManagedAgentConnection,
-): 'gmail' | 'calendar' | 'drive' | 'sheets' | 'github' | 'linear' | undefined {
-  if (connection.provider === 'github') return 'github'
-  if (connection.provider === 'linear') return 'linear'
-  if (connection.provider !== 'google') return undefined
-  // Returning undefined here strands the connection: the page skips it when
-  // reconciling and cannot disconnect it either.
-  return googleServiceFor(connection.scopes)?.id
-}
-
-function connectionTitle(connection: ManagedAgentConnection) {
-  return displayResourceName(connection.label || connection.provider)
-}
-
-/** Service, account and agent, leaving out whatever just repeats the title. */
-function connectionDetail(
-  connection: ManagedAgentConnection,
-  agentName: string | undefined,
-) {
-  const seen = new Set([connectionTitle(connection).toLowerCase()])
-  return [connectionService(connection), connection.displayName, agentName]
-    .filter((part): part is string => {
-      if (!part || seen.has(part.toLowerCase())) return false
-      seen.add(part.toLowerCase())
-      return true
-    })
-    .join(' · ')
-}
-
-async function loadManagedAgentConnections() {
-  const current = await getManagedAgentConnections()
-  const pending = current.filter(
-    (connection) => connection.status === 'pending',
-  )
-  if (!pending.length) return current
-  await Promise.allSettled(
-    pending.map((connection) => {
-      const service = connectionServiceId(connection)
-      if (!service) return Promise.resolve()
-      return refreshManagedAgentConnection(
-        service === 'github' || service === 'linear' ? service : 'google',
-        service,
-        connection.id,
-      )
-    }),
-  )
-  return getManagedAgentConnections()
 }
 
 /** GitHub's settings page for one installation, where repositories are chosen. */
@@ -153,10 +71,6 @@ export default function ManagedAgentConnections() {
   >('idle')
   const requestedService = searchParams.get('service')
   const requestedAlias = searchParams.get('alias') || 'default'
-  const connections = useQuery({
-    queryKey: ['managed-agent-connections'],
-    queryFn: loadManagedAgentConnections,
-  })
 
   useEffect(() => {
     const token = searchParams.get('channel_link')
@@ -197,16 +111,9 @@ export default function ManagedAgentConnections() {
           return
         }
         setConnectionRequestState('connected')
-        void connections.refetch()
       })
       .catch(() => setConnectionRequestState('failed'))
-  }, [
-    channelLinkState,
-    connections,
-    requestedAlias,
-    requestedService,
-    searchParams,
-  ])
+  }, [channelLinkState, requestedAlias, requestedService, searchParams])
 
   return (
     <div className="max-w-3xl">
@@ -246,7 +153,6 @@ export default function ManagedAgentConnections() {
 
         {computerEnabled ? <SlackConnection /> : null}
         <GitHubConnection />
-        <PersonalAccounts query={connections} />
       </div>
     </div>
   )
@@ -546,128 +452,5 @@ function GitHubConnection() {
         </p>
       ) : null}
     </ServiceCard>
-  )
-}
-
-/**
- * Accounts an agent connected on someone's behalf (serverless agents). Shown
- * only while there are some, so they can still be removed.
- */
-function PersonalAccounts({
-  query,
-}: {
-  query: {
-    data?: ManagedAgentConnection[]
-    refetch: () => Promise<unknown>
-  }
-}) {
-  const accounts = query.data ?? []
-  const agents = useQuery({
-    queryKey: ['managed-agents'],
-    queryFn: getManagedAgents,
-    enabled: accounts.length > 0,
-  })
-  const agentNames = new Map(
-    (agents.data ?? []).map((agent) => [
-      agent.id,
-      displayManagedAgentName(agent),
-    ]),
-  )
-  const [toRemove, setToRemove] = useState<ManagedAgentConnection>()
-  const [removing, setRemoving] = useState(false)
-  const [removeError, setRemoveError] = useState<string>()
-
-  if (!accounts.length) return null
-
-  return (
-    <section aria-label="Personal accounts" className="pt-4">
-      <h2 className="text-sm font-semibold">Personal accounts</h2>
-      <p className="text-muted-foreground mt-0.5 text-sm">
-        Accounts your agents connected on your behalf.
-      </p>
-      <Panel className="mt-3 divide-y">
-        {accounts.map((connection) => {
-          const service = connectionServiceId(connection)
-          const agentName = agentNames.get(connection.agentId)
-          return (
-            <div
-              key={connection.id}
-              className="flex min-h-12 items-center gap-3 px-5 py-2.5"
-            >
-              {service === 'github' ? (
-                <GithubMark className="text-muted-foreground size-4 shrink-0" />
-              ) : (
-                <ServiceLogo service={service} className="size-4 shrink-0" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                  {connectionTitle(connection)}
-                </p>
-                <p className="text-muted-foreground truncate text-xs">
-                  {connectionDetail(connection, agentName)}
-                </p>
-              </div>
-              {connection.status === 'connected' ? null : (
-                <StatusBadge status={connection.status} />
-              )}
-              {service ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground"
-                  aria-label={`Remove ${connection.label} connection`}
-                  onClick={() => {
-                    setRemoveError(undefined)
-                    setToRemove(connection)
-                  }}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                </Button>
-              ) : null}
-            </div>
-          )
-        })}
-      </Panel>
-      <ConfirmDialog
-        open={Boolean(toRemove)}
-        onOpenChange={(open) => {
-          if (!open) setToRemove(undefined)
-        }}
-        title="Remove connection?"
-        description={
-          toRemove
-            ? removeError
-              ? `The connection could not be removed: ${removeError}`
-              : `Agents will no longer be able to use the “${toRemove.label}” account. You can reconnect it later.`
-            : undefined
-        }
-        confirmLabel="Remove connection"
-        destructive
-        pending={removing}
-        onConfirm={() => {
-          if (!toRemove) return
-          const service = connectionServiceId(toRemove)
-          if (!service) return
-          setRemoving(true)
-          setRemoveError(undefined)
-          void disconnectManagedAgentConnection(
-            service === 'github' || service === 'linear' ? service : 'google',
-            service,
-            toRemove.id,
-          )
-            .then(() => query.refetch())
-            .then(() => setToRemove(undefined))
-            .catch((error: unknown) => {
-              setRemoveError(
-                error instanceof Error
-                  ? error.message
-                  : 'The connection could not be removed.',
-              )
-            })
-            .finally(() => setRemoving(false))
-        }}
-      />
-    </section>
   )
 }

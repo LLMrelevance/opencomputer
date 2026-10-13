@@ -16,15 +16,10 @@ vi.mock('./computer-api', async (importOriginal) => ({
   ...computerApi,
 }))
 const api = vi.hoisted(() => ({
-  displayManagedAgentName: (agent: { id: string }) => agent.id,
   addManagedGitHubConnection: vi.fn(),
   claimManagedAgentChannelIdentity: vi.fn(),
-  disconnectManagedAgentConnection: vi.fn(),
-  getManagedAgentConnections: vi.fn(),
   getManagedGitHubConnections: vi.fn(),
-  getManagedAgents: vi.fn(),
   linkManagedAgentConnection: vi.fn(),
-  refreshManagedAgentConnection: vi.fn(),
 }))
 vi.mock('./api', () => api)
 
@@ -77,7 +72,6 @@ async function render() {
       </AuthContext.Provider>,
     )
   })
-  // Queries resolve, then the ones they enable (agent names) do.
   for (let tick = 0; tick < 3; tick++) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -99,8 +93,6 @@ beforeEach(() => {
     connections: [installation],
     app: { slug: 'opencomputerdev' },
   })
-  api.getManagedAgentConnections.mockResolvedValue([])
-  api.getManagedAgents.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -124,28 +116,5 @@ describe('Connections', () => {
     expect(configure?.href).toBe(
       'https://github.com/organizations/acme/settings/installations/7',
     )
-  })
-
-  it('lists personal accounts agents already connected, without repeating the name', async () => {
-    api.getManagedAgentConnections.mockResolvedValue([
-      {
-        id: 'conn_1',
-        kind: 'tool',
-        provider: 'google',
-        label: 'gmail',
-        agentId: '',
-        alias: 'gmail',
-        displayName: 'Gmail',
-        scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
-        status: 'connected',
-        createdAt: '2026-10-11T10:00:00.000Z',
-      },
-    ])
-    await render()
-    expect(container.textContent).toContain('Personal accounts')
-    expect(container.textContent).not.toContain('Gmail · Gmail')
-    expect(
-      container.querySelector('[aria-label="Remove gmail connection"]'),
-    ).not.toBeNull()
   })
 })
