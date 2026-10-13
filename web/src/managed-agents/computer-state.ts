@@ -148,6 +148,24 @@ export function setupStep(
   return null
 }
 
+/**
+ * Where the last setup step sends someone: straight into a DM with the app in
+ * the Slack app when the bot user is known, and the workspace in the browser.
+ */
+export function slackLinks(slack: ComputerStatus['slack']): {
+  dm: string | null
+  web: string | null
+} {
+  if (!slack.teamId) return { dm: null, web: null }
+  const team = encodeURIComponent(slack.teamId)
+  return {
+    dm: slack.botUserId
+      ? `slack://user?team=${team}&id=${encodeURIComponent(slack.botUserId)}`
+      : null,
+    web: `https://app.slack.com/client/${team}`,
+  }
+}
+
 export const SESSION_STATUS: Record<
   ComputerSessionStatus,
   { badge: string; label: string }

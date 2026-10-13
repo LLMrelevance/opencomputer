@@ -15,10 +15,15 @@ import {
   ExternalLink,
   Ellipsis,
   ChevronRight,
+  Copy,
+  GitPullRequest,
   Loader2,
   MessagesSquare,
+  Moon,
   Plug,
   RotateCcw,
+  ShieldCheck,
+  Terminal,
   Send,
   TriangleAlert,
   Unplug,
@@ -41,6 +46,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { useTransientFlag } from '@/lib/use-transient-flag'
 import { AuthContext } from '@/hooks/useAuth'
 import { addManagedGitHubConnection } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
@@ -68,6 +74,7 @@ import {
   relativeTime,
   sessionPollInterval,
   setupStep,
+  slackLinks,
   slackReturnFromSearch,
   splitSessions,
   type SetupStep,
@@ -603,121 +610,307 @@ function Setup({
     github: status.github.connected,
     hello: false,
   }
+  const slack = slackLinks(status.slack)
   const progress = (id: SetupStep): SetupItemState =>
     id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
     <WithDeveloperFooter>
-      <div className="max-w-2xl space-y-6">
-        {notice}
-        <header>
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-muted-foreground text-sm font-medium">
-              Step {position} of {SETUP_STEPS.length}
-            </p>
-            {/* Before Slack there is no computer to report on. */}
-            {computer || status.slack.installed ? (
-              <StatusLabel status={status} failedToCreate={failedToCreate} />
-            ) : null}
-          </div>
-          <h1 className="mt-1 text-xl font-semibold tracking-tight">
-            Set up your computer
-          </h1>
-          <div className="mt-4 flex gap-1.5" aria-hidden>
-            {SETUP_STEPS.map((id) => (
-              <span
-                key={id}
-                className={cn(
-                  'h-1 flex-1 rounded-full transition-colors',
-                  done[id]
-                    ? 'bg-primary'
-                    : id === step
-                      ? 'bg-primary/35'
-                      : 'bg-muted',
-                )}
-              />
-            ))}
-          </div>
-        </header>
-
-        {failed ? (
-          <div
-            role="alert"
-            className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
-          >
-            <TriangleAlert
-              className="text-destructive size-4 shrink-0"
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">
-                Your computer could not start.
+      <div className="grid gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,42rem)_18rem]">
+        <div className="space-y-6">
+          {notice}
+          <header>
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-muted-foreground text-sm font-medium">
+                Step {position} of {SETUP_STEPS.length}
               </p>
-              <p className="text-muted-foreground mt-0.5 text-sm">
-                {failedToCreate
-                  ? createError.message
-                  : (computer?.lastError ??
-                    'Try again, or tell us if it keeps happening.')}
-              </p>
-            </div>
-            <RetryButton creating={creating} onRetry={onRetry} />
-          </div>
-        ) : null}
-
-        <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
-          <SetupItem
-            number={1}
-            title="Add OpenComputer to Slack"
-            state={progress('slack')}
-            summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
-            doneAction={<ConnectionsMenu status={status} />}
-          >
-            <p>
-              Your team mentions it in a thread; it does the work and replies
-              there.
-            </p>
-            <SlackInstallButton size="lg" label="Add to Slack" />
-          </SetupItem>
-          <SetupItem
-            number={2}
-            title="Connect GitHub"
-            state={progress('github')}
-            summary={githubSummary(status.github)}
-          >
-            <p>
-              Pick the repositories it can work in. It opens pull requests for
-              you to review and never pushes to main unless you ask.
-            </p>
-            <GitHubAction size="lg" />
-          </SetupItem>
-          <SetupItem
-            number={3}
-            title="Say hello in Slack"
-            state={progress('hello')}
-          >
-            <p>{START_SESSION_COPY} For example:</p>
-            <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-              {status.slack.teamId ? (
-                <Button size="lg" asChild>
-                  <a
-                    href={`https://app.slack.com/client/${encodeURIComponent(status.slack.teamId)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open Slack
-                    <ExternalLink className="size-4" aria-hidden />
-                  </a>
-                </Button>
+              {/* Before Slack there is no computer to report on. */}
+              {computer || status.slack.installed ? (
+                <StatusLabel status={status} failedToCreate={failedToCreate} />
               ) : null}
-              <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
-                <PulseDot tone="busy" />
-                Waiting for the first mention
-              </span>
             </div>
-          </SetupItem>
-        </ol>
+            <h1 className="mt-1 text-xl font-semibold tracking-tight">
+              {step === 'hello'
+                ? 'Give it a first task'
+                : 'Set up your computer'}
+            </h1>
+            <div className="mt-4 flex gap-1.5" aria-hidden>
+              {SETUP_STEPS.map((id) => (
+                <span
+                  key={id}
+                  className={cn(
+                    'h-1 flex-1 rounded-full transition-colors',
+                    done[id]
+                      ? 'bg-primary'
+                      : id === step
+                        ? 'bg-primary/35'
+                        : 'bg-muted',
+                  )}
+                />
+              ))}
+            </div>
+          </header>
+
+          {failed ? (
+            <div
+              role="alert"
+              className="border-destructive/40 bg-destructive/5 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4"
+            >
+              <TriangleAlert
+                className="text-destructive size-4 shrink-0"
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">
+                  Your computer could not start.
+                </p>
+                <p className="text-muted-foreground mt-0.5 text-sm">
+                  {failedToCreate
+                    ? createError.message
+                    : (computer?.lastError ??
+                      'Try again, or tell us if it keeps happening.')}
+                </p>
+              </div>
+              <RetryButton creating={creating} onRetry={onRetry} />
+            </div>
+          ) : null}
+
+          <ol className="bg-panel divide-y overflow-hidden rounded-xl border shadow-sm">
+            <SetupItem
+              number={1}
+              title="Add OpenComputer to Slack"
+              state={progress('slack')}
+              summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
+              doneAction={<ConnectionsMenu status={status} />}
+            >
+              <p>
+                Your team mentions it in a thread; it does the work and replies
+                there.
+              </p>
+              <SlackInstallButton size="lg" label="Add to Slack" />
+            </SetupItem>
+            <SetupItem
+              number={2}
+              title="Connect GitHub"
+              state={progress('github')}
+              summary={githubSummary(status.github)}
+            >
+              <p>
+                Pick the repositories it can work in. It opens pull requests for
+                you to review and never pushes to main unless you ask.
+              </p>
+              <GitHubAction size="lg" />
+            </SetupItem>
+            <SetupItem
+              number={3}
+              title="Say hello in Slack"
+              state={progress('hello')}
+            >
+              <p>
+                Your computer is ready. DM it, or mention @OpenComputer in any
+                channel. For example:
+              </p>
+              <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                {slack.dm ? (
+                  <Button size="lg" asChild>
+                    <a href={slack.dm}>
+                      <MessagesSquare className="size-4" aria-hidden />
+                      Message OpenComputer
+                    </a>
+                  </Button>
+                ) : null}
+                {slack.web ? (
+                  slack.dm ? (
+                    <a
+                      href={slack.web}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-foreground decoration-muted-foreground/40 underline underline-offset-4 transition-colors"
+                    >
+                      Open Slack in the browser
+                    </a>
+                  ) : (
+                    <Button size="lg" asChild>
+                      <a href={slack.web} target="_blank" rel="noreferrer">
+                        Open Slack
+                        <ExternalLink className="size-4" aria-hidden />
+                      </a>
+                    </Button>
+                  )
+                ) : null}
+              </div>
+              <p className="inline-flex items-center gap-2">
+                <PulseDot tone="busy" />
+                Waiting for its first task. This page moves on by itself.
+              </p>
+            </SetupItem>
+          </ol>
+        </div>
+        <SetupContext step={step} />
       </div>
     </WithDeveloperFooter>
+  )
+}
+
+/**
+ * Why each step matters, beside the steps: quiet, never a call to action
+ * (Igor, 2026-10-13: setup lost the what and the why).
+ */
+function SetupContext({ step }: { step: SetupStep }) {
+  return (
+    <aside aria-label="About your computer" className="text-sm lg:pt-[4.5rem]">
+      {step === 'slack' ? (
+        <>
+          <ContextHeading>How it works</ContextHeading>
+          <SlackThreadPreview />
+          <ContextPoints
+            points={[
+              [MessagesSquare, 'Answers in the thread it was asked in'],
+              [GitPullRequest, 'Works in your repositories, hands back PRs'],
+              [Moon, 'Keeps going after everyone logs off'],
+            ]}
+          />
+        </>
+      ) : step === 'github' ? (
+        <>
+          <ContextHeading>What it does with your code</ContextHeading>
+          <PullRequestPreview />
+          <ContextPoints
+            points={[
+              [Terminal, 'Reads and runs it on its own computer'],
+              [GitPullRequest, 'Opens pull requests for you to review'],
+              [ShieldCheck, 'Never pushes to main unless you ask'],
+            ]}
+          />
+        </>
+      ) : (
+        <>
+          <ContextHeading>More to try</ContextHeading>
+          <ul className="space-y-1">
+            {EXAMPLE_ASKS.slice(1).map((ask) => (
+              <AskItem key={ask} ask={ask} />
+            ))}
+          </ul>
+        </>
+      )}
+    </aside>
+  )
+}
+
+function ContextHeading({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+      {children}
+    </h2>
+  )
+}
+
+function ContextPoints({
+  points,
+}: {
+  points: [typeof MessagesSquare, string][]
+}) {
+  return (
+    <ul className="text-muted-foreground mt-5 space-y-2.5">
+      {points.map(([Icon, text]) => (
+        <li key={text} className="flex gap-2.5">
+          <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          {text}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** A hand-off as it looks in Slack: illustration, not data. */
+function SlackThreadPreview() {
+  return (
+    <div className="bg-panel space-y-4 rounded-lg border p-4" aria-hidden>
+      <div className="flex gap-2.5">
+        <div className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold">
+          M
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">Maya</p>
+          <p className="mt-0.5">
+            <span className="text-primary font-medium">@OpenComputer</span> why
+            is the checkout test flaky? Fix it.
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-2.5">
+        <div className="bg-primary text-primary-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
+          <ComputerIcon className="size-3.5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">
+            OpenComputer{' '}
+            <span className="bg-muted text-muted-foreground ml-0.5 rounded px-1 py-px text-[10px] font-medium">
+              APP
+            </span>
+          </p>
+          <p className="mt-0.5">
+            A race in the cart fixture. Fixed, and opened{' '}
+            <span className="text-primary font-medium">#482</span> for review.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** A pull request it opened: illustration, not data. */
+function PullRequestPreview() {
+  return (
+    <div className="bg-panel rounded-lg border p-4" aria-hidden>
+      <div className="flex items-start gap-2.5">
+        <GitPullRequest className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <div className="min-w-0">
+          <p className="font-medium">Fix race in cart fixture</p>
+          <p className="text-muted-foreground mt-0.5 text-xs">
+            acme/web #482 · opened by OpenComputer
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex items-center gap-3 border-t pt-3 font-mono text-xs">
+        <span className="text-emerald-600 dark:text-emerald-400">+14</span>
+        <span className="text-red-600 dark:text-red-400">−3</span>
+        <span className="text-muted-foreground">tests passing</span>
+      </div>
+    </div>
+  )
+}
+
+function AskItem({ ask }: { ask: string }) {
+  const [copied, markCopied] = useTransientFlag(1500)
+  return (
+    <li>
+      <button
+        type="button"
+        className="group hover:bg-muted/60 -mx-2 flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(`@OpenComputer ${ask}`)
+            .then(markCopied)
+            .catch((error: unknown) => notifyError("Couldn't copy.", error))
+        }}
+      >
+        <span className="text-muted-foreground group-hover:text-foreground flex-1 transition-colors">
+          {ask.charAt(0).toUpperCase() + ask.slice(1)}
+        </span>
+        {copied ? (
+          <Check
+            className="mt-0.5 size-3.5 shrink-0 text-emerald-600"
+            aria-label="Copied"
+          />
+        ) : (
+          <Copy
+            className="text-muted-foreground mt-0.5 size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+            aria-hidden
+          />
+        )}
+      </button>
+    </li>
   )
 }
 

@@ -447,12 +447,39 @@ describe('Computer page', () => {
     const current = container.querySelector('li[aria-current="step"]')!
     expect(current.textContent).toContain('Say hello in Slack')
     expect(current.textContent).toContain('@OpenComputer why is the')
-    expect(current.textContent).toContain('Waiting for the first mention')
+    expect(current.textContent).toContain('Waiting for its first task')
     expect(
       current.querySelector('a[href="https://app.slack.com/client/T1"]')
         ?.textContent,
     ).toContain('Open Slack')
     expect(container.textContent).toContain('Repositories in acme')
     expect(container.textContent).not.toContain('Live now')
+  })
+  it('opens a DM with the app when the bot is known', async () => {
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      slack: { ...onboarded.slack, botUserId: 'UBOT' },
+    })
+    computerApi.getComputerSessions.mockResolvedValue([])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Give it a first task') === true,
+      'last setup step',
+    )
+    const current = container.querySelector('li[aria-current="step"]')!
+    expect(
+      current.querySelector('a[href="slack://user?team=T1&id=UBOT"]')
+        ?.textContent,
+    ).toContain('Message OpenComputer')
+    expect(
+      current.querySelector('a[href="https://app.slack.com/client/T1"]')
+        ?.textContent,
+    ).toBe('Open Slack in the browser')
+    // More asks to try beside the steps.
+    expect(
+      container.querySelector('aside[aria-label="About your computer"]')
+        ?.textContent,
+    ).toContain('More to try')
   })
 })

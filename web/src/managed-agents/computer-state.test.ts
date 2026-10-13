@@ -16,6 +16,7 @@ import {
   computerPollInterval,
   computerPresentation,
   setupStep,
+  slackLinks,
   relativeTime,
   sessionPollInterval,
   alreadyLinkedCopy,
@@ -201,6 +202,22 @@ describe('computer setup', () => {
 
   it('never holds the page on setup for sessions it could not read', () => {
     expect(setupStep(status({ slack, github }), undefined)).toBeNull()
+  })
+})
+
+describe('Slack links', () => {
+  it('opens a DM with the app when the bot is known', () => {
+    expect(
+      slackLinks({ installed: true, teamId: 'T1', botUserId: 'UBOT' }),
+    ).toEqual({
+      dm: 'slack://user?team=T1&id=UBOT',
+      web: 'https://app.slack.com/client/T1',
+    })
+    expect(slackLinks({ installed: true, teamId: 'T1' })).toEqual({
+      dm: null,
+      web: 'https://app.slack.com/client/T1',
+    })
+    expect(slackLinks({ installed: false })).toEqual({ dm: null, web: null })
   })
 })
 
