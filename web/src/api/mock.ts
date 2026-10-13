@@ -1259,7 +1259,7 @@ const previewServiceConnection = {
   label: 'gmail',
   agentId: 'email-triage',
   alias: 'production',
-  displayName: 'Gmail',
+  displayName: 'ops@acme.dev',
   scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
   status: 'connected',
   createdAt: new Date(BASE).toISOString(),

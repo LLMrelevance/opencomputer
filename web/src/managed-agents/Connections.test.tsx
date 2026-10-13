@@ -18,6 +18,10 @@ vi.mock('./computer-api', async (importOriginal) => ({
 const api = vi.hoisted(() => ({
   addManagedGitHubConnection: vi.fn(),
   claimManagedAgentChannelIdentity: vi.fn(),
+  disconnectManagedAgentConnection: vi.fn(),
+  displayManagedAgentName: (agent: { id: string }) => agent.id,
+  getManagedAgentConnections: vi.fn(),
+  getManagedAgents: vi.fn(),
   getManagedGitHubConnections: vi.fn(),
   linkManagedAgentConnection: vi.fn(),
 }))
@@ -47,6 +51,20 @@ const installation = {
   accountType: 'Organization',
   repositorySelection: 'all' as const,
   state: 'active' as const,
+  createdAt: '2026-10-11T10:00:00.000Z',
+  updatedAt: '2026-10-11T10:00:00.000Z',
+}
+
+const linearAccount = {
+  id: 'conn_1',
+  kind: 'tool',
+  provider: 'linear',
+  label: 'linear',
+  agentId: 'email-triage',
+  alias: 'default',
+  displayName: 'Acme Linear',
+  scopes: [],
+  status: 'connected',
   createdAt: '2026-10-11T10:00:00.000Z',
   updatedAt: '2026-10-11T10:00:00.000Z',
 }
@@ -93,6 +111,8 @@ beforeEach(() => {
     connections: [installation],
     app: { slug: 'opencomputerdev' },
   })
+  api.getManagedAgents.mockResolvedValue([{ id: 'email-triage' }])
+  api.getManagedAgentConnections.mockResolvedValue([linearAccount])
 })
 
 afterEach(() => {
@@ -102,7 +122,7 @@ afterEach(() => {
 })
 
 describe('Connections', () => {
-  it('shows the organization Slack app and GitHub accounts, with nothing to add beyond them', async () => {
+  it('shows the organization Slack app and GitHub accounts', async () => {
     await render()
     const text = container.textContent ?? ''
     expect(text).toContain('Acme')
@@ -114,13 +134,73 @@ describe('Connections', () => {
     ).toBe(true)
     expect(text).toContain('acme')
     expect(text).toContain('All repositories')
-    expect(text).not.toContain('Add connection')
-    expect(text).not.toContain('Personal accounts')
     const configure = container.querySelector<HTMLAnchorElement>(
       'a[href*="/settings/installations/"]',
     )
     expect(configure?.href).toBe(
       'https://github.com/organizations/acme/settings/installations/7',
+    )
+  })
+
+  it('lists every other service, connected or not, below Slack and GitHub', async () => {
+    await render()
+    const text = container.textContent ?? ''
+    expect(text.indexOf('Other accounts')).toBeGreaterThan(
+      text.indexOf('GitHub'),
+    )
+    const section = container.querySelector(
+      'section[aria-label="Other accounts"]',
+    )
+    const sectionText = section?.textContent ?? ''
+    for (const service of [
+      'Gmail',
+      'Google Calendar',
+      'Google Drive',
+      'Google Sheets',
+      'Linear',
+    ]) {
+      expect(sectionText).toContain(service)
+    }
+    expect(sectionText).toContain('Not connected')
+    expect(sectionText).toContain('Acme LinearAlias linear · email-triage')
+    const buttons = [...(section?.querySelectorAll('button') ?? [])].map(
+      (button) => button.textContent,
+    )
+    expect(buttons.filter((label) => label === 'Connect')).toHaveLength(4)
+    expect(buttons).toContain('Add account')
+    expect(buttons).toContain('Remove')
+  })
+
+  it('connects a service in a new window, named after the service', async () => {
+    const authorizationWindow = {
+      opener: null,
+      document: { title: '', body: { textContent: '' } },
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    }
+    vi.spyOn(window, 'open').mockReturnValue(
+      authorizationWindow as unknown as Window,
+    )
+    api.linkManagedAgentConnection.mockResolvedValue({
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/auth',
+    })
+    await render()
+    const section = container.querySelector(
+      'section[aria-label="Other accounts"]',
+    )
+    const connect = [...(section?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Connect',
+    )
+    await act(async () => {
+      connect?.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(api.linkManagedAgentConnection).toHaveBeenCalledWith(
+      'gmail',
+      'gmail',
+    )
+    expect(authorizationWindow.location.replace).toHaveBeenCalledWith(
+      'https://accounts.google.com/o/oauth2/auth',
     )
   })
 })
