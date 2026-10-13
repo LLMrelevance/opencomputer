@@ -52,7 +52,8 @@
               "agents/linear",
               "agents/byok",
               "agents/deployments",
-              "agents/regions"
+              "agents/regions",
+              "agents/egress"
             ]
           },
           {

@@ -54,6 +54,7 @@ export interface TemplateBuildArtifact {
   memory: MemoryDeclaration[];
   models: Array<{ provider: string; model: string }>;
   region?: string;
+  egress?: { domains: string[]; cidrs: string[] };
 }
 
 export interface TemplateBuildBundle {
@@ -334,6 +335,7 @@ export async function buildTemplateProject(
       memory: built.memory,
       models: built.models,
       ...(built.region ? { region: built.region } : {}),
+      ...(built.egress ? { egress: built.egress } : {}),
     });
     for (const connection of built.connections)
       compiledConnections.add(connection);

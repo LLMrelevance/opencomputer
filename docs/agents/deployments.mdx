@@ -46,6 +46,13 @@ the United States. To run it elsewhere, set `region` in the agent's
 `opencomputer.toml` and deploy again. See [Regions](/agents/regions) for the
 allowed values and what a region covers.
 
+## Restrict outbound network
+
+By default, an agent's sandbox can reach any address on the internet. To allow
+only the hosts it needs, add an `[egress]` table with an `allow` list to the
+agent's `opencomputer.toml` and deploy again. See
+[Outbound network](/agents/egress) for what each entry allows and the rules.
+
 ## Select an agent and environment
 
 Clients identify an agent with `agent-id@alias`:

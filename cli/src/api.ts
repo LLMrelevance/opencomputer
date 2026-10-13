@@ -1448,6 +1448,7 @@ export class OpenComputerClient {
     memory: MemoryDeclaration[];
     models: Array<{ provider: string; model: string }>;
     region?: string;
+    egress?: { domains: string[]; cidrs: string[] };
     projectDeployment?: {
       id: string;
       digest: string;

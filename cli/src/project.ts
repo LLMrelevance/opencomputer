@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cron } from "croner";
+import { parse as parseToml } from "smol-toml";
 import { build as bundle } from "esbuild";
 import ts from "typescript";
 
@@ -27,6 +28,7 @@ import {
   type MemoryDefinitionInput,
   type MemoryProvider,
 } from "./memory.js";
+import { type DeploymentEgress, splitEgressAllow } from "./egress.js";
 
 /**
  * Regions a deployment may name in `opencomputer.toml` (work 057): Modal's
@@ -64,6 +66,8 @@ export interface AgentManifest {
   name: string;
   /** Where the deployment's sessions run; absent means the platform default. */
   region?: DeploymentRegion;
+  /** `[egress] allow`, split; absent means an open network. */
+  egress?: DeploymentEgress;
 }
 
 export interface BuiltAgentArtifact {
@@ -76,6 +80,7 @@ export interface BuiltAgentArtifact {
   memory: MemoryDeclaration[];
   models: Array<{ provider: string; model: string }>;
   region?: DeploymentRegion;
+  egress?: DeploymentEgress;
   body: Buffer;
   digest: string;
   elapsedMs: number;
@@ -294,19 +299,6 @@ export async function writeManifest(
   );
 }
 
-function tomlString(source: string, key: string): string | undefined {
-  const match = source.match(
-    new RegExp(`^\\s*${key}\\s*=\\s*("(?:[^"\\\\]|\\\\.)*")\\s*$`, "m"),
-  );
-  if (!match?.[1]) return undefined;
-  try {
-    const value: unknown = JSON.parse(match[1]);
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function readManifest(root: string): Promise<AgentManifest> {
   if (!(await exists(resolve(root, "opencomputer.toml")))) {
     const id = agentIdFromName(basename(root));
@@ -320,16 +312,31 @@ export async function readManifest(root: string): Promise<AgentManifest> {
     };
   }
   const source = await readFile(resolve(root, "opencomputer.toml"), "utf8");
-  const schema = Number(source.match(/^\s*schema\s*=\s*(\d+)\s*$/m)?.[1]);
-  const id = tomlString(source, "id");
-  const name = tomlString(source, "name");
-  if (schema !== 1 || !id || !name || !AGENT_ID_PATTERN.test(id)) {
+  let toml: Record<string, unknown>;
+  try {
+    toml = parseToml(source);
+  } catch (error) {
+    if (/^\s*region\s*=\s*[^"\s]/m.test(source)) {
+      throw new Error('opencomputer.toml region must be a quoted string, e.g. region = "au"');
+    }
+    throw new Error(
+      `opencomputer.toml is not valid TOML: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
+  }
+  const { schema, id, name, region } = toml;
+  if (
+    schema !== 1 ||
+    typeof id !== "string" ||
+    typeof name !== "string" ||
+    !id ||
+    !name ||
+    !AGENT_ID_PATTERN.test(id)
+  ) {
     throw new Error(
       "opencomputer.toml must contain schema = 1 and a valid id and name",
     );
   }
-  const region = tomlString(source, "region");
-  if (/^\s*region\s*=/m.test(source) && region === undefined) {
+  if (region !== undefined && typeof region !== "string") {
     throw new Error('opencomputer.toml region must be a quoted string, e.g. region = "au"');
   }
   if (
@@ -340,12 +347,29 @@ export async function readManifest(root: string): Promise<AgentManifest> {
       `opencomputer.toml region ${JSON.stringify(region)} is not supported; use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
+  const egress = manifestEgress(toml.egress);
   return {
     schema: 1,
     id,
     name,
     ...(region ? { region: region as DeploymentRegion } : {}),
+    ...(egress ? { egress } : {}),
   };
+}
+
+/** The `[egress]` table, or undefined when the manifest has none. */
+function manifestEgress(table: unknown): DeploymentEgress | undefined {
+  if (table === undefined) return undefined;
+  if (typeof table !== "object" || table === null || Array.isArray(table)) {
+    throw new Error("opencomputer.toml egress must be a table: [egress]");
+  }
+  const unknown = Object.keys(table).filter((key) => key !== "allow");
+  if (unknown.length) {
+    throw new Error(
+      `opencomputer.toml [egress] has unknown key ${JSON.stringify(unknown[0])}; only allow is supported`,
+    );
+  }
+  return splitEgressAllow((table as { allow?: unknown }).allow ?? []);
 }
 
 export async function findAgentRoot(
@@ -3961,6 +3985,7 @@ export async function buildAgentArtifact(
     memory,
     models,
     ...(manifest.region ? { region: manifest.region } : {}),
+    ...(manifest.egress ? { egress: manifest.egress } : {}),
     body,
     digest: createHash("sha256").update(body).digest("hex"),
     elapsedMs: Math.round(performance.now() - startedAt),

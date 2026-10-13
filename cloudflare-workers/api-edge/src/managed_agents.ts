@@ -316,7 +316,9 @@ async function publicErrorResponse(
             ? "The cursor is invalid or was issued for different filters. Start again from the first page."
             : backendCode === "unsupported_region"
               ? 'The region in opencomputer.toml is not supported. Use a Modal region, such as "us", "eu-west" or "au".'
-              : "The agent request was invalid.";
+              : backendCode === "invalid_egress"
+                ? 'The [egress] allow list in opencomputer.toml is invalid. Use domains ("api.github.com", "*.example.com"), IP addresses or CIDRs, at most 64 of each.'
+                : "The agent request was invalid.";
   } else if (upstream.status === 401 || upstream.status === 403) {
     message = "The agent request was not authorized.";
   } else if (upstream.status === 404) {
@@ -565,6 +567,13 @@ function publicMemoryDeclaration(value: unknown): Record<string, unknown> {
   };
 }
 
+/** A deployment's egress allowlist as the service returns it, or undefined. */
+function publicEgress(value: unknown): { domains: string[]; cidrs: string[] } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const egress = value as { domains?: unknown; cidrs?: unknown };
+  return { domains: strings(egress.domains), cidrs: strings(egress.cidrs) };
+}
+
 function publicDeployment(value: unknown): Record<string, unknown> {
   const deployment = record(value) ?? {};
   return {
@@ -575,6 +584,7 @@ function publicDeployment(value: unknown): Record<string, unknown> {
     connections: strings(deployment.connections),
     createdAt: deployment.createdAt,
     ...(typeof deployment.region === "string" ? { region: deployment.region } : {}),
+    ...(publicEgress(deployment.egress) ? { egress: publicEgress(deployment.egress)! } : {}),
     ...(Array.isArray(deployment.models)
       ? {
           models: deployment.models.flatMap((value) => {
@@ -2628,6 +2638,8 @@ async function deploySourceAgent(
       models,
       // Validated by the service, which answers 400 unsupported_region (work 057).
       ...(body.region !== undefined ? { region: body.region } : {}),
+      // Validated by the service, which answers 400 invalid_egress (work 057).
+      ...(body.egress !== undefined ? { egress: body.egress } : {}),
       ...(body.projectDeployment && typeof body.projectDeployment === "object"
         ? { projectDeployment: body.projectDeployment }
         : {}),
