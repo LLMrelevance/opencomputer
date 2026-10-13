@@ -570,9 +570,11 @@ function OtherConnections() {
                     connection.label || connection.provider,
                   )}
                   detail={[
-                    connectionService(connection),
-                    connection.displayName,
-                    agentName,
+                    ...new Set([
+                      connectionService(connection),
+                      connection.displayName,
+                      agentName,
+                    ]),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
