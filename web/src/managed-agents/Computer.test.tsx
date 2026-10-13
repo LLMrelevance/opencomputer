@@ -261,7 +261,9 @@ describe('Computer page', () => {
       () => container.textContent?.includes('Acme') === true,
       'linked workspace',
     )
-    expect(container.textContent).toContain('Unlink')
+    expect(
+      container.querySelector('button[aria-label="Connection options"]'),
+    ).not.toBeNull()
   })
 
   it('welcomes someone whose Slack workspace is already another organization', async () => {
@@ -373,9 +375,10 @@ describe('Computer page', () => {
     expect(rows[1]).toContain('1 hr ago')
     expect(list.textContent).toContain('1 working now')
     expect(
-      list.querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
-        ?.textContent,
-    ).toContain('Open in Slack')
+      list
+        .querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
+        ?.getAttribute('aria-label'),
+    ).toBe('Open in Slack')
     expect(container.textContent).toContain('Online')
     expect(container.textContent).toContain('Acme')
     expect(container.textContent).toContain('acme')
@@ -421,7 +424,11 @@ describe('Computer page', () => {
     expect(current.textContent).toContain('Connect GitHub')
     // Slack is done: where it is, and the way out.
     expect(container.textContent).toContain('In Acme')
-    expect(container.textContent).toContain('Unlink Slack')
+    // Unlinking stays behind a menu, never a button in plain view.
+    expect(container.textContent).not.toContain('Unlink')
+    expect(
+      container.querySelector('button[aria-label="Connection options"]'),
+    ).not.toBeNull()
     expect(container.textContent).not.toContain('Live now')
   })
 

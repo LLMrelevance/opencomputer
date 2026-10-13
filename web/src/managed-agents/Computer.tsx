@@ -13,10 +13,11 @@ import {
   Check,
   Computer as ComputerIcon,
   ExternalLink,
-  Hash,
-  Lightbulb,
+  Ellipsis,
+  ChevronRight,
   Loader2,
   MessagesSquare,
+  Plug,
   RotateCcw,
   Send,
   TriangleAlert,
@@ -32,6 +33,12 @@ import { Panel } from '@/components/panel'
 import { ResourceTable, type Column } from '@/components/resource-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { AuthContext } from '@/hooks/useAuth'
@@ -59,7 +66,6 @@ import {
   computerPollInterval,
   computerPresentation,
   relativeTime,
-  sessionIsLive,
   sessionPollInterval,
   setupStep,
   slackReturnFromSearch,
@@ -202,7 +208,7 @@ function ComputerPageContent() {
   const step = setupStep(status.data, sessions.data)
   if (step === null) {
     return (
-      <div className="mx-auto max-w-4xl space-y-8 pt-2 sm:pt-8">
+      <div className="space-y-8">
         {slackProblemPanel}
         <Overview
           status={status.data}
@@ -241,7 +247,7 @@ function ComputerPageContent() {
  */
 function CustomAgentLink() {
   return (
-    <p className="text-muted-foreground pt-4 text-center text-xs">
+    <p className="text-muted-foreground text-xs">
       <Link
         to="/new"
         className="hover:text-foreground inline-flex items-center gap-1 transition-colors"
@@ -311,7 +317,7 @@ function computerDot(status: ComputerStatus, failedToCreate: boolean): DotTone {
   return 'quiet'
 }
 
-function StatusPill({
+function StatusLabel({
   status,
   failedToCreate,
 }: {
@@ -319,7 +325,7 @@ function StatusPill({
   failedToCreate: boolean
 }) {
   return (
-    <div className="bg-background/70 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium backdrop-blur">
+    <span className="inline-flex items-center gap-2 text-sm font-medium">
       <PulseDot tone={computerDot(status, failedToCreate)} />
       {failedToCreate
         ? 'Failed'
@@ -328,7 +334,7 @@ function StatusPill({
             status.plan,
             status.slack.installed,
           ).label}
-    </div>
+    </span>
   )
 }
 
@@ -379,16 +385,11 @@ function Overview({
     (installation) => installation.accountLogin,
   )
   return (
-    <header className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+    <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight">Computer</h1>
-        <p className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-2 text-sm">
-          <PulseDot tone={computerDot(status, failedToCreate)} />
-          <span className="text-foreground font-medium">
-            {failedToCreate
-              ? 'Failed'
-              : computerPresentation(computer, status.plan, true).label}
-          </span>
+        <h1 className="text-xl font-semibold tracking-tight">Computer</h1>
+        <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-sm">
+          <StatusLabel status={status} failedToCreate={failedToCreate} />
           {offerUpgrade ? (
             <>
               <span aria-hidden>·</span>
@@ -411,49 +412,45 @@ function Overview({
           <RetryButton className="mt-4" creating={creating} onRetry={onRetry} />
         ) : null}
       </div>
-      <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-        <span className="inline-flex items-center gap-1.5">
-          <Hash className="size-3.5" aria-hidden />
-          <span className="sr-only">Slack: </span>
-          {status.slack.teamName ?? 'Slack'}
-        </span>
-        <span
-          className="inline-flex max-w-56 items-center gap-1.5"
-          title={accounts.join(', ')}
-        >
-          <GithubMark className="size-3.5 shrink-0" />
-          <span className="sr-only">GitHub: </span>
-          <span className="truncate">
-            {accounts.length ? accounts.join(', ') : 'GitHub'}
-          </span>
-        </span>
-        <div className="flex items-center">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            asChild
-          >
-            <Link to="/managed-agents/connections">Manage</Link>
-          </Button>
-          <SlackAction status={status} compact />
-        </div>
+      <div className="flex items-center gap-5 text-sm">
+        <Connection label="Slack">
+          {status.slack.teamName ?? 'Connected'}
+        </Connection>
+        <Connection label="GitHub">
+          {accounts.length ? accounts.join(', ') : 'Connected'}
+        </Connection>
+        <ConnectionsMenu status={status} manage />
       </div>
     </header>
   )
 }
 
+function Connection({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <span className="inline-flex max-w-56 items-baseline gap-1.5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate font-medium">{children}</span>
+    </span>
+  )
+}
+
 function IdeasToTry() {
   return (
-    <details className="group bg-panel rounded-xl border">
-      <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
-        <Lightbulb className="size-4" aria-hidden />
+    <details className="group">
+      <summary className="text-muted-foreground hover:text-foreground inline-flex cursor-pointer list-none items-center gap-1.5 text-sm transition-colors [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          className="size-3.5 transition-transform group-open:rotate-90"
+          aria-hidden
+        />
         Ideas to try
-        <span className="ml-auto text-xs transition-transform group-open:rotate-90">
-          ›
-        </span>
       </summary>
-      <div className="grid gap-2 px-5 pb-5">
+      <div className="mt-3 grid gap-2">
         {EXAMPLE_ASKS.map((ask) => (
           <CopyRow key={ask} value={`@OpenComputer ${ask}`} />
         ))}
@@ -597,7 +594,7 @@ function Setup({
   const progress = (id: SetupStep): SetupItemState =>
     id === step ? 'current' : done[id] ? 'done' : 'upcoming'
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pt-2 sm:pt-8">
+    <div className="max-w-2xl space-y-6">
       {notice}
       <header>
         <div className="flex items-center justify-between gap-4">
@@ -606,13 +603,13 @@ function Setup({
           </p>
           {/* Before Slack there is no computer to report on. */}
           {computer || status.slack.installed ? (
-            <StatusPill status={status} failedToCreate={failedToCreate} />
+            <StatusLabel status={status} failedToCreate={failedToCreate} />
           ) : null}
         </div>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+        <h1 className="mt-1 text-xl font-semibold tracking-tight">
           Set up your computer
         </h1>
-        <div className="mt-5 flex gap-1.5" aria-hidden>
+        <div className="mt-4 flex gap-1.5" aria-hidden>
           {SETUP_STEPS.map((id) => (
             <span
               key={id}
@@ -659,7 +656,7 @@ function Setup({
           title="Add OpenComputer to Slack"
           state={progress('slack')}
           summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
-          doneAction={<SlackAction status={status} compact />}
+          doneAction={<ConnectionsMenu status={status} />}
         >
           <p>
             Your team mentions it in a thread; it does the work and replies
@@ -672,16 +669,6 @@ function Setup({
           title="Connect GitHub"
           state={progress('github')}
           summary={githubSummary(status.github)}
-          doneAction={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              asChild
-            >
-              <Link to="/managed-agents/connections">Manage</Link>
-            </Button>
-          }
         >
           <p>
             Pick the repositories it can work in. It opens pull requests for you
@@ -743,7 +730,7 @@ function SetupItem({
   return (
     <li
       aria-current={current ? 'step' : undefined}
-      className={cn('px-5', current ? 'bg-primary/[0.03] py-5' : 'py-3.5')}
+      className={cn('px-5', current ? 'bg-primary/[0.03] py-5' : 'py-4')}
     >
       <div className="flex items-center gap-3">
         <div
@@ -798,12 +785,16 @@ function githubSummary(github: ComputerStatus['github']) {
     : 'GitHub is connected'
 }
 
-function SlackAction({
+/**
+ * Connection housekeeping behind one quiet menu: unlinking stops the computer
+ * answering in Slack, so it is never a button in plain view.
+ */
+function ConnectionsMenu({
   status,
-  compact = false,
+  manage = false,
 }: {
   status: ComputerStatus
-  compact?: boolean
+  manage?: boolean
 }) {
   const queryClient = useQueryClient()
   const [confirmUnlink, setConfirmUnlink] = useState(false)
@@ -820,19 +811,38 @@ function SlackAction({
     onError: (error) => notifyError("Couldn't unlink Slack.", error),
   })
 
-  if (!status.slack.installed) return <SlackInstallButton />
   const teamName = status.slack.teamName ?? 'this Slack workspace'
   return (
     <>
-      <Button
-        variant={compact ? 'ghost' : 'outline'}
-        size={compact ? 'sm' : 'default'}
-        className={cn(compact && 'text-muted-foreground')}
-        onClick={() => setConfirmUnlink(true)}
-      >
-        <Unplug className={compact ? 'size-3.5' : 'size-4'} aria-hidden />
-        {compact ? 'Unlink Slack' : 'Unlink'}
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            aria-label="Connection options"
+          >
+            <Ellipsis className="size-4" aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-48">
+          {manage ? (
+            <DropdownMenuItem asChild>
+              <Link to="/managed-agents/connections">
+                <Plug aria-hidden />
+                Manage connections
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() => setConfirmUnlink(true)}
+          >
+            <Unplug aria-hidden />
+            Unlink Slack workspace
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <ConfirmDialog
         open={confirmUnlink}
         onOpenChange={setConfirmUnlink}
@@ -914,15 +924,8 @@ function sessionColumns(now: number): Column<ComputerSession>[] {
       key: 'title',
       header: 'Session',
       cell: (session) => (
-        <span className="flex max-w-md items-center gap-2.5">
-          {sessionIsLive(session) ? (
-            <PulseDot tone={session.status === 'busy' ? 'alive' : 'busy'} />
-          ) : (
-            <span className="size-2 shrink-0" aria-hidden />
-          )}
-          <span className="truncate font-medium">
-            {session.title || 'Untitled session'}
-          </span>
+        <span className="block max-w-md truncate font-medium">
+          {session.title || 'Untitled session'}
         </span>
       ),
     },
@@ -957,12 +960,17 @@ function sessionColumns(now: number): Column<ComputerSession>[] {
         session.slackUrl ? (
           <Button
             variant="ghost"
-            size="sm"
+            size="icon-sm"
             className="text-muted-foreground"
             asChild
           >
-            <a href={session.slackUrl} target="_blank" rel="noreferrer">
-              Open in Slack
+            <a
+              href={session.slackUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open in Slack"
+              title="Open in Slack"
+            >
               <ExternalLink className="size-3.5" aria-hidden />
             </a>
           </Button>
@@ -991,7 +999,7 @@ function SessionsPanel({
   return (
     <section aria-labelledby="computer-sessions">
       <div className="mb-3 flex items-baseline justify-between gap-4">
-        <h2 id="computer-sessions" className="text-base font-semibold">
+        <h2 id="computer-sessions" className="text-sm font-semibold">
           Sessions
         </h2>
         {live.length > 0 ? (
