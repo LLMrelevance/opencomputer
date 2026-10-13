@@ -6492,7 +6492,7 @@ describe("organization computer (work 052)", () => {
       createdAt: "2026-10-11T10:00:00.000Z",
       updatedAt: "2026-10-11T10:05:00.000Z",
     },
-    slack: { installed: true, teamId: "T123", teamName: "Acme" },
+    slack: { installed: true, teamId: "T123", teamName: "Acme", botUserId: "UBOT" },
     github: {
       connected: true,
       installations: [{ id: "42", accountLogin: "acme" }],

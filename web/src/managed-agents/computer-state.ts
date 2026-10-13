@@ -100,15 +100,6 @@ export function computerPresentation(
   }
 }
 
-/** Whether the computer has been set up (it may be asleep or waking). */
-export function computerIsSetUp(computer: Computer | null): boolean {
-  return (
-    computer?.state === 'ready' ||
-    computer?.state === 'parked' ||
-    computer?.state === 'waking'
-  )
-}
-
 export const FAST_POLL_MS = 5_000
 export const SLOW_POLL_MS = 30_000
 
@@ -138,34 +129,55 @@ export function computerPollInterval(
   }
 }
 
-export type ChecklistStep = {
-  id: 'computer' | 'slack' | 'github' | 'session'
-  title: string
-  done: boolean
-}
+export const SETUP_STEPS = ['slack', 'github', 'hello'] as const
+export type SetupStep = (typeof SETUP_STEPS)[number]
 
-export function computerChecklist(
+/**
+ * The setup step a person is on, or null once set up. Slack brings the
+ * computer to life, GitHub gives it the code, and the first mention in Slack
+ * finishes setup. Sessions not read yet (or unreadable) never hold the page
+ * on setup.
+ */
+export function setupStep(
   status: ComputerStatus,
   sessions: ComputerSession[] | undefined,
-): ChecklistStep[] {
-  return [
-    {
-      id: 'computer',
-      title: 'Computer ready',
-      done: computerIsSetUp(status.computer),
-    },
-    {
-      id: 'slack',
-      title: 'Install the Slack app',
-      done: status.slack.installed,
-    },
-    { id: 'github', title: 'Connect GitHub', done: status.github.connected },
-    {
-      id: 'session',
-      title: 'Start a session',
-      done: (sessions?.length ?? 0) > 0,
-    },
-  ]
+): SetupStep | null {
+  if (!status.slack.installed) return 'slack'
+  if (!status.github.connected) return 'github'
+  // No computer yet (its creation is under way or failed): nothing can have
+  // run, and the sessions are not even asked for.
+  if (!status.computer) return 'hello'
+  if (sessions?.length === 0) return 'hello'
+  return null
+}
+
+/** The lead of the last step, true to where the computer is. */
+export function firstTaskLead(computer: Computer | null): string {
+  const ways = 'DM it, or mention @OpenComputer in any channel.'
+  if (computer?.state === 'ready' && computer.connected)
+    return `Your computer is ready. ${ways}`
+  if (computer?.state === 'parked')
+    return `It's asleep; a message wakes it. ${ways}`
+  if (computer?.state === 'failed') return ways
+  return `It's still starting; message it now and it picks the task up once it's on. ${ways}`
+}
+
+/**
+ * Where the last setup step sends someone: straight into a DM with the app in
+ * the Slack app when the bot user is known, and the workspace in the browser.
+ */
+export function slackLinks(slack: ComputerStatus['slack']): {
+  dm: string | null
+  web: string | null
+} {
+  if (!slack.teamId) return { dm: null, web: null }
+  const team = encodeURIComponent(slack.teamId)
+  return {
+    dm: slack.botUserId
+      ? `slack://user?team=${team}&id=${encodeURIComponent(slack.botUserId)}`
+      : null,
+    web: `https://app.slack.com/client/${team}`,
+  }
 }
 
 export const SESSION_STATUS: Record<
@@ -243,80 +255,11 @@ export function alreadyLinkedCopy(notified: boolean): {
   }
 }
 
-export type HeroCopy = { headline: string; subline: string }
-
-/**
- * The page's headline for each state: what the computer means to the team,
- * never what it is made of (Mohamed, 2026-10-11: no specs, make people want it).
- */
-export function heroCopy(
-  computer: Computer | null,
-  plan: ComputerStatus['plan'],
-  slackInstalled = false,
-): HeroCopy {
-  // Before the Slack install there is no computer: the install is the moment
-  // it comes alive, so that is what the page asks for.
-  if (!computer && !slackInstalled) {
-    return {
-      headline: 'Your computer is one click away.',
-      subline:
-        'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
-    }
-  }
-  switch (computer?.state ?? 'provisioning') {
-    case 'provisioning':
-      return {
-        headline: 'Your computer is coming to life.',
-        subline:
-          'A minute or two, and your team has a colleague that never logs off. Invite it into Slack while you wait.',
-      }
-    case 'ready':
-      return computer?.connected
-        ? {
-            headline: 'Your team just got a colleague that never logs off.',
-            subline:
-              'It knows your code, lives in your Slack, and keeps going while you sleep. Ask it anything. Hand it anything.',
-          }
-        : {
-            headline: 'Reconnecting.',
-            subline:
-              'Your computer is on and finding its way back. Usually within a minute.',
-          }
-    case 'parked':
-      return {
-        headline: 'Resting, not gone.',
-        subline:
-          plan === 'paid'
-            ? 'Everything it knows is right where it left it. Mention it and it is back in a minute.'
-            : 'Everything it knows is right where it left it. Mention it and it is back in a minute. Upgrade and it never sleeps.',
-      }
-    case 'waking':
-      return {
-        headline: 'Waking up.',
-        subline:
-          'Picking up exactly where it left off. Your message is already waiting for it.',
-      }
-    case 'failed':
-      return {
-        headline: 'Something went wrong.',
-        subline:
-          computer?.lastError ??
-          'Your computer could not start. Try again, or tell us if it keeps happening.',
-      }
-    case 'deleting':
-      return {
-        headline: 'Saying goodbye.',
-        subline: 'Your computer is being removed.',
-      }
-  }
-}
-
-/** Things to ask first: concrete, so the first message is easy to write. */
 export const EXAMPLE_ASKS = [
-  'why is the checkout test flaky? Fix it and open a PR.',
+  'why is the checkout test flaky?',
   'walk me through how billing works in our codebase.',
-  'upgrade us to the latest React and tell me what broke.',
-  'every morning, summarize what changed in main yesterday.',
+  'what would break if we moved to the latest React?',
+  "sketch a cleaner API for the cart service, then let's refine it.",
 ] as const
 
 /**
@@ -380,48 +323,4 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
         ? undefined
         : 'numeric',
   })
-}
-
-export type StatusLine = { headline: string; detail?: string }
-
-/**
- * The one line under the status dot once onboarded: short, in the hero's
- * voice, and about the work when there is work.
- */
-export function compactStatusLine(
-  computer: Computer | null,
-  plan: ComputerStatus['plan'],
-  liveCount: number,
-): StatusLine {
-  switch (computer?.state ?? 'provisioning') {
-    case 'provisioning':
-      return { headline: 'Coming to life. A minute or two.' }
-    case 'ready':
-      if (!computer?.connected) {
-        return { headline: 'Reconnecting. Usually within a minute.' }
-      }
-      if (liveCount === 0) return { headline: 'Ready when you are.' }
-      return {
-        headline:
-          liveCount === 1
-            ? 'On it. One thing in flight.'
-            : `On it. ${liveCount} things in flight.`,
-      }
-    case 'parked':
-      return {
-        headline: 'Resting — wakes when you mention it.',
-        detail: plan === 'paid' ? undefined : 'Upgrade and it never sleeps.',
-      }
-    case 'waking':
-      return { headline: 'Waking up. Picking up where it left off.' }
-    case 'failed':
-      return {
-        headline: 'Something went wrong.',
-        detail:
-          computer?.lastError ??
-          'Your computer could not start. Try again, or tell us if it keeps happening.',
-      }
-    case 'deleting':
-      return { headline: 'Saying goodbye.' }
-  }
 }

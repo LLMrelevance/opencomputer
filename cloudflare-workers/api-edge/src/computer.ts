@@ -93,6 +93,9 @@ function publicComputerStatus(body: Record<string, unknown>) {
       ...(typeof slack.teamName === "string"
         ? { teamName: slack.teamName }
         : {}),
+      ...(typeof slack.botUserId === "string"
+        ? { botUserId: slack.botUserId }
+        : {}),
     },
     github: {
       connected: github.connected === true,

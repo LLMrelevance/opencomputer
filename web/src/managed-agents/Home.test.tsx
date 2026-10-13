@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import ProjectsHome from './Home'
 import { INSTALL_CLI_COMMAND } from './ProjectOnboarding'
 
@@ -43,20 +43,9 @@ function renderProjects(
   )
 }
 
-function stubSessionStorage(initial: Record<string, string> = {}) {
-  const store = new Map(Object.entries(initial))
-  vi.stubGlobal('sessionStorage', {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-  })
-}
-
-afterEach(() => vi.unstubAllGlobals())
-
 describe('projects home onboarding', () => {
-  it('sends the first landing without projects to the computer, not CLI onboarding', () => {
+  it('sends an organization without projects to the computer, not CLI onboarding', () => {
     // An organization's first screen is its computer (work 052).
-    stubSessionStorage()
     const markup = renderProjects([])
 
     expect(markup).not.toContain(INSTALL_CLI_COMMAND)
@@ -64,17 +53,16 @@ describe('projects home onboarding', () => {
   })
 
   it('keeps CLI onboarding for an organization without the computer (rollout flag)', () => {
-    stubSessionStorage()
     const markup = renderProjects([], [], false)
 
     expect(markup).toContain(INSTALL_CLI_COMMAND)
   })
 
-  it('shows CLI onboarding when Projects is opened after the first landing', () => {
-    stubSessionStorage({ 'oc.computerLanding': '1' })
-    const markup = renderProjects([])
-
-    expect(markup).toContain(INSTALL_CLI_COMMAND)
+  it('sends every visit without projects to the computer, not just the first', () => {
+    // A once-per-session redirect showed project onboarding to new signups
+    // whenever / had rendered before.
+    expect(renderProjects([])).not.toContain(INSTALL_CLI_COMMAND)
+    expect(renderProjects([])).not.toContain(INSTALL_CLI_COMMAND)
   })
 
   it('sends New project to the same CLI onboarding route', () => {

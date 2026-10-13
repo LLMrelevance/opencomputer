@@ -32,6 +32,8 @@ export const computerStatusSchema = z.object({
     installed: z.boolean(),
     teamId: z.string().optional(),
     teamName: z.string().optional(),
+    /** The app's bot user, to open a DM with it. */
+    botUserId: z.string().optional(),
   }),
   github: z.object({
     connected: z.boolean(),

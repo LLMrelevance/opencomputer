@@ -9,7 +9,11 @@ describe('managed agents navigation', () => {
   }
 
   it('lists the project list on the homepage even without advanced areas', () => {
-    const nav = managedAgentsNav({ ...defaults, computerEnabled: true })
+    const nav = managedAgentsNav({
+      ...defaults,
+      computerEnabled: true,
+      hasProjects: true,
+    })
     expect(nav.map((group) => group.items.map((item) => item.label))).toEqual([
       ['Computer', 'Projects'],
       ['Connections'],
@@ -24,6 +28,15 @@ describe('managed agents navigation', () => {
       label: 'Connections',
       icon: Plug,
     })
+  })
+
+  it('keeps Projects out of the sidebar until the organization has one', () => {
+    // A new organization's flow is its computer; projects are a side door.
+    expect(
+      managedAgentsNav({ ...defaults, computerEnabled: true }).map((group) =>
+        group.items.map((item) => item.label),
+      ),
+    ).toEqual([['Computer'], ['Connections']])
   })
 
   it('hides the computer from organizations without it (rollout flag)', () => {

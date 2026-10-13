@@ -12,12 +12,12 @@ import {
   LIVE_SESSION_POLL_MS,
   SESSION_POLL_MS,
   SLOW_POLL_MS,
-  compactStatusLine,
-  computerChecklist,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
-  heroCopy,
+  firstTaskLead,
+  setupStep,
+  slackLinks,
   relativeTime,
   sessionPollInterval,
   alreadyLinkedCopy,
@@ -149,42 +149,6 @@ describe('computer state copy', () => {
       ).description,
     ).toBe('Setup timed out.')
   })
-
-  it('writes a headline for every state without naming hardware or vendors', () => {
-    const states = [
-      'provisioning',
-      'ready',
-      'parked',
-      'waking',
-      'failed',
-      'deleting',
-    ] as const
-    for (const state of states) {
-      for (const plan of ['free', 'paid'] as const) {
-        const copy = heroCopy({ ...computer, state }, plan)
-        expect(copy.headline.length).toBeGreaterThan(0)
-        expect(`${copy.headline} ${copy.subline}`).not.toMatch(
-          /vCPU|GiB|azure|region|instance/i,
-        )
-      }
-    }
-    // Before the Slack install: the install is what brings it to life.
-    expect(heroCopy(null, 'free')).toEqual({
-      headline: 'Your computer is one click away.',
-      subline:
-        'Invite OpenComputer to your Slack and it wakes up as part of your team — ready in seconds.',
-    })
-    // Installed, the computer not there yet: on its way.
-    expect(heroCopy(null, 'free', true).headline).toBe(
-      heroCopy({ ...computer, state: 'provisioning' }, 'free').headline,
-    )
-  })
-
-  it('offers the upgrade only to a sleeping free computer', () => {
-    const parked = { ...computer, state: 'parked' as const }
-    expect(heroCopy(parked, 'free').subline).toContain('Upgrade')
-    expect(heroCopy(parked, 'paid').subline).not.toContain('Upgrade')
-  })
 })
 
 describe('computer polling', () => {
@@ -221,35 +185,54 @@ describe('computer polling', () => {
   })
 })
 
-describe('computer checklist', () => {
-  it('ticks each step from the status and the sessions', () => {
-    const done = (value: ComputerStatus, sessions?: unknown[]) =>
-      computerChecklist(value, sessions as never).map((step) => step.done)
+describe('computer setup', () => {
+  const slack = { installed: true, teamName: 'Acme' }
+  const github = {
+    connected: true,
+    installations: [{ id: '1', accountLogin: 'acme' }],
+  }
 
-    expect(done(status({ computer: null }))).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ])
+  it('walks Slack, then GitHub, then the first mention', () => {
+    expect(setupStep(status({ computer: null }), undefined)).toBe('slack')
+    // GitHub connected first still leaves Slack to do.
+    expect(setupStep(status({ github }), [])).toBe('slack')
+    expect(setupStep(status({ slack }), [])).toBe('github')
+    expect(setupStep(status({ slack, github }), [])).toBe('hello')
+    expect(setupStep(status({ slack, github }), [{} as never])).toBeNull()
+  })
+
+  it('stays on the last step while there is no computer', () => {
+    // Slack's claim failed: sessions are not asked for, so none can show.
     expect(
-      done(
-        status({
-          slack: { installed: true, teamName: 'Acme' },
-          github: {
-            connected: true,
-            installations: [{ id: '1', accountLogin: 'acme' }],
-          },
-        }),
-        [{}],
-      ),
-    ).toEqual([true, true, true, true])
+      setupStep(status({ slack, github, computer: null }), undefined),
+    ).toBe('hello')
+  })
+
+  it('says ready only when it is', () => {
+    expect(firstTaskLead(computer)).toMatch(/^Your computer is ready\./)
+    for (const state of ['provisioning', 'waking', 'failed', 'parked'] as const)
+      expect(firstTaskLead({ ...computer, state })).not.toContain('ready')
+    expect(firstTaskLead(null)).toContain('still starting')
+  })
+
+  it('never holds the page on setup for sessions it could not read', () => {
+    expect(setupStep(status({ slack, github }), undefined)).toBeNull()
+  })
+})
+
+describe('Slack links', () => {
+  it('opens a DM with the app when the bot is known', () => {
     expect(
-      done(status({ computer: { ...computer, state: 'parked' } }))[0],
-    ).toBe(true)
-    expect(
-      done(status({ computer: { ...computer, state: 'failed' } }))[0],
-    ).toBe(false)
+      slackLinks({ installed: true, teamId: 'T1', botUserId: 'UBOT' }),
+    ).toEqual({
+      dm: 'slack://user?team=T1&id=UBOT',
+      web: 'https://app.slack.com/client/T1',
+    })
+    expect(slackLinks({ installed: true, teamId: 'T1' })).toEqual({
+      dm: null,
+      web: 'https://app.slack.com/client/T1',
+    })
+    expect(slackLinks({ installed: false })).toEqual({ dm: null, web: null })
   })
 })
 
@@ -393,38 +376,5 @@ describe('relative time', () => {
   it('treats clock skew as now and ignores bad timestamps', () => {
     expect(ago(-60_000)).toBe('just now')
     expect(relativeTime('not a date', now)).toBe('')
-  })
-})
-
-describe('compact status line', () => {
-  it('talks about the work when there is work', () => {
-    expect(compactStatusLine(computer, 'free', 0).headline).toBe(
-      'Ready when you are.',
-    )
-    expect(compactStatusLine(computer, 'free', 1).headline).toContain(
-      'One thing',
-    )
-    expect(compactStatusLine(computer, 'free', 3).headline).toContain(
-      '3 things',
-    )
-  })
-
-  it('keeps resting, waking and failure visible, upgrade for free only', () => {
-    const parked = { ...computer, state: 'parked' as const }
-    expect(compactStatusLine(parked, 'free', 0)).toEqual({
-      headline: 'Resting — wakes when you mention it.',
-      detail: 'Upgrade and it never sleeps.',
-    })
-    expect(compactStatusLine(parked, 'paid', 0).detail).toBeUndefined()
-    expect(
-      compactStatusLine({ ...computer, state: 'waking' }, 'free', 0).headline,
-    ).toContain('Waking')
-    expect(
-      compactStatusLine(
-        { ...computer, state: 'failed', lastError: 'Setup timed out.' },
-        'free',
-        0,
-      ),
-    ).toEqual({ headline: 'Something went wrong.', detail: 'Setup timed out.' })
   })
 })
