@@ -15,6 +15,7 @@ import {
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
+  firstTaskLead,
   setupStep,
   slackLinks,
   relativeTime,
@@ -198,6 +199,20 @@ describe('computer setup', () => {
     expect(setupStep(status({ slack }), [])).toBe('github')
     expect(setupStep(status({ slack, github }), [])).toBe('hello')
     expect(setupStep(status({ slack, github }), [{} as never])).toBeNull()
+  })
+
+  it('stays on the last step while there is no computer', () => {
+    // Slack's claim failed: sessions are not asked for, so none can show.
+    expect(
+      setupStep(status({ slack, github, computer: null }), undefined),
+    ).toBe('hello')
+  })
+
+  it('says ready only when it is', () => {
+    expect(firstTaskLead(computer)).toMatch(/^Your computer is ready\./)
+    for (const state of ['provisioning', 'waking', 'failed', 'parked'] as const)
+      expect(firstTaskLead({ ...computer, state })).not.toContain('ready')
+    expect(firstTaskLead(null)).toContain('still starting')
   })
 
   it('never holds the page on setup for sessions it could not read', () => {

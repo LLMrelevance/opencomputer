@@ -351,9 +351,14 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         durableSessionsEnabled: user?.durableSessionsEnabled ?? false,
         infrastructureEnabled: user?.infrastructureEnabled ?? false,
         computerEnabled,
-        hasProjects:
-          (projects.data?.length ?? 0) > 0 ||
-          (archivedProjects.data?.length ?? 0) > 0,
+        // Hidden only once both lists are known to be empty: loading or a
+        // failed read keeps Projects reachable.
+        hasProjects: !(
+          projects.isSuccess &&
+          archivedProjects.isSuccess &&
+          projects.data.length === 0 &&
+          archivedProjects.data.length === 0
+        ),
       })
     : LEGACY_NAV
   const activeCollapsibleGroup = nav.find(

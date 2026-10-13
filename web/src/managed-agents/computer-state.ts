@@ -144,8 +144,22 @@ export function setupStep(
 ): SetupStep | null {
   if (!status.slack.installed) return 'slack'
   if (!status.github.connected) return 'github'
+  // No computer yet (its creation is under way or failed): nothing can have
+  // run, and the sessions are not even asked for.
+  if (!status.computer) return 'hello'
   if (sessions?.length === 0) return 'hello'
   return null
+}
+
+/** The lead of the last step, true to where the computer is. */
+export function firstTaskLead(computer: Computer | null): string {
+  const ways = 'DM it, or mention @OpenComputer in any channel.'
+  if (computer?.state === 'ready' && computer.connected)
+    return `Your computer is ready. ${ways}`
+  if (computer?.state === 'parked')
+    return `It's asleep; a message wakes it. ${ways}`
+  if (computer?.state === 'failed') return ways
+  return `It's still starting; message it now and it picks the task up once it's on. ${ways}`
 }
 
 /**

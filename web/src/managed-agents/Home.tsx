@@ -28,13 +28,18 @@ export default function ProjectsHome() {
   const computerEnabled =
     useContext(AuthContext)?.user?.computerEnabled ?? false
   const queryClient = useQueryClient()
+  // Always read afresh: projects are created elsewhere too (the CLI, a
+  // template deploy), and an empty list sends the organization away to its
+  // computer, so a stale cached [] must never decide that.
   const projects = useQuery({
     queryKey: ['managed-projects'],
     queryFn: () => getManagedProjects(),
+    refetchOnMount: 'always',
   })
   const archivedProjects = useQuery({
     queryKey: ['managed-projects', 'archived'],
     queryFn: () => getManagedProjects({ archived: true }),
+    refetchOnMount: 'always',
   })
   const items = projects.data ?? []
   const archivedItems = archivedProjects.data ?? []
@@ -91,6 +96,17 @@ export default function ProjectsHome() {
   // every time: the computer page is its onboarding. Project onboarding
   // stays at /new, linked quietly from there.
   if (items.length === 0 && archivedItems.length === 0) {
+    // A cached empty list is still being checked: wait for the answer.
+    if (
+      computerEnabled &&
+      (projects.isFetching || archivedProjects.isFetching)
+    ) {
+      return (
+        <div className="flex min-h-64 items-center justify-center">
+          <Loader2 className="text-muted-foreground size-5 animate-spin" />
+        </div>
+      )
+    }
     return computerEnabled ? (
       <Navigate to="/computer" replace />
     ) : (

@@ -75,6 +75,7 @@ import {
   computerPresentation,
   relativeTime,
   sessionPollInterval,
+  firstTaskLead,
   setupStep,
   slackLinks,
   slackReturnFromSearch,
@@ -160,7 +161,11 @@ function ComputerPageContent() {
 
   if (status.isLoading) {
     return (
-      <div className="flex min-h-64 items-center justify-center">
+      <div
+        role="status"
+        aria-label="Loading"
+        className="flex min-h-64 items-center justify-center"
+      >
         <Loader2 className="text-muted-foreground size-5 animate-spin" />
       </div>
     )
@@ -206,7 +211,11 @@ function ComputerPageContent() {
   // work, so wait for the sessions rather than flash one and then the other.
   if (sessionsLoading && computerIsOnboarded(status.data)) {
     return (
-      <div className="flex min-h-64 items-center justify-center">
+      <div
+        role="status"
+        aria-label="Loading"
+        className="flex min-h-64 items-center justify-center"
+      >
         <Loader2 className="text-muted-foreground size-5 animate-spin" />
       </div>
     )
@@ -219,13 +228,13 @@ function ComputerPageContent() {
     return (
       <WithDeveloperFooter>
         <div className="space-y-8">
-          {slackProblemPanel}
           <Overview
             status={status.data}
             createError={createError}
             creating={create.isPending}
             onRetry={() => create.mutate()}
           />
+          {slackProblemPanel}
           <SessionsPanel
             live={live}
             recent={recent}
@@ -293,16 +302,11 @@ function useNow(intervalMs: number) {
 type DotTone = 'alive' | 'busy' | 'failed' | 'quiet'
 
 function PulseDot({ tone, className }: { tone: DotTone; className?: string }) {
-  const pulsing = tone === 'alive' || tone === 'busy'
+  // A steady state (online) holds still; only something under way pulses.
   return (
     <span className={cn('relative flex size-2', className)} aria-hidden>
-      {pulsing ? (
-        <span
-          className={cn(
-            'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-            tone === 'alive' ? 'bg-emerald-500' : 'bg-amber-500',
-          )}
-        />
+      {tone === 'busy' ? (
+        <span className="absolute inline-flex size-full rounded-full bg-amber-500 opacity-75 motion-safe:animate-ping" />
       ) : null}
       <span
         className={cn(
@@ -418,7 +422,7 @@ function Overview({
                 to="/billing"
                 className="decoration-muted-foreground/40 hover:text-foreground underline underline-offset-4 transition-colors"
               >
-                Upgrade and it never sleeps
+                Upgrade to keep it awake
               </Link>
             </>
           ) : null}
@@ -464,7 +468,7 @@ function Connection({
 function IdeasToTry() {
   return (
     <details className="group">
-      <summary className="text-muted-foreground hover:text-foreground inline-flex cursor-pointer list-none items-center gap-1.5 text-sm transition-colors [&::-webkit-details-marker]:hidden">
+      <summary className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-sm transition-colors outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden">
         <ChevronRight
           className="size-3.5 transition-transform group-open:rotate-90"
           aria-hidden
@@ -499,7 +503,7 @@ function AlreadyLinked({
   return (
     <section
       aria-labelledby="already-linked-title"
-      className="from-primary/10 via-panel to-panel relative overflow-hidden rounded-2xl border bg-linear-to-br px-8 py-8 sm:px-10"
+      className="bg-panel relative rounded-xl border px-6 py-5"
     >
       <Button
         variant="ghost"
@@ -517,7 +521,7 @@ function AlreadyLinked({
         <div className="max-w-2xl min-w-0 pr-8">
           <h2
             id="already-linked-title"
-            className="text-2xl font-semibold tracking-tight text-balance"
+            className="text-lg font-semibold tracking-tight text-balance"
           >
             {copy.headline}
           </h2>
@@ -549,7 +553,7 @@ function SlackInstallFailed({
     <section
       role="alert"
       aria-labelledby="slack-install-failed-title"
-      className="border-destructive/40 bg-destructive/5 relative rounded-2xl border px-8 py-6 sm:px-10"
+      className="border-destructive/40 bg-destructive/5 relative rounded-xl border px-6 py-5"
     >
       <Button
         variant="ghost"
@@ -620,7 +624,6 @@ function Setup({
   return (
     <WithDeveloperFooter>
       <div className="flex flex-1 flex-col gap-6">
-        {notice}
         <header className="max-w-2xl">
           <div className="flex items-center justify-between gap-4">
             <p className="text-muted-foreground text-sm font-medium">
@@ -632,7 +635,7 @@ function Setup({
             ) : null}
           </div>
           <h1 className="mt-1 text-xl font-semibold tracking-tight">
-            {step === 'hello' ? 'Give it a first task' : 'Set up your computer'}
+            Set up your computer
           </h1>
           <div className="mt-4 flex gap-1.5" aria-hidden>
             {SETUP_STEPS.map((id) => (
@@ -650,6 +653,8 @@ function Setup({
             ))}
           </div>
         </header>
+
+        {notice}
 
         {failed ? (
           <div
@@ -682,13 +687,13 @@ function Setup({
             grows to the footer, and the scene stands on its floor. */}
         <div
           className={cn(
-            'grid flex-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,42rem)_18rem] lg:grid-rows-[auto_1fr]',
+            'grid flex-1 gap-x-12 gap-y-10 xl:grid-cols-[minmax(0,42rem)_18rem] xl:grid-rows-[auto_1fr]',
             stepsRunLong
-              ? "lg:[grid-template-areas:'steps_context'_'steps_scene']"
-              : "lg:[grid-template-areas:'steps_context'_'scene_scene']",
+              ? "xl:[grid-template-areas:'steps_context'_'steps_scene']"
+              : "xl:[grid-template-areas:'steps_context'_'scene_scene']",
           )}
         >
-          <ol className="bg-panel divide-y self-start overflow-hidden rounded-xl border shadow-sm lg:[grid-area:steps]">
+          <ol className="bg-panel divide-y self-start overflow-hidden rounded-xl border shadow-sm xl:[grid-area:steps]">
             <SetupItem
               number={1}
               title="Add OpenComputer to Slack"
@@ -716,13 +721,10 @@ function Setup({
             </SetupItem>
             <SetupItem
               number={3}
-              title="Say hello in Slack"
+              title="Give it a first task"
               state={progress('hello')}
             >
-              <p>
-                Your computer is ready. DM it, or mention @OpenComputer in any
-                channel. For example:
-              </p>
+              <p>{firstTaskLead(computer)} For example:</p>
               <CopyRow value={`@OpenComputer ${EXAMPLE_ASKS[0]}`} />
               <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
                 {slack.dm ? (
@@ -759,11 +761,11 @@ function Setup({
               </p>
             </SetupItem>
           </ol>
-          <SetupContext step={step} className="lg:[grid-area:context]" />
+          <SetupContext step={step} className="xl:[grid-area:context]" />
           <PixelScene
             asleep={step === 'slack'}
             shape={stepsRunLong ? 'compact' : 'wide'}
-            className="hidden self-end lg:block lg:[grid-area:scene]"
+            className="hidden self-end xl:block xl:[grid-area:scene]"
           />
         </div>
       </div>
@@ -829,7 +831,7 @@ function ContextHeading({ children }: { children: ReactNode }) {
   return (
     // Above the aside on wide screens, so the card below it starts level
     // with the steps.
-    <h2 className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase lg:absolute lg:bottom-full lg:left-0">
+    <h2 className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase xl:absolute xl:bottom-full xl:left-0">
       {children}
     </h2>
   )
@@ -861,8 +863,8 @@ const THREAD: { app?: boolean; at: string; text: ReactNode }[] = [
     at: '2:14',
     text: (
       <>
-        <span className="text-primary font-medium">@OpenComputer</span> why is
-        the checkout test flaky?
+        <span className="text-foreground/70 font-medium">@OpenComputer</span>{' '}
+        why is the checkout test flaky?
       </>
     ),
   },
@@ -887,26 +889,26 @@ const THREAD: { app?: boolean; at: string; text: ReactNode }[] = [
 function SlackThreadPreview() {
   return (
     <div
-      className="bg-panel space-y-2.5 rounded-lg border p-4 text-[13px] leading-snug"
+      className="bg-panel text-muted-foreground space-y-2.5 rounded-lg border p-4 text-[13px] leading-snug"
       aria-hidden
     >
       {THREAD.map((message, i) => (
         <div key={i} className="flex gap-2.5">
           {message.app ? (
-            <div className="bg-primary text-primary-foreground flex size-6 shrink-0 items-center justify-center rounded-md">
+            <div className="bg-muted flex size-6 shrink-0 items-center justify-center rounded-md">
               <ComputerIcon className="size-3" />
             </div>
           ) : (
-            <div className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold">
+            <div className="bg-muted flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold">
               M
             </div>
           )}
           <div className="min-w-0">
             <p className="text-xs">
-              <span className="font-semibold">
+              <span className="text-foreground/70 font-semibold">
                 {message.app ? 'OpenComputer' : 'Maya'}
               </span>
-              <span className="text-muted-foreground ml-1.5">{message.at}</span>
+              <span className="ml-1.5 opacity-70">{message.at}</span>
             </p>
             <p className="mt-0.5">{message.text}</p>
           </div>
@@ -920,21 +922,23 @@ function SlackThreadPreview() {
 function TerminalPreview() {
   return (
     <div
-      className="bg-panel space-y-1.5 rounded-lg border p-4 font-mono text-xs"
+      className="bg-panel text-muted-foreground space-y-1.5 rounded-lg border p-4 font-mono text-xs"
       aria-hidden
     >
-      <p className="text-muted-foreground">~/acme/web</p>
+      <p className="opacity-70">~/acme/web</p>
       <p>
-        <span className="text-muted-foreground">$ </span>
+        <span className="opacity-70">$ </span>
         {'pnpm test cart'}
       </p>
       <p>
-        <span className="text-emerald-600 dark:text-emerald-400">✓ </span>
+        <span className="text-emerald-600/70 dark:text-emerald-400/70">
+          {'✓ '}
+        </span>
         {'214 passed '}
-        <span className="text-muted-foreground">{'· 50 runs · 3.1s'}</span>
+        <span className="opacity-70">{'· 50 runs · 3.1s'}</span>
       </p>
       <p>
-        <span className="text-muted-foreground">$ </span>
+        <span className="opacity-70">$ </span>
         {'git push origin fix/cart-clock'}
       </p>
     </div>
@@ -947,10 +951,11 @@ function AskItem({ ask }: { ask: string }) {
     <li>
       <button
         type="button"
-        className="group hover:bg-muted/60 -mx-2 flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+        className="group hover:bg-muted/60 focus-visible:ring-ring/50 -mx-2 flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-3"
         onClick={() => {
-          void navigator.clipboard
-            .writeText(`@OpenComputer ${ask}`)
+          // navigator.clipboard is missing outside secure contexts.
+          Promise.resolve()
+            .then(() => navigator.clipboard.writeText(`@OpenComputer ${ask}`))
             .then(markCopied)
             .catch((error: unknown) => notifyError("Couldn't copy.", error))
         }}
@@ -958,14 +963,17 @@ function AskItem({ ask }: { ask: string }) {
         <span className="text-muted-foreground group-hover:text-foreground flex-1 transition-colors">
           {ask.charAt(0).toUpperCase() + ask.slice(1)}
         </span>
+        <span className="sr-only" aria-live="polite">
+          {copied ? 'Copied' : ''}
+        </span>
         {copied ? (
           <Check
             className="mt-0.5 size-3.5 shrink-0 text-emerald-600"
-            aria-label="Copied"
+            aria-hidden
           />
         ) : (
           <Copy
-            className="text-muted-foreground mt-0.5 size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+            className="text-muted-foreground mt-0.5 size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
             aria-hidden
           />
         )}

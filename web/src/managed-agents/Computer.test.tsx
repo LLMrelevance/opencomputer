@@ -198,7 +198,7 @@ describe('Computer page', () => {
     expect(container.querySelectorAll('button')).toHaveLength(1)
     // The later steps are named, not offered yet.
     expect(container.textContent).toContain('Connect GitHub')
-    expect(container.textContent).toContain('Say hello in Slack')
+    expect(container.textContent).toContain('Give it a first task')
     // Projects are a side door.
     expect(container.querySelector('a[href="/new"]')?.textContent).toContain(
       'Set it up on OpenComputer infrastructure',
@@ -407,7 +407,7 @@ describe('Computer page', () => {
       'resting header',
     )
     expect(container.querySelector('a[href="/billing"]')?.textContent).toBe(
-      'Upgrade and it never sleeps',
+      'Upgrade to keep it awake',
     )
   })
 
@@ -445,7 +445,7 @@ describe('Computer page', () => {
       'last setup step',
     )
     const current = container.querySelector('li[aria-current="step"]')!
-    expect(current.textContent).toContain('Say hello in Slack')
+    expect(current.textContent).toContain('Give it a first task')
     expect(current.textContent).toContain('@OpenComputer why is the')
     expect(current.textContent).toContain('Waiting for its first task')
     expect(
@@ -464,7 +464,7 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('Give it a first task') === true,
+      () => container.textContent?.includes('Step 3 of 3') === true,
       'last setup step',
     )
     const current = container.querySelector('li[aria-current="step"]')!
