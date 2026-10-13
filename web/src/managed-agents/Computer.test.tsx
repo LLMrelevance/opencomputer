@@ -347,7 +347,7 @@ describe('Computer page', () => {
     await settle(() => location() === '/computer', 'redirect to /computer')
   })
 
-  it('shows live work instead of setup once onboarded', async () => {
+  it('lists the work, live first, once onboarded', async () => {
     computerApi.getComputer.mockResolvedValue(onboarded)
     computerApi.getComputerSessions.mockResolvedValue([
       doneSession,
@@ -357,43 +357,35 @@ describe('Computer page', () => {
     render('/computer')
     await settle(
       () => container.textContent?.includes('Fix the flaky') === true,
-      'live session card',
+      'sessions',
     )
 
-    const live = container.querySelector('section[aria-labelledby="live-now"]')
-    expect(live?.textContent).toContain('Live now')
-    expect(live?.textContent).toContain('Fix the flaky checkout test')
-    expect(live?.textContent).toContain('Working…')
-    expect(live?.textContent).toContain('2 min ago')
-    expect(live?.textContent).not.toContain('Explain the billing flow')
+    const list = container.querySelector(
+      'section[aria-labelledby="computer-sessions"]',
+    )!
+    const rows = [...list.querySelectorAll('tbody tr')].map(
+      (row) => row.textContent,
+    )
+    expect(rows[0]).toContain('Fix the flaky checkout test')
+    expect(rows[0]).toContain('Working')
+    expect(rows[0]).toContain('2 min ago')
+    expect(rows[1]).toContain('Explain the billing flow')
+    expect(rows[1]).toContain('1 hr ago')
+    expect(list.textContent).toContain('1 working now')
     expect(
-      live?.querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
+      list.querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
         ?.textContent,
     ).toContain('Open in Slack')
-    expect(container.textContent).toContain('Recent')
-    expect(container.textContent).toContain('Explain the billing flow')
-    expect(container.textContent).toContain('1 hr ago')
-    expect(container.textContent).toContain('One thing in flight')
+    expect(container.textContent).toContain('Online')
     expect(container.textContent).toContain('Acme')
     expect(container.textContent).toContain('acme')
+    expect(container.querySelector('a[href="/new"]')).not.toBeNull()
 
-    // Setup is gone; specs never appear.
+    // No setup, no chatter; specs never appear.
     expect(container.textContent).not.toContain('Set up your computer')
     expect(container.textContent).not.toContain('Add to Slack')
+    expect(container.textContent).not.toContain('in flight')
     expect(container.textContent).not.toMatch(/vCPU|GiB/)
-  })
-
-  it('invites a hand-off when nothing is live', async () => {
-    computerApi.getComputer.mockResolvedValue(onboarded)
-    computerApi.getComputerSessions.mockResolvedValue([doneSession])
-
-    render('/computer')
-    await settle(
-      () => container.textContent?.includes('Quiet right now.') === true,
-      'quiet live state',
-    )
-    expect(container.textContent).toContain('Ready when you are.')
-    expect(container.textContent).toContain('@OpenComputer why is the')
   })
 
   it('keeps a resting computer and the upgrade visible once onboarded', async () => {
@@ -405,11 +397,12 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('Resting') === true,
+      () => container.textContent?.includes('Sleeping') === true,
       'resting header',
     )
-    expect(container.textContent).toContain('Sleeping')
-    expect(container.textContent).toContain('Upgrade and it never sleeps.')
+    expect(container.querySelector('a[href="/billing"]')?.textContent).toBe(
+      'Upgrade and it never sleeps',
+    )
   })
 
   it('keeps the setup page until GitHub is connected too', async () => {

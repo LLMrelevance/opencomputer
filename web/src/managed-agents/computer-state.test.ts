@@ -12,7 +12,6 @@ import {
   LIVE_SESSION_POLL_MS,
   SESSION_POLL_MS,
   SLOW_POLL_MS,
-  compactStatusLine,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
@@ -345,38 +344,5 @@ describe('relative time', () => {
   it('treats clock skew as now and ignores bad timestamps', () => {
     expect(ago(-60_000)).toBe('just now')
     expect(relativeTime('not a date', now)).toBe('')
-  })
-})
-
-describe('compact status line', () => {
-  it('talks about the work when there is work', () => {
-    expect(compactStatusLine(computer, 'free', 0).headline).toBe(
-      'Ready when you are.',
-    )
-    expect(compactStatusLine(computer, 'free', 1).headline).toContain(
-      'One thing',
-    )
-    expect(compactStatusLine(computer, 'free', 3).headline).toContain(
-      '3 things',
-    )
-  })
-
-  it('keeps resting, waking and failure visible, upgrade for free only', () => {
-    const parked = { ...computer, state: 'parked' as const }
-    expect(compactStatusLine(parked, 'free', 0)).toEqual({
-      headline: 'Resting — wakes when you mention it.',
-      detail: 'Upgrade and it never sleeps.',
-    })
-    expect(compactStatusLine(parked, 'paid', 0).detail).toBeUndefined()
-    expect(
-      compactStatusLine({ ...computer, state: 'waking' }, 'free', 0).headline,
-    ).toContain('Waking')
-    expect(
-      compactStatusLine(
-        { ...computer, state: 'failed', lastError: 'Setup timed out.' },
-        'free',
-        0,
-      ),
-    ).toEqual({ headline: 'Something went wrong.', detail: 'Setup timed out.' })
   })
 })
