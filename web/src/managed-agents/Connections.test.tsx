@@ -105,7 +105,13 @@ describe('Connections', () => {
   it('shows the organization Slack app and GitHub accounts, with nothing to add beyond them', async () => {
     await render()
     const text = container.textContent ?? ''
-    expect(text).toContain('Installed in Acme')
+    expect(text).toContain('Acme')
+    // Unlinking is a plain row action, not tucked into a menu.
+    expect(
+      [...container.querySelectorAll('button')].some(
+        (button) => button.textContent === 'Unlink',
+      ),
+    ).toBe(true)
     expect(text).toContain('acme')
     expect(text).toContain('All repositories')
     expect(text).not.toContain('Add connection')

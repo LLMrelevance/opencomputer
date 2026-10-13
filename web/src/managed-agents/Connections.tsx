@@ -1,13 +1,6 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import {
-  Ellipsis,
-  ExternalLink,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Unplug,
-} from 'lucide-react'
+import { ExternalLink, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { GithubMark } from '@/components/github-mark'
 import { PageHeader } from '@/components/page-header'
@@ -15,12 +8,6 @@ import { Panel } from '@/components/panel'
 import { SlackMark } from '@/components/slack-mark'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AuthContext } from '@/hooks/useAuth'
 import { notifyError } from '@/lib/errors'
@@ -227,32 +214,6 @@ function ServiceRow({
   )
 }
 
-function OverflowMenu({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
-          aria-label={label}
-        >
-          <Ellipsis className="size-4" aria-hidden />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-56">
-        {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function SlackConnection() {
   const status = useQuery({
     queryKey: computerQueryKey,
@@ -260,26 +221,18 @@ function SlackConnection() {
   })
   const [confirmUnlink, setConfirmUnlink] = useState(false)
   const slack = status.data?.slack
+  const web = slack ? slackLinks(slack).web : null
 
   return (
     <ServiceCard
       icon={<SlackMark className="size-4" />}
       title="Slack"
       summary={
-        status.isLoading ? (
-          <Skeleton className="mt-1 h-3.5 w-40" />
-        ) : status.isError ? (
-          'Slack status is temporarily unavailable.'
-        ) : slack?.installed ? (
-          <>
-            Installed in{' '}
-            <span className="text-foreground">
-              {slack.teamName ?? 'your workspace'}
-            </span>
-          </>
-        ) : (
-          'Add OpenComputer to your workspace to work with it in Slack.'
-        )
+        status.isError
+          ? 'Slack status is temporarily unavailable.'
+          : slack?.installed || status.isLoading
+            ? 'The workspace where your team works with OpenComputer.'
+            : 'Add OpenComputer to your workspace to work with it in Slack.'
       }
       actions={
         status.isError ? (
@@ -290,36 +243,7 @@ function SlackConnection() {
           >
             Try again
           </Button>
-        ) : slack?.installed ? (
-          <>
-            {slackLinks(slack).web ? (
-              <Button variant="ghost" size="sm" asChild>
-                <a
-                  href={slackLinks(slack).web ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Slack
-                  <ExternalLink className="size-3.5" aria-hidden />
-                </a>
-              </Button>
-            ) : null}
-            <OverflowMenu label="Slack options">
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setConfirmUnlink(true)}
-              >
-                <Unplug aria-hidden />
-                Unlink Slack workspace
-              </DropdownMenuItem>
-            </OverflowMenu>
-            <UnlinkSlackDialog
-              teamName={slack.teamName}
-              open={confirmUnlink}
-              onOpenChange={setConfirmUnlink}
-            />
-          </>
-        ) : status.isSuccess ? (
+        ) : status.isSuccess && !slack?.installed ? (
           <SlackInstallButton
             variant="outline"
             size="sm"
@@ -327,7 +251,48 @@ function SlackConnection() {
           />
         ) : null
       }
-    />
+    >
+      {status.isLoading ? (
+        <ServiceRow title={<Skeleton className="h-4 w-28" />} />
+      ) : slack?.installed ? (
+        <>
+          <ServiceRow
+            title={slack.teamName ?? 'Slack workspace'}
+            detail="Workspace"
+            trailing={
+              <>
+                {web ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    asChild
+                  >
+                    <a href={web} target="_blank" rel="noreferrer">
+                      Open
+                      <ExternalLink className="size-3.5" aria-hidden />
+                    </a>
+                  </Button>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => setConfirmUnlink(true)}
+                >
+                  Unlink
+                </Button>
+              </>
+            }
+          />
+          <UnlinkSlackDialog
+            teamName={slack.teamName}
+            open={confirmUnlink}
+            onOpenChange={setConfirmUnlink}
+          />
+        </>
+      ) : null}
+    </ServiceCard>
   )
 }
 
@@ -373,6 +338,21 @@ function GitHubConnection() {
         ) : (
           <>
             <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              title="Pick up installations made on GitHub"
+              disabled={Boolean(starting)}
+              onClick={() => start('existing')}
+            >
+              {starting === 'existing' ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="size-3.5" aria-hidden />
+              )}
+              Sync
+            </Button>
+            <Button
               variant="outline"
               size="sm"
               disabled={Boolean(starting)}
@@ -385,15 +365,6 @@ function GitHubConnection() {
               )}
               Add account
             </Button>
-            <OverflowMenu label="GitHub options">
-              <DropdownMenuItem
-                disabled={Boolean(starting)}
-                onSelect={() => start('existing')}
-              >
-                <RefreshCw aria-hidden />
-                Sync existing installations
-              </DropdownMenuItem>
-            </OverflowMenu>
           </>
         )
       }
