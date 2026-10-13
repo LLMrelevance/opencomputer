@@ -242,10 +242,10 @@ export function alreadyLinkedCopy(notified: boolean): {
 }
 
 export const EXAMPLE_ASKS = [
-  'why is the checkout test flaky? Fix it and open a PR.',
+  'why is the checkout test flaky?',
   'walk me through how billing works in our codebase.',
-  'upgrade us to the latest React and tell me what broke.',
-  'every morning, summarize what changed in main yesterday.',
+  'what would break if we moved to the latest React?',
+  "sketch a cleaner API for the cart service, then let's refine it.",
 ] as const
 
 /**

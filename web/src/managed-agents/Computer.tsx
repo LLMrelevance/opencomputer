@@ -16,12 +16,13 @@ import {
   Ellipsis,
   ChevronRight,
   Copy,
-  GitPullRequest,
+  GitBranch,
+  Brain,
   Loader2,
   MessagesSquare,
-  Moon,
   Plug,
   RotateCcw,
+  Route,
   ShieldCheck,
   Terminal,
   Send,
@@ -696,8 +697,8 @@ function Setup({
               doneAction={<ConnectionsMenu status={status} />}
             >
               <p>
-                Your team mentions it in a thread; it does the work and replies
-                there.
+                Mention it in any thread and work the task through together,
+                right there.
               </p>
               <SlackInstallButton size="lg" label="Add to Slack" />
             </SetupItem>
@@ -708,8 +709,8 @@ function Setup({
               summary={githubSummary(status.github)}
             >
               <p>
-                Pick the repositories it can work in. It opens pull requests for
-                you to review and never pushes to main unless you ask.
+                Pick the repositories it can work in. It reads and runs the code
+                to answer, and changes it when you say so.
               </p>
               <GitHubAction size="lg" />
             </SetupItem>
@@ -792,20 +793,20 @@ function SetupContext({
           <SlackThreadPreview />
           <ContextPoints
             points={[
-              [MessagesSquare, 'Answers in the thread it was asked in'],
-              [GitPullRequest, 'Works in your repositories, hands back PRs'],
-              [Moon, 'Keeps going after everyone logs off'],
+              [MessagesSquare, 'Talk it through in the thread'],
+              [Route, 'Change course mid-task; it follows'],
+              [Brain, 'Knows your code from one ask to the next'],
             ]}
           />
         </>
       ) : step === 'github' ? (
         <>
           <ContextHeading>What it does with your code</ContextHeading>
-          <PullRequestPreview />
+          <TerminalPreview />
           <ContextPoints
             points={[
-              [Terminal, 'Reads and runs it on its own computer'],
-              [GitPullRequest, 'Opens pull requests for you to review'],
+              [Terminal, 'Runs your code to check its answers'],
+              [GitBranch, 'Works on a branch you can pick up anytime'],
               [ShieldCheck, 'Never pushes to main unless you ask'],
             ]}
           />
@@ -851,61 +852,91 @@ function ContextPoints({
   )
 }
 
-/** A hand-off as it looks in Slack: illustration, not data. */
+/**
+ * A short exchange as it looks in Slack: a question back, a steer, done a
+ * minute later. Illustration, not data.
+ */
+const THREAD: { app?: boolean; at: string; text: ReactNode }[] = [
+  {
+    at: '2:14',
+    text: (
+      <>
+        <span className="text-primary font-medium">@OpenComputer</span> why is
+        the checkout test flaky?
+      </>
+    ),
+  },
+  {
+    app: true,
+    at: '2:14',
+    text: 'Two tests share the cart clock. Freeze it per test, or reset it between them?',
+  },
+  { at: '2:15', text: 'freeze it' },
+  {
+    app: true,
+    at: '2:15',
+    text: (
+      <>
+        Done: 50 runs, no flakes, on{' '}
+        <span className="font-mono text-xs">fix/cart-clock</span>
+      </>
+    ),
+  },
+]
+
 function SlackThreadPreview() {
   return (
-    <div className="bg-panel space-y-4 rounded-lg border p-4" aria-hidden>
-      <div className="flex gap-2.5">
-        <div className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold">
-          M
+    <div
+      className="bg-panel space-y-2.5 rounded-lg border p-4 text-[13px] leading-snug"
+      aria-hidden
+    >
+      {THREAD.map((message, i) => (
+        <div key={i} className="flex gap-2.5">
+          {message.app ? (
+            <div className="bg-primary text-primary-foreground flex size-6 shrink-0 items-center justify-center rounded-md">
+              <ComputerIcon className="size-3" />
+            </div>
+          ) : (
+            <div className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold">
+              M
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-xs">
+              <span className="font-semibold">
+                {message.app ? 'OpenComputer' : 'Maya'}
+              </span>
+              <span className="text-muted-foreground ml-1.5">{message.at}</span>
+            </p>
+            <p className="mt-0.5">{message.text}</p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold">Maya</p>
-          <p className="mt-0.5">
-            <span className="text-primary font-medium">@OpenComputer</span> why
-            is the checkout test flaky? Fix it.
-          </p>
-        </div>
-      </div>
-      <div className="flex gap-2.5">
-        <div className="bg-primary text-primary-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
-          <ComputerIcon className="size-3.5" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold">
-            OpenComputer{' '}
-            <span className="bg-muted text-muted-foreground ml-0.5 rounded px-1 py-px text-[10px] font-medium">
-              APP
-            </span>
-          </p>
-          <p className="mt-0.5">
-            A race in the cart fixture. Fixed, and opened{' '}
-            <span className="text-primary font-medium">#482</span> for review.
-          </p>
-        </div>
-      </div>
+      ))}
     </div>
   )
 }
 
-/** A pull request it opened: illustration, not data. */
-function PullRequestPreview() {
+/** It checking its own work: illustration, not data. */
+function TerminalPreview() {
   return (
-    <div className="bg-panel rounded-lg border p-4" aria-hidden>
-      <div className="flex items-start gap-2.5">
-        <GitPullRequest className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <div className="min-w-0">
-          <p className="font-medium">Fix race in cart fixture</p>
-          <p className="text-muted-foreground mt-0.5 text-xs">
-            acme/web #482 · opened by OpenComputer
-          </p>
-        </div>
-      </div>
-      <div className="mt-3 flex items-center gap-3 border-t pt-3 font-mono text-xs">
-        <span className="text-emerald-600 dark:text-emerald-400">+14</span>
-        <span className="text-red-600 dark:text-red-400">−3</span>
-        <span className="text-muted-foreground">tests passing</span>
-      </div>
+    <div
+      className="bg-panel space-y-1.5 rounded-lg border p-4 font-mono text-xs"
+      aria-hidden
+    >
+      <p className="text-muted-foreground">~/acme/web</p>
+      <p>
+        <span className="text-muted-foreground">$ </span>
+        {'pnpm test cart'}
+      </p>
+      <p>
+        <span className="text-emerald-600 dark:text-emerald-400">✓ </span>
+        {'214 passed '}
+        <span className="text-muted-foreground">{'· 50 runs · 3.1s'}</span>
+      </p>
+      <p>
+        <span className="text-muted-foreground">$ </span>
+        {'git push origin fix/cart-clock'}
+      </p>
     </div>
   )
 }
