@@ -117,8 +117,8 @@ export default function ProjectsHome() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Automations"
-        description="Your automation projects. Open one to see its agent playground, deployments, sessions, and resources."
+        title="Automation projects"
+        description="Open one to see its agent playground, deployments, sessions, and resources."
         actions={
           <Button asChild>
             <Link to="/new">
