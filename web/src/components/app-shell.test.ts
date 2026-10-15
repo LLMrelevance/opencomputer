@@ -8,11 +8,10 @@ describe('managed agents navigation', () => {
     infrastructureEnabled: false,
   }
 
-  it('lists the project list on the homepage even without advanced areas', () => {
+  it('links Automations to its own page', () => {
     const nav = managedAgentsNav({
       ...defaults,
       computerEnabled: true,
-      hasProjects: true,
     })
     expect(nav.map((group) => group.items.map((item) => item.label))).toEqual([
       ['Computer', 'Automations'],
@@ -22,7 +21,7 @@ describe('managed agents navigation', () => {
       to: '/computer',
       label: 'Computer',
     })
-    expect(nav[0]?.items[1]?.end).toBe(true)
+    expect(nav[0]?.items[1]).toMatchObject({ to: '/automations' })
     expect(nav[1]?.items[0]).toMatchObject({
       to: '/managed-agents/connections',
       label: 'Connections',
@@ -30,13 +29,12 @@ describe('managed agents navigation', () => {
     })
   })
 
-  it('keeps Automations out of the sidebar until the organization has one', () => {
-    // A new organization's flow is its computer; projects are a side door.
+  it('shows Automations next to the computer before the first one exists', () => {
     expect(
       managedAgentsNav({ ...defaults, computerEnabled: true }).map((group) =>
         group.items.map((item) => item.label),
       ),
-    ).toEqual([['Computer'], ['Connections']])
+    ).toEqual([['Computer', 'Automations'], ['Connections']])
   })
 
   it('hides the computer from organizations without it (rollout flag)', () => {

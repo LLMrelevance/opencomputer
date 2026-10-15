@@ -23,7 +23,11 @@ import {
 import ProjectOnboarding from './ProjectOnboarding'
 import { AuthContext } from '@/hooks/useAuth'
 
-export default function ProjectsHome() {
+/**
+ * The automation project list. At `/` (`list` unset) an organization without
+ * projects goes to its computer; at `/automations` it sees the empty list.
+ */
+export default function ProjectsHome({ list = false }: { list?: boolean }) {
   // The computer is behind a rollout flag (work 052); no auth, no computer.
   const computerEnabled =
     useContext(AuthContext)?.user?.computerEnabled ?? false
@@ -95,6 +99,28 @@ export default function ProjectsHome() {
   // An organization without projects starts at its computer (017, work 052),
   // every time: the computer page is its onboarding. Project onboarding
   // stays at /new, linked quietly from there.
+  if (items.length === 0 && archivedItems.length === 0 && list) {
+    return (
+      <div className="space-y-8">
+        <PageHeader title="Automation projects" />
+        <Panel>
+          <EmptyState
+            icon={FolderKanban}
+            title="No automations yet"
+            description="Ask your computer in Slack to automate something you do every week, or create a project yourself."
+            action={
+              <Button asChild variant="outline">
+                <Link to="/new">
+                  <Plus /> New project
+                </Link>
+              </Button>
+            }
+          />
+        </Panel>
+      </div>
+    )
+  }
+
   if (items.length === 0 && archivedItems.length === 0) {
     // A cached empty list is still being checked: wait for the answer.
     if (

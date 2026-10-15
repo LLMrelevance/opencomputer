@@ -938,7 +938,7 @@ export default function ManagedAgentDetail({
           description="This agent is not available in your organization."
           action={
             <Button asChild variant="outline">
-              <Link to="/">Back to automations</Link>
+              <Link to="/automations">Back to automations</Link>
             </Button>
           }
         />
@@ -1071,7 +1071,7 @@ export default function ManagedAgentDetail({
             </Button>
           ) : !project ? (
             <Button asChild variant="outline" size="sm">
-              <Link to="/">All automations</Link>
+              <Link to="/automations">All automations</Link>
             </Button>
           ) : undefined
         }
