@@ -314,7 +314,13 @@ export interface EnableResult {
 // enableManagedBilling drives one autumn org off→provisioning→active, idempotently.
 // Safe to re-invoke: it resumes from persisted state (insert → create OR key → bind
 // → flip), repairing partial failures (§5.1 partial-failure repair).
-export async function enableManagedBilling(env: ModelBillingEnv, orgId: string): Promise<EnableResult> {
+export async function enableManagedBilling(
+  env: ModelBillingEnv,
+  orgId: string,
+  // Re-checks Autumn for a halted Autumn org (selfHealHalt); resolves to
+  // whether it is still halted.
+  selfHeal?: (orgId: string) => Promise<boolean>,
+): Promise<EnableResult> {
   const org = await getOrg(env, orgId);
   if (!org) throw new Error(`model-billing: org ${orgId} not found`);
   // Reuse the row this path already reads so session creation pays no extra D1
@@ -323,7 +329,9 @@ export async function enableManagedBilling(env: ModelBillingEnv, orgId: string):
   // Paid orgs stay admitted: the managed-agent gateway moves their model calls
   // to the open-weight fallback instead of stopping them.
   if (org.is_halted === 1 && !isPaidUsagePlan(org.usage_plan)) {
-    return { status: "halted" };
+    const stillHalted =
+      org.billing_provider === "autumn" && selfHeal ? await selfHeal(orgId) : true;
+    if (stillHalted) return { status: "halted" };
   }
   if (org.model_billing_status === "active") {
     const active = await getActiveKeyRow(env, orgId);

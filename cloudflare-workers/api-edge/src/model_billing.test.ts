@@ -244,6 +244,34 @@ describe("enableManagedBilling state machine", () => {
     expect(db.orgs.get(orgId)!.model_billing_status).toBe("off");
   });
 
+  it("admits a halted Autumn org whose re-check finds credits", async () => {
+    const db = new FakeDb();
+    const orgId = seedOrg(db, { is_halted: 1, model_billing_status: "active" });
+    db.keys.push({
+      id: "mmk_1",
+      org_id: orgId,
+      status: "active",
+      or_key_hash: "hash",
+      managed_credential_id: "cred_1",
+      created_at: 1,
+    } as ManagedModelKeyRow);
+    const selfHeal = vi.fn(async () => false);
+
+    await expect(enableManagedBilling(makeEnv(db), orgId, selfHeal)).resolves.toEqual({
+      status: "active",
+      credentialId: "cred_1",
+    });
+    expect(selfHeal).toHaveBeenCalledWith(orgId);
+  });
+
+  it("stays halted when the re-check confirms it", async () => {
+    const db = new FakeDb();
+    const orgId = seedOrg(db, { is_halted: 1 });
+    await expect(
+      enableManagedBilling(makeEnv(db), orgId, async () => true),
+    ).resolves.toEqual({ status: "halted" });
+  });
+
   it.each(["pro", "max"])(
     "keeps an exhausted %s org admitted for the fallback model",
     async (plan) => {
