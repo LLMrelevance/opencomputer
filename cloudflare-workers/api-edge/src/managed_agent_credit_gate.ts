@@ -7,6 +7,7 @@ export interface ManagedAgentCreditGateEnv {
 
 interface ManagedAgentCreditRow {
   is_halted: number;
+  billing_provider: string | null;
   halted_at: number | null;
   usage_plan: string | null;
   plan: string | null;
@@ -59,6 +60,10 @@ export function isManagedAgentBillableRequest(
   );
 }
 
+// Re-checks Autumn's authoritative balance and re-projects D1 (selfHealHalt).
+// Resolves to whether the org is still halted.
+export type ManagedAgentSelfHeal = (orgID: string) => Promise<boolean>;
+
 export async function isManagedAgentCreditHalted(
   env: ManagedAgentCreditGateEnv,
   orgID: string,
@@ -69,13 +74,20 @@ export async function isManagedAgentCreditHalted(
 export async function getManagedAgentBillingAdmission(
   env: ManagedAgentCreditGateEnv,
   orgID: string,
+  selfHeal?: ManagedAgentSelfHeal,
 ): Promise<ManagedAgentBillingAdmission> {
   const row = await env.OPENCOMPUTER_DB.prepare(
-    "SELECT is_halted, halted_at, usage_plan, plan FROM orgs WHERE id = ?1",
+    "SELECT is_halted, halted_at, usage_plan, plan, billing_provider FROM orgs WHERE id = ?1",
   )
     .bind(orgID)
     .first<ManagedAgentCreditRow>();
-  const isHalted = row?.is_halted === 1;
+  let isHalted = row?.is_halted === 1;
+  // Like the sandbox create/wake gates: a halted Autumn org re-checks the
+  // authoritative balance, so a user who just topped up isn't denied until
+  // the webhook/reconciler catches up.
+  if (isHalted && row?.billing_provider === "autumn" && selfHeal) {
+    isHalted = await selfHeal(orgID);
+  }
   // Existing paid orgs predate usage_plan and initially carry its conservative
   // 'base' default. Keep their established Pro entitlement effective until an
   // Autumn projection refines usage_plan to the authoritative pro/max value.
@@ -84,7 +96,7 @@ export async function getManagedAgentBillingAdmission(
   return {
     allowed,
     isHalted,
-    haltedAt: row?.halted_at ?? null,
+    haltedAt: isHalted ? row?.halted_at ?? null : null,
     reason: allowed ? null : "insufficient_credits",
     paid,
     modelAccess: !isHalted ? "full" : paid ? "fallback" : null,
@@ -100,12 +112,13 @@ export async function enforceManagedAgentCreditGate(
   request: Request,
   env: ManagedAgentCreditGateEnv,
   orgID: string,
+  selfHeal?: ManagedAgentSelfHeal,
 ): Promise<Response | null> {
   if (!isManagedAgentBillableRequest(request.method, new URL(request.url).pathname)) {
     return null;
   }
   try {
-    return (await getManagedAgentBillingAdmission(env, orgID)).allowed
+    return (await getManagedAgentBillingAdmission(env, orgID, selfHeal)).allowed
       ? null
       : insufficientManagedAgentCredits(request);
   } catch (error) {

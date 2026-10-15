@@ -1051,7 +1051,13 @@ export async function handleDashboard(
   if (sub === "/managed-agents" || sub.startsWith("/managed-agents/")) {
     if (sub === "/managed-agents/sessions" && method === "POST") {
       try {
-        const billing = await enableManagedBilling(env, caller.orgID);
+        // Dispatch-free re-check (DashboardEnv has no cell secrets): a fresh
+        // halt is still hibernated by the webhook/reconciler.
+        const billing = await enableManagedBilling(
+          env,
+          caller.orgID,
+          async (id) => (await syncAutumnToD1(env, id).catch(() => null))?.halted ?? true,
+        );
         if (billing.status === "halted") {
           return insufficientManagedAgentCredits(req);
         }

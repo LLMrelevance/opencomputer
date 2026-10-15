@@ -15,6 +15,7 @@ class FakeStatement {
     private readonly haltedAt: number | null,
     private readonly usagePlan: string,
     private readonly plan: string,
+    private readonly billingProvider: string,
   ) {}
 
   bind(orgID: string): this {
@@ -31,6 +32,7 @@ class FakeStatement {
           halted_at: this.haltedAt,
           usage_plan: this.usagePlan,
           plan: this.plan,
+          billing_provider: this.billingProvider,
         }) as T | null;
   }
 }
@@ -40,14 +42,15 @@ function env(
   haltedAt: number | null = null,
   usagePlan = "base",
   plan = "free",
+  billingProvider = "autumn",
 ) {
   return {
     OPENCOMPUTER_DB: {
       prepare(sql: string) {
         expect(sql).toBe(
-          "SELECT is_halted, halted_at, usage_plan, plan FROM orgs WHERE id = ?1",
+          "SELECT is_halted, halted_at, usage_plan, plan, billing_provider FROM orgs WHERE id = ?1",
         );
-        return new FakeStatement(halted, haltedAt, usagePlan, plan);
+        return new FakeStatement(halted, haltedAt, usagePlan, plan, billingProvider);
       },
     } as unknown as D1Database,
   };
@@ -177,6 +180,46 @@ describe("managed-agent credit admission", () => {
     await expect(usagePlan("base", "pro")).resolves.toBe("pro");
     await expect(usagePlan(null, "pro")).resolves.toBe("pro");
     await expect(usagePlan("enterprise")).resolves.toBeNull();
+  });
+
+  it("admits a halted Autumn org whose re-check finds credits", async () => {
+    const selfHeal = vi.fn(async () => false);
+    await expect(
+      getManagedAgentBillingAdmission(env(1, 1_789_707_077), "org_test", selfHeal),
+    ).resolves.toMatchObject({
+      allowed: true,
+      isHalted: false,
+      haltedAt: null,
+      modelAccess: "full",
+    });
+    expect(selfHeal).toHaveBeenCalledWith("org_test");
+    const request = new Request(
+      "https://mo-oc-dev.com/api/managed-agents/sessions/session_1/turns",
+      { method: "POST" },
+    );
+    await expect(
+      enforceManagedAgentCreditGate(request, env(1, 1_789_707_077), "org_test", selfHeal),
+    ).resolves.toBeNull();
+  });
+
+  it("still denies when the re-check confirms the halt", async () => {
+    const selfHeal = vi.fn(async () => true);
+    await expect(
+      getManagedAgentBillingAdmission(env(1, 1_789_707_077), "org_test", selfHeal),
+    ).resolves.toMatchObject({ allowed: false, isHalted: true });
+  });
+
+  it("re-checks only halted Autumn orgs", async () => {
+    const selfHeal = vi.fn(async () => false);
+    await getManagedAgentBillingAdmission(env(0), "org_test", selfHeal);
+    await expect(
+      getManagedAgentBillingAdmission(
+        env(1, 1_789_707_077, "base", "free", "stripe"),
+        "org_test",
+        selfHeal,
+      ),
+    ).resolves.toMatchObject({ allowed: false });
+    expect(selfHeal).not.toHaveBeenCalled();
   });
 
   it("hard-stops an exhausted base org with the upgrade 402", async () => {

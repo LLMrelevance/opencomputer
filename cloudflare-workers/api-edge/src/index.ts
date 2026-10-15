@@ -5655,7 +5655,9 @@ export default {
       if (scopeError) return scopeError;
       if (path === "/api/managed-agents/sessions" && req.method === "POST") {
         try {
-          const billing = await enableManagedBilling(env, caller.orgID);
+          const billing = await enableManagedBilling(env, caller.orgID, (id) =>
+            selfHealHalt(env, id),
+          );
           if (billing.status === "halted") {
             return insufficientManagedAgentCredits(req);
           }
@@ -5674,6 +5676,7 @@ export default {
           req,
           env,
           caller.orgID,
+          (id) => selfHealHalt(env, id),
         );
         if (creditError) return creditError;
       }
