@@ -643,12 +643,21 @@ async function handleListAPIKeys(_req: Request, env: DashboardEnv, caller: Calle
 }
 
 async function handleCreateAPIKey(req: Request, env: DashboardEnv, caller: Caller): Promise<Response> {
-  const body = await req.json<{ name?: string }>().catch(() => ({} as { name?: string }));
+  const body = await req.json<{ name?: string; expiresAt?: unknown }>()
+    .catch(() => ({} as { name?: string; expiresAt?: unknown }));
   const name = (body.name ?? "Untitled").trim() || "Untitled";
+  let expiresAt: number | undefined;
+  if (body.expiresAt !== undefined && body.expiresAt !== null) {
+    const ms = typeof body.expiresAt === "string" ? Date.parse(body.expiresAt) : NaN;
+    if (Number.isNaN(ms)) return json({ error: "expiresAt must be an ISO 8601 timestamp" }, 400);
+    if (ms <= Date.now()) return json({ error: "expiresAt must be in the future" }, 400);
+    expiresAt = Math.floor(ms / 1000);
+  }
   return json(await createAPIKey(env, {
     orgID: caller.orgID,
     userID: caller.userID,
     name,
+    expiresAt,
   }), 201);
 }
 

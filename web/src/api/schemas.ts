@@ -171,6 +171,7 @@ export const CreatedAPIKeySchema = z.object({
   key: z.string(),
   keyPrefix: z.string(),
   createdAt: z.string(),
+  expiresAt: z.string().optional(),
 })
 
 export const OrgMemberSchema = z.object({

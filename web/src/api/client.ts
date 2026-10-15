@@ -266,10 +266,10 @@ export const deletePreviewUrl = (sandboxId: string, port: number) =>
 export const getAPIKeys = () =>
   apiFetch('/api-keys', {}, z.array(S.APIKeySchema))
 
-export const createAPIKey = (name: string) =>
+export const createAPIKey = (name: string, expiresAt?: string) =>
   apiFetch(
     '/api-keys',
-    { method: 'POST', body: JSON.stringify({ name }) },
+    { method: 'POST', body: JSON.stringify({ name, expiresAt }) },
     S.CreatedAPIKeySchema,
   )
 
