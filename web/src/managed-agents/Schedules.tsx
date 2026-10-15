@@ -96,7 +96,7 @@ export function ManagedAgentSchedules({
         <EmptyState
           icon={CalendarClock}
           title={`No active ${environment} deployment`}
-          description="Deploy this automation to activate its schedules in this environment."
+          description="Deploy this project to activate its schedules in this environment."
         />
       </Panel>
     )

@@ -32,8 +32,8 @@ export default function ProjectDetail() {
       <Panel>
         <EmptyState
           icon={FolderKanban}
-          title="Automation not found"
-          description="This automation is not available in your organization."
+          title="Project not found"
+          description="This project is not available in your organization."
           action={
             <Button asChild variant="outline">
               <Link to="/">Back to automations</Link>
@@ -66,7 +66,7 @@ export default function ProjectDetail() {
       <Panel>
         <EmptyState
           icon={FolderKanban}
-          title="This automation has no agents yet"
+          title="This project has no agents yet"
           description="Initialize the hello-world starter locally and deploy its first agent."
         />
       </Panel>

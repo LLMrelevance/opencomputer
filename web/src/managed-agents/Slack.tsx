@@ -194,7 +194,7 @@ export function ManagedProjectSlack({
         <EmptyState
           icon={MessageSquare}
           title="Slack status is temporarily unavailable"
-          description="Try loading the automation again."
+          description="Try loading the project again."
           action={
             <Button
               variant="outline"

@@ -949,7 +949,7 @@ function AgentUsageBreakdown({
               {session.title ?? 'Untitled session'}
             </div>
             <div className="text-muted-foreground mt-0.5 flex flex-wrap gap-x-2 font-mono text-xs">
-              <span>{session.projectName ?? 'Unknown automation'}</span>
+              <span>{session.projectName ?? 'Unknown project'}</span>
               <span>{session.id}</span>
               <span>{session.source}</span>
               <span>{session.status}</span>

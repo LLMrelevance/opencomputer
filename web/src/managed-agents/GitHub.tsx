@@ -84,7 +84,7 @@ export function ManagedProjectGitHub({
         <EmptyState
           icon={GitBranch}
           title="GitHub status is temporarily unavailable"
-          description="Try loading the automation again."
+          description="Try loading the project again."
           action={
             <Button variant="outline" onClick={() => void status.refetch()}>
               Try again

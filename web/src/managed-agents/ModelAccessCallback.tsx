@@ -35,7 +35,7 @@ export default function ModelAccessCallback() {
       setMessage(
         providerError
           ? `OpenAI authorization failed: ${providerError}`
-          : 'The OAuth callback was incomplete. Return to the automation and try again.',
+          : 'The OAuth callback was incomplete. Return to the project and try again.',
       )
       return
     }

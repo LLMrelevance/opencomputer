@@ -173,7 +173,7 @@ export function ManagedProjectDatabase({
         <EmptyState
           icon={Database}
           title={`No ${environment} database yet`}
-          description={`Deploy this automation to ${environment} to provision its database and apply migrations.`}
+          description={`Deploy this project to ${environment} to provision its database and apply migrations.`}
         />
       </Panel>
     )
@@ -185,7 +185,7 @@ export function ManagedProjectDatabase({
         <EmptyState
           icon={Database}
           title={`No ${environment} database yet`}
-          description={`Redeploy this automation to ${environment} to provision its database and apply migrations.`}
+          description={`Redeploy this project to ${environment} to provision its database and apply migrations.`}
         />
       </Panel>
     )

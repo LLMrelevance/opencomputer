@@ -86,7 +86,7 @@ function PromptPath() {
         <CopyRow value={CREATE_AGENT_PROMPT} className="bg-background py-3" />
         <p>
           Your coding agent installs the CLI, signs you in, and builds and
-          deploys the automation. Return here when it finishes to open it.
+          deploys the project. Return here when it finishes to open the project.
         </p>
       </OnboardingStep>
     </Steps>
@@ -106,18 +106,18 @@ function CommandsPath() {
         <CopyRow value={LOGIN_COMMAND} className="bg-background py-3" />
       </OnboardingStep>
 
-      <OnboardingStep number={3} title="Create an automation">
+      <OnboardingStep number={3} title="Create an agent project">
         <p>Scaffold a hello-world agent and install its dependencies.</p>
         <CopyRow value={INIT_COMMAND} className="bg-background py-3" />
       </OnboardingStep>
 
       <OnboardingStep number={4} title="Deploy it">
         <p>
-          Create the automation and deploy to Development. The watcher redeploys
-          whenever you edit files in <code>opencomputer/</code>.
+          Create the cloud project and deploy to Development. The watcher
+          redeploys whenever you edit files in <code>opencomputer/</code>.
         </p>
         <CopyRow value={DEPLOY_COMMAND} className="bg-background py-3" />
-        <p>Your automation appears here after the first deployment.</p>
+        <p>Your project appears here after the first deployment.</p>
       </OnboardingStep>
     </Steps>
   )
@@ -130,7 +130,7 @@ export default function ProjectOnboarding() {
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="Create your first agent"
-        description="Choose how you want to get started. Your automation will appear here after its first deployment."
+        description="Choose how you want to get started. Your project will appear here after its first deployment."
         className="mb-8"
       />
 

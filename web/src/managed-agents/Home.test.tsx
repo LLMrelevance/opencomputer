@@ -65,7 +65,7 @@ describe('projects home onboarding', () => {
     expect(renderProjects([])).not.toContain(INSTALL_CLI_COMMAND)
   })
 
-  it('sends New automation to the same CLI onboarding route', () => {
+  it('sends New project to the same CLI onboarding route', () => {
     const now = new Date().toISOString()
     const markup = renderProjects([
       {
@@ -79,7 +79,7 @@ describe('projects home onboarding', () => {
       },
     ])
 
-    expect(markup).toContain('New automation')
+    expect(markup).toContain('New project')
     expect(markup).toContain('href="/new"')
     expect(markup).not.toContain('Start from a template')
   })
@@ -109,7 +109,7 @@ describe('projects home onboarding', () => {
 
     expect(markup).toContain('aria-label="Archive Support"')
     expect(markup).toContain('aria-label="Archive Billing"')
-    expect(markup).not.toContain('Archive automation')
+    expect(markup).not.toContain('Archive project')
   })
 
   it('hides archived projects behind a collapsed restore section', () => {

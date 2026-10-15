@@ -160,7 +160,7 @@ export function ManagedProjectLinear({ projectId }: { projectId: string }) {
               ? 'Linear connections are not available right now'
               : 'Linear status is temporarily unavailable'
           }
-          description="Try loading the automation again."
+          description="Try loading the project again."
           action={
             <Button
               variant="outline"

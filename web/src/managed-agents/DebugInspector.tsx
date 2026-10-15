@@ -323,7 +323,7 @@ export function DebugInspector({
                   {route?.source
                     ? `${route.source.replace(/_/g, ' ')}${route.routeRevision ? ` · r${route.routeRevision}` : ''}`
                     : route?.routeId
-                      ? `Automation override${route.routeRevision ? ` · r${route.routeRevision}` : ''}`
+                      ? `Project override${route.routeRevision ? ` · r${route.routeRevision}` : ''}`
                       : 'Code or platform default'}
                 </p>
               </div>

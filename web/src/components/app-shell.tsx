@@ -174,7 +174,7 @@ function ManagedProjectContext({
     return (
       <div className="text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-sm">
         <span className="text-muted-foreground/50">/</span>
-        <span>Loading automation…</span>
+        <span>Loading project…</span>
       </div>
     )
   }
@@ -191,9 +191,9 @@ function ManagedProjectContext({
     <div className="flex min-w-0 items-center gap-2 font-mono text-sm">
       <span className="text-muted-foreground/50">/</span>
       <label className="border-border bg-background flex h-8 shrink-0 items-center rounded-md border px-2">
-        <span className="sr-only">Automation environment</span>
+        <span className="sr-only">Project environment</span>
         <select
-          aria-label="Automation environment"
+          aria-label="Project environment"
           value={environment}
           onChange={(event) =>
             onChange(event.target.value as ProjectEnvironment)

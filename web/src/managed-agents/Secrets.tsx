@@ -128,7 +128,7 @@ export function ManagedProjectSecrets({
                 onChange={(event) => setAgentId(event.target.value)}
                 className="border-input bg-background h-8 w-full rounded-md border px-2.5 text-sm outline-none"
               >
-                <option value="">Entire automation</option>
+                <option value="">Entire project</option>
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     Agent: {agent.name}
@@ -228,7 +228,7 @@ export function ManagedProjectSecrets({
                   <p className="mt-1 text-sm">
                     {secret.agentId
                       ? (agentNames.get(secret.agentId) ?? secret.agentId)
-                      : 'Entire automation'}
+                      : 'Entire project'}
                   </p>
                 </div>
                 <div className="min-w-0">
@@ -376,7 +376,7 @@ function AgentRuntimeVariables({
                 onChange={(event) => setAgentId(event.target.value)}
                 className="border-input bg-background h-8 w-full rounded-md border px-2.5 text-sm outline-none"
               >
-                <option value="">Entire automation</option>
+                <option value="">Entire project</option>
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     Agent: {agent.name}
@@ -457,7 +457,7 @@ function AgentRuntimeVariables({
                   <p className="mt-1 text-sm">
                     {variable.agentId
                       ? (agentNames.get(variable.agentId) ?? variable.agentId)
-                      : 'Entire automation'}
+                      : 'Entire project'}
                   </p>
                 </div>
                 <Button

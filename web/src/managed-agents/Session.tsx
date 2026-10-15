@@ -92,7 +92,7 @@ export default function ManagedSessionDetail() {
         <EmptyState
           icon={TerminalSquare}
           title="Session not found"
-          description="This session is not available in this automation."
+          description="This session is not available in this project."
           action={
             <Button asChild variant="outline">
               <Link to={`/projects/${encodeURIComponent(projectId)}/sessions`}>
