@@ -323,7 +323,17 @@ const apiKeys = [
     keyPrefix: 'osb_live_Lp9x',
     name: 'CI pipeline',
     scopes: ['sandboxes:write'],
+    expiresAt: new Date(Date.now() + 76 * 86_400_000).toISOString(),
     createdAt: at(14),
+  },
+  {
+    id: 'k3',
+    orgId: 'org_digger',
+    keyPrefix: 'osb_live_Qe4m',
+    name: 'Demo laptop',
+    scopes: ['sandboxes:write'],
+    expiresAt: at(2),
+    createdAt: at(9),
   },
 ]
 

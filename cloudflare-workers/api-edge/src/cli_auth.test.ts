@@ -728,6 +728,68 @@ describe("CLI identity and credential lifecycle", () => {
       entry.sql.includes("INSERT INTO api_keys") && entry.args[5] === "Dashboard key"
     );
     expect(insert?.args).not.toContain(body.key);
+    expect(insert?.args[7]).toBeNull();
+  });
+
+  it("stores and returns an expiry when a dashboard key is created with one", async () => {
+    const db = new FakeDB();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      user: { id: "workos-user", email: "igor@example.com", first_name: "Igor" },
+    })));
+    const callback = await worker.fetch(
+      request("/auth/callback?code=browser-code"),
+      testEnv(db),
+      ctx,
+    );
+    const cookie = callback.headers.get("set-cookie")?.split(";", 1)[0];
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    expiresAt.setMilliseconds(0);
+
+    const resp = await worker.fetch(request("/api/dashboard/api-keys", {
+      method: "POST",
+      headers: {
+        cookie: cookie ?? "",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Expiring key", expiresAt: expiresAt.toISOString() }),
+    }), testEnv(db), ctx);
+    expect(resp.status).toBe(201);
+    const body = await resp.json<Record<string, unknown>>();
+    expect(body.expiresAt).toBe(expiresAt.toISOString());
+    const insert = db.executed.find((entry) =>
+      entry.sql.includes("INSERT INTO api_keys") && entry.args[5] === "Expiring key"
+    );
+    expect(insert?.args[7]).toBe(expiresAt.getTime() / 1000);
+  });
+
+  it.each([
+    ["in the past", new Date(Date.now() - 60_000).toISOString()],
+    ["not a timestamp", "next week"],
+    ["not a string", 1234567890],
+  ])("rejects a dashboard key expiry that is %s", async (_label, expiresAt) => {
+    const db = new FakeDB();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      user: { id: "workos-user", email: "igor@example.com", first_name: "Igor" },
+    })));
+    const callback = await worker.fetch(
+      request("/auth/callback?code=browser-code"),
+      testEnv(db),
+      ctx,
+    );
+    const cookie = callback.headers.get("set-cookie")?.split(";", 1)[0];
+
+    const resp = await worker.fetch(request("/api/dashboard/api-keys", {
+      method: "POST",
+      headers: {
+        cookie: cookie ?? "",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Bad expiry", expiresAt }),
+    }), testEnv(db), ctx);
+    expect(resp.status).toBe(400);
+    expect(db.executed.some((entry) =>
+      entry.sql.includes("INSERT INTO api_keys") && entry.args[5] === "Bad expiry"
+    )).toBe(false);
   });
 
   it("renames a dashboard API key scoped to the caller's org", async () => {

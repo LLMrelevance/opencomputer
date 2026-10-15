@@ -20,11 +20,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Field, Input } from '@/components/form'
+import { Field, Input, Select } from '@/components/form'
 import { CopyRow } from '@/components/copy-row'
 import { EmptyState } from '@/components/empty-state'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ResourceTable, type Column } from '@/components/resource-table'
+
+// Days until a new key expires; 'never' leaves expires_at unset.
+const EXPIRY_OPTIONS = [
+  { value: 'never', label: 'Never' },
+  { value: '7', label: '7 days' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '365', label: '1 year' },
+]
+
+function expiryFromOption(option: string): string | undefined {
+  if (option === 'never') return undefined
+  return new Date(Date.now() + Number(option) * 86_400_000).toISOString()
+}
 
 export default function APIKeys() {
   const queryClient = useQueryClient()
@@ -35,17 +49,20 @@ export default function APIKeys() {
 
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
+  const [newKeyExpiry, setNewKeyExpiry] = useState('never')
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [toRevoke, setToRevoke] = useState<APIKey | null>(null)
   const [toRename, setToRename] = useState<APIKey | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
   const createMutation = useMutation({
-    mutationFn: (name: string) => createAPIKey(name),
+    mutationFn: ({ name, expiry }: { name: string; expiry: string }) =>
+      createAPIKey(name, expiryFromOption(expiry)),
     onSuccess: (data) => {
       setCreatedKey(data.key)
       setShowCreate(false)
       setNewKeyName('')
+      setNewKeyExpiry('never')
       void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: (error) => notifyError("Couldn't create the API key.", error),
@@ -101,6 +118,18 @@ export default function APIKeys() {
           {new Date(k.createdAt).toLocaleString()}
         </span>
       ),
+    },
+    {
+      key: 'expires',
+      header: 'Expires',
+      cell: (k) =>
+        k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now() ? (
+          <span className="text-status-error font-mono text-xs">Expired</span>
+        ) : (
+          <span className="text-muted-foreground font-mono text-xs">
+            {k.expiresAt ? new Date(k.expiresAt).toLocaleString() : 'Never'}
+          </span>
+        ),
     },
     {
       key: 'actions',
@@ -205,17 +234,32 @@ export default function APIKeys() {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              if (newKeyName.trim()) createMutation.mutate(newKeyName.trim())
+              if (newKeyName.trim()) {
+                createMutation.mutate({
+                  name: newKeyName.trim(),
+                  expiry: newKeyExpiry,
+                })
+              }
             }}
           >
-            <Field label="Key name" htmlFor="key-name">
-              <Input
-                id="key-name"
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value)}
-                placeholder="e.g. Production"
-              />
-            </Field>
+            <div className="space-y-4">
+              <Field label="Key name" htmlFor="key-name">
+                <Input
+                  id="key-name"
+                  value={newKeyName}
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  placeholder="e.g. Production"
+                />
+              </Field>
+              <Field label="Expires" htmlFor="key-expiry">
+                <Select
+                  id="key-expiry"
+                  value={newKeyExpiry}
+                  onValueChange={setNewKeyExpiry}
+                  options={EXPIRY_OPTIONS}
+                />
+              </Field>
+            </div>
             <DialogFooter className="mt-4">
               <Button
                 type="button"
@@ -223,6 +267,7 @@ export default function APIKeys() {
                 onClick={() => {
                   setShowCreate(false)
                   setNewKeyName('')
+                  setNewKeyExpiry('never')
                 }}
               >
                 Cancel
