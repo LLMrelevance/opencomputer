@@ -233,7 +233,7 @@ export function ManagedProjectSettings({ projectId }: { projectId: string }) {
         <EmptyState
           icon={GitBranch}
           title="Deployment settings are temporarily unavailable"
-          description="Try loading the project again."
+          description="Try loading the automation again."
           action={
             <Button variant="outline" onClick={() => void status.refetch()}>
               Try again
@@ -553,7 +553,7 @@ export function ManagedProjectSettings({ projectId }: { projectId: string }) {
               <p className="text-muted-foreground text-sm">
                 {source.previewsEnabled
                   ? 'No open pull requests have been built yet.'
-                  : 'Previews are turned off for this project.'}
+                  : 'Previews are turned off for this automation.'}
               </p>
             ) : (
               <ul className="divide-border divide-y">

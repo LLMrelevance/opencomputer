@@ -140,7 +140,7 @@ export default function TemplateNew() {
       if (result.state !== 'ready') {
         notifyError(
           'Template deployment is still running.',
-          new Error('Open the draft project to continue.'),
+          new Error('Open the draft automation to continue.'),
         )
         void navigate(result.projectUrl)
         return
@@ -200,7 +200,7 @@ export default function TemplateNew() {
         <EmptyState
           icon={Rocket}
           title="Deploying Hello World"
-          description="Creating your project and opening its first Debug session…"
+          description="Creating your automation and opening its first Debug session…"
         />
       </Panel>
     )
@@ -246,7 +246,7 @@ export default function TemplateNew() {
       {anonymous ? (
         <p className="text-muted-foreground text-sm">
           Sign in or create a free account to configure and deploy this template
-          to your own project.
+          to your own automation.
         </p>
       ) : null}
       {!quickStart ? (
@@ -277,12 +277,12 @@ export default function TemplateNew() {
       <Panel>
         <PanelHeader>
           <PanelTitle>
-            {quickStart ? 'Name your agent' : 'Configure project'}
+            {quickStart ? 'Name your agent' : 'Configure automation'}
           </PanelTitle>
         </PanelHeader>
         <PanelContent className="space-y-4">
           <label className="block space-y-1.5 text-sm">
-            <span>{quickStart ? 'Agent name' : 'Project name'}</span>
+            <span>{quickStart ? 'Agent name' : 'Automation name'}</span>
             <Input
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}

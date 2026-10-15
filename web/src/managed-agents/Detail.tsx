@@ -938,7 +938,7 @@ export default function ManagedAgentDetail({
           description="This agent is not available in your organization."
           action={
             <Button asChild variant="outline">
-              <Link to="/">Back to projects</Link>
+              <Link to="/">Back to automations</Link>
             </Button>
           }
         />
@@ -978,8 +978,8 @@ export default function ManagedAgentDetail({
         <Panel>
           <EmptyState
             icon={Bot}
-            title="This project has a single environment"
-            description={`“${resolvedEnvironment.requested}” is not an environment of this project (single_environment_project). Use a separate project for a distinct ${resolvedEnvironment.requested} target.`}
+            title="This automation has a single environment"
+            description={`“${resolvedEnvironment.requested}” is not an environment of this automation (single_environment_project). Use a separate automation for a distinct ${resolvedEnvironment.requested} target.`}
             action={
               <Button asChild variant="outline" size="sm">
                 <Link
@@ -995,7 +995,7 @@ export default function ManagedAgentDetail({
                     ),
                   }}
                 >
-                  Open the project
+                  Open the automation
                 </Link>
               </Button>
             }
@@ -1042,7 +1042,7 @@ export default function ManagedAgentDetail({
                   <DialogTitle>Continue locally</DialogTitle>
                   <DialogDescription>
                     Clone the exact source deployed here and link it to this
-                    existing project.
+                    existing automation.
                   </DialogDescription>
                 </DialogHeader>
                 <pre className="overflow-x-auto rounded-md border p-3 text-xs leading-5">
@@ -1071,7 +1071,7 @@ export default function ManagedAgentDetail({
             </Button>
           ) : !project ? (
             <Button asChild variant="outline" size="sm">
-              <Link to="/">All projects</Link>
+              <Link to="/">All automations</Link>
             </Button>
           ) : undefined
         }
@@ -1088,7 +1088,7 @@ export default function ManagedAgentDetail({
           </label>
           <select
             id="project-agent"
-            aria-label="Project agent"
+            aria-label="Automation agent"
             value={sessionsAgentFilter ?? ''}
             onChange={(event) => {
               setNewSessionKey(crypto.randomUUID())
@@ -1171,7 +1171,7 @@ export default function ManagedAgentDetail({
             title="Deploy the hello-world agent to use Debug playground"
             description={
               environmentMode === 'single'
-                ? 'Create the starter locally, then sync it to this project.'
+                ? 'Create the starter locally, then sync it to this automation.'
                 : `Create the starter locally, then sync it directly to ${environment}.`
             }
             action={
@@ -1375,7 +1375,7 @@ export default function ManagedAgentDetail({
               <PanelTitle>Sessions</PanelTitle>
               <PanelDescription className="mt-1">
                 Sessions started through channels and the API
-                {project ? ' across every agent in this project' : ''}.
+                {project ? ' across every agent in this automation' : ''}.
                 Playground sessions stay in the playground.
               </PanelDescription>
             </div>

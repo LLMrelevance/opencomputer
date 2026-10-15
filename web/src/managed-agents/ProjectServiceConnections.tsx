@@ -146,7 +146,7 @@ export function ManagedProjectServiceConnections({
         <div>
           <PanelTitle>Shared service connections</PanelTitle>
           <PanelDescription className="mt-1 max-w-2xl">
-            Attach an OAuth account to this project. Every environment and
+            Attach an OAuth account to this automation. Every environment and
             preview inherits the attachment; only agents that declare the
             matching useService() capability can use it.
           </PanelDescription>
@@ -282,7 +282,7 @@ export function ManagedProjectServiceConnections({
           <p className="text-sm font-medium">No connected accounts</p>
           <p className="text-muted-foreground mt-1 max-w-lg text-sm">
             Connect Linear, Gmail, Calendar, Drive, or Sheets first, then return
-            here to attach the account to this project.
+            here to attach the account to this automation.
           </p>
           <Button asChild className="mt-4" variant="outline">
             <Link to="/connections">Add account connection</Link>
@@ -294,7 +294,7 @@ export function ManagedProjectServiceConnections({
           <p className="text-destructive text-sm">
             {mutation.error instanceof Error
               ? mutation.error.message
-              : 'The project connection could not be updated.'}
+              : 'The automation connection could not be updated.'}
           </p>
         </div>
       ) : null}
@@ -306,14 +306,14 @@ export function ManagedProjectServiceConnections({
         }}
         title={
           pendingAction?.kind === 'replace'
-            ? 'Replace project connection?'
-            : 'Detach project connection?'
+            ? 'Replace automation connection?'
+            : 'Detach automation connection?'
         }
         description={
           pendingAction?.kind === 'replace'
-            ? `This replaces the project’s “${pendingAction.attachment.label}” ${pendingAction.attachment.service} connection with “${pendingAction.connection.label}”. The underlying OAuth accounts stay connected.`
+            ? `This replaces the automation’s “${pendingAction.attachment.label}” ${pendingAction.attachment.service} connection with “${pendingAction.connection.label}”. The underlying OAuth accounts stay connected.`
             : pendingAction
-              ? `Agents in this project will stop using “${pendingAction.connection.label}” as a shared ${pendingAction.attachment.service} connection. The underlying OAuth account stays connected.`
+              ? `Agents in this automation will stop using “${pendingAction.connection.label}” as a shared ${pendingAction.attachment.service} connection. The underlying OAuth account stays connected.`
               : undefined
         }
         confirmLabel={

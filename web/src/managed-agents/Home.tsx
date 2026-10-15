@@ -54,17 +54,17 @@ export default function ProjectsHome() {
     onSuccess: async () => {
       setPendingArchive(null)
       await queryClient.invalidateQueries({ queryKey: ['managed-projects'] })
-      notifySuccess('Project archived.', 'You can restore it at any time.')
+      notifySuccess('Automation archived.', 'You can restore it at any time.')
     },
-    onError: (error) => notifyError("Couldn't archive the project.", error),
+    onError: (error) => notifyError("Couldn't archive the automation.", error),
   })
   const restore = useMutation({
     mutationFn: restoreManagedProject,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['managed-projects'] })
-      notifySuccess('Project restored.')
+      notifySuccess('Automation restored.')
     },
-    onError: (error) => notifyError("Couldn't restore the project.", error),
+    onError: (error) => notifyError("Couldn't restore the automation.", error),
   })
 
   if (projects.isLoading || archivedProjects.isLoading) {
@@ -80,8 +80,8 @@ export default function ProjectsHome() {
       <Panel>
         <EmptyState
           icon={FolderKanban}
-          title="Your projects are temporarily unavailable"
-          description="Try loading the projects page again."
+          title="Your automations are temporarily unavailable"
+          description="Try loading the automations page again."
           action={
             <Button variant="outline" onClick={() => void projects.refetch()}>
               Try again
@@ -117,12 +117,12 @@ export default function ProjectsHome() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Projects"
-        description="Choose a project to open its agent playground, deployments, sessions, and resources."
+        title="Automations"
+        description="Choose an automation to open its agent playground, deployments, sessions, and resources."
         actions={
           <Button asChild>
             <Link to="/new">
-              <Plus /> New project
+              <Plus /> New automation
             </Link>
           </Button>
         }
@@ -183,7 +183,7 @@ export default function ProjectsHome() {
           </summary>
           <div className="space-y-3 pt-1">
             <p className="text-muted-foreground text-xs">
-              Archived projects keep their configuration and can be restored.
+              Archived automations keep their configuration and can be restored.
             </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {archivedItems.map((project) => (
@@ -222,9 +222,9 @@ export default function ProjectsHome() {
         onOpenChange={(open) => {
           if (!open) setPendingArchive(null)
         }}
-        title={`Archive ${pendingArchive?.name ?? 'this project'}?`}
-        description="This hides the project and stops its running sessions. Its agents, deployments, secrets and connections are preserved, and you can restore it later."
-        confirmLabel="Archive project"
+        title={`Archive ${pendingArchive?.name ?? 'this automation'}?`}
+        description="This hides the automation and stops its running sessions. Its agents, deployments, secrets and connections are preserved, and you can restore it later."
+        confirmLabel="Archive automation"
         pending={archive.isPending}
         onConfirm={() => {
           if (pendingArchive) archive.mutate(pendingArchive.id)

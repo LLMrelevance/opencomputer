@@ -110,10 +110,10 @@ export function ManagedProjectBYOK({
     onSuccess: async () => {
       setConfirmRemoveRoute(false)
       await queryClient.invalidateQueries({ queryKey: routeQueryKey })
-      notifySuccess('Project model route removed.')
+      notifySuccess('Automation model route removed.')
     },
     onError: (error) =>
-      notifyError("Couldn't remove the project model route.", error),
+      notifyError("Couldn't remove the automation model route.", error),
   })
   const configureApiRoute = useMutation({
     mutationFn: async () => {
@@ -140,7 +140,7 @@ export function ManagedProjectBYOK({
         queryClient.invalidateQueries({ queryKey: connectionQueryKey }),
         queryClient.invalidateQueries({ queryKey: routeQueryKey }),
       ])
-      notifySuccess('Model connection and project route configured.')
+      notifySuccess('Model connection and automation route configured.')
     },
     onError: (error) =>
       notifyError("Couldn't configure the model route.", error),
@@ -167,7 +167,7 @@ export function ManagedProjectBYOK({
         <EmptyState
           icon={BrainCircuit}
           title="BYOK status is temporarily unavailable"
-          description="Try loading the project again."
+          description="Try loading the automation again."
           action={
             <Button
               variant="outline"
@@ -193,7 +193,7 @@ export function ManagedProjectBYOK({
         <EmptyState
           icon={LockKeyhole}
           title="BYOK is available on Pro"
-          description={`Bring your own provider keys and route this project's models through them. Pro is $${PLAN_OFFERS.pro.priceUsd}/mo and includes $${PLAN_OFFERS.pro.creditsUsd} in credits every month.`}
+          description={`Bring your own provider keys and route this automation's models through them. Pro is $${PLAN_OFFERS.pro.priceUsd}/mo and includes $${PLAN_OFFERS.pro.creditsUsd} in credits every month.`}
           action={
             <Button asChild>
               <Link
@@ -268,8 +268,8 @@ export function ManagedProjectBYOK({
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">
-              No project override. Agent code and the platform default determine
-              the model.
+              No automation override. Agent code and the platform default
+              determine the model.
             </p>
           )}
           {canManageConnection ? (
@@ -384,8 +384,8 @@ export function ManagedProjectBYOK({
       <ConfirmDialog
         open={confirmRemoveRoute}
         onOpenChange={setConfirmRemoveRoute}
-        title="Remove this project route?"
-        description="New sessions will use the model selected by agent code or the platform default. The provider connection remains available to other projects."
+        title="Remove this automation route?"
+        description="New sessions will use the model selected by agent code or the platform default. The provider connection remains available to other automations."
         confirmLabel="Remove route"
         onConfirm={() => removeRoute.mutate()}
       />
