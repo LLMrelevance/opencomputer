@@ -540,8 +540,8 @@ function SidebarCreditMeter({ onNavigate }: { onNavigate?: () => void }) {
         }}
         className="text-foreground mt-2 block text-xs font-medium underline-offset-2 hover:underline"
       >
-        Upgrade to Pro — ${PLAN_OFFERS.pro.creditsUsd}/mo of credits for $
-        {PLAN_OFFERS.pro.priceUsd}
+        Upgrade to Pro · ${PLAN_OFFERS.pro.priceUsd}/mo → get $
+        {PLAN_OFFERS.pro.creditsUsd} in monthly credits
       </Link>
     </div>
   )
