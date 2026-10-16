@@ -1279,8 +1279,9 @@ const previewServiceConnection = {
 // The organization's computer (work 052 contract). Onboarded by default with
 // one live and two recent sessions; `?computer=setup` shows the page before
 // Slack and GitHub are connected (no computer yet: it comes with the Slack
-// install), `?computer=quiet` nothing live and `?computer=parked` a sleeping
-// computer.
+// install), `?computer=quiet` nothing live, `?computer=parked` a sleeping
+// computer and `?computer=first` the last setup step until its first task
+// lands a few seconds in.
 function previewComputerMode() {
   return new URLSearchParams(window.location.search).get('computer')
 }
@@ -1321,6 +1322,9 @@ function previewComputer() {
   }
 }
 
+// When the first-task preview first asked for sessions.
+let previewFirstTaskSince: number | null = null
+
 function previewComputerSessions() {
   // Relative to now so the page's "2 min ago" reads true in the preview.
   const ago = (minutes: number) =>
@@ -1341,6 +1345,12 @@ function previewComputerSessions() {
     slackUrl: `https://acme.slack.com/archives/C0PREVIEW/p${ts.replace('.', '')}`,
   })
   const mode = previewComputerMode()
+  if (mode === 'first') {
+    previewFirstTaskSince ??= Date.now()
+    return Date.now() - previewFirstTaskSince < 6_000
+      ? []
+      : [session('1760000300.000100', 'Fix the flaky checkout test', 'busy', 0)]
+  }
   const live = mode === 'quiet' || mode === 'parked' ? 'idle' : 'busy'
   return [
     session('1760000300.000100', 'Fix the flaky checkout test', live, 2),

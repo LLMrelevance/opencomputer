@@ -21,6 +21,8 @@ import {
   relativeTime,
   sessionPollInterval,
   alreadyLinkedCopy,
+  firstSession,
+  firstTaskCopy,
   slackReturnFromSearch,
   splitSessions,
 } from './computer-state'
@@ -347,13 +349,37 @@ describe('live and recent sessions', () => {
 
   it('polls sessions faster while any is live', () => {
     expect(sessionPollInterval(undefined)).toBe(SESSION_POLL_MS)
-    expect(sessionPollInterval([])).toBe(SESSION_POLL_MS)
+    // Waiting for the first task: setup moves on by itself, promptly.
+    expect(sessionPollInterval([])).toBe(LIVE_SESSION_POLL_MS)
     expect(
       sessionPollInterval(sessions.filter((s) => s.status === 'idle')),
     ).toBe(SESSION_POLL_MS)
     expect(sessionPollInterval(sessions)).toBe(LIVE_SESSION_POLL_MS)
     expect(LIVE_SESSION_POLL_MS).toBe(5_000)
     expect(SESSION_POLL_MS).toBe(15_000)
+  })
+})
+
+describe('first task', () => {
+  it('is the only session, while there is just the one', () => {
+    expect(firstSession(undefined)).toBeNull()
+    expect(firstSession([])).toBeNull()
+    const first = session('first', 'busy', '2026-10-11T10:00:00.000Z')
+    const second = session('second', 'idle', '2026-10-11T11:00:00.000Z')
+    expect(firstSession([first])).toBe(first)
+    expect(firstSession([first, second])).toBeNull()
+  })
+
+  it('says where the task is', () => {
+    expect(firstTaskCopy('starting').headline).toBe(
+      "It's picking up your first task",
+    )
+    expect(firstTaskCopy('busy').headline).toBe("It's on your first task")
+    expect(firstTaskCopy('idle').headline).toBe('It answered your first task')
+    expect(firstTaskCopy('ended').headline).toBe('Your first task is done')
+    expect(firstTaskCopy('error').headline).toBe(
+      'Your first task hit a problem',
+    )
   })
 })
 
