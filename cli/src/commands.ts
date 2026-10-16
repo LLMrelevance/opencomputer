@@ -73,6 +73,7 @@ import {
   materializeTemplateCheckout,
 } from "./template-local.js";
 import { materializeProjectArchive } from "./project-local.js";
+import { pushToAutomationsRepository } from "./push.js";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1000,6 +1001,20 @@ export async function runCommand(
           `  npm run deploy -- --watch --api-url ${config.apiUrl}\n`,
       );
     }
+    return;
+  }
+
+  if (command === "push") {
+    const ref = args.shift();
+    if (args.length) throw new Error("Usage: opencomputer push [<ref>]");
+    const credential = await client.automationsRepositoryCredential();
+    pushToAutomationsRepository({
+      credential,
+      directory: process.cwd(),
+      ...(ref ? { ref } : {}),
+    });
+    if (globals.json) printJSON({ remoteUrl: credential.remoteUrl });
+    else process.stdout.write(`Pushed to ${credential.remoteUrl}\n`);
     return;
   }
 

@@ -359,6 +359,45 @@ describe("managed agents proxy", () => {
     ).resolves.toBe(true);
   });
 
+  it("passes an automations repository credential through uncached", async () => {
+    const fetchSpy = vi.fn(async (target: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(target)).toBe(
+        "https://managedagents.test/v1/automations/repository/credentials",
+      );
+      expect(init?.method).toBe("POST");
+      return Response.json({
+        remoteUrl: "https://acme.code.storage/automations-org_test.git",
+        username: "t",
+        password: "jwt",
+        expiresAt: "2026-10-16T02:00:00.000Z",
+        internal: "dropped",
+      });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const response = await proxyManagedAgents(
+      new Request(
+        "https://mo-oc-dev.com/api/managed-agents/automations/repository/credentials",
+        { method: "POST" },
+      ),
+      {
+        OC_MANAGED_AGENTS_SECRET: "test-secret",
+        MANAGED_AGENTS_API_URL: "https://managedagents.test",
+      },
+      { orgID: "org_test", userID: "user_test", role: "member" },
+      "/api/managed-agents",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      remoteUrl: "https://acme.code.storage/automations-org_test.git",
+      username: "t",
+      password: "jwt",
+      expiresAt: "2026-10-16T02:00:00.000Z",
+    });
+  });
+
   it("streams project source without exposing upstream headers", async () => {
     const fetchSpy = vi.fn(async (target: RequestInfo | URL) => {
       expect(String(target)).toBe(

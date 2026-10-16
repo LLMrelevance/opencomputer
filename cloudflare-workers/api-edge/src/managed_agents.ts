@@ -2337,8 +2337,34 @@ function publicSuccessBody(
     }
     return { url: url.toString(), expiresAt: body.expiresAt };
   }
+  if (method === "POST" && AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
+    // A one-hour push credential for the organization's automations
+    // repository (work 067): the remote carries no credential of its own.
+    const remote =
+      typeof body.remoteUrl === "string" ? new URL(body.remoteUrl) : null;
+    if (
+      !remote ||
+      remote.protocol !== "https:" ||
+      remote.username ||
+      remote.password ||
+      typeof body.username !== "string" ||
+      typeof body.password !== "string" ||
+      typeof body.expiresAt !== "string"
+    ) {
+      throw new Error("Invalid automations repository credential");
+    }
+    return {
+      remoteUrl: remote.toString(),
+      username: body.username,
+      password: body.password,
+      expiresAt: body.expiresAt,
+    };
+  }
   throw new Error("Unsupported managed agents response");
 }
+
+const AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE =
+  /^\/automations\/repository\/credentials$/;
 
 function publicWorkspaceFile(value: unknown): Record<string, unknown> {
   const file = record(value) ?? {};
@@ -2449,7 +2475,8 @@ async function publicSuccessResponse(
     suffix.includes("/webhooks") ||
     suffix.includes("/event-subscriptions") ||
     suffix.startsWith("/channels/slack/setups") ||
-    isLinearRouteSuffix(suffix)
+    isLinearRouteSuffix(suffix) ||
+    AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)
   ) {
     headers.set("cache-control", "no-store");
   }
@@ -2689,6 +2716,9 @@ function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
     return true;
   }
   if (method === "GET" && /^\/projects\/[^/]+\/source-archive$/.test(suffix)) {
+    return true;
+  }
+  if (method === "POST" && AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
     return true;
   }
   if (
