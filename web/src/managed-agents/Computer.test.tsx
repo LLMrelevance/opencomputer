@@ -455,6 +455,67 @@ describe('Computer page', () => {
     expect(container.textContent).toContain('Repositories in acme')
     expect(container.textContent).not.toContain('Live now')
   })
+  it('shows the first task landing, live, once it has waited for it', async () => {
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    computerApi.getComputerSessions.mockResolvedValue([])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Step 3 of 3') === true,
+      'last setup step',
+    )
+
+    computerApi.getComputerSessions.mockResolvedValue([
+      { ...liveSession, updatedAt: minutesAgo(0) },
+    ])
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['managed-computer'] })
+    })
+    const panel = () =>
+      container.querySelector('section[aria-labelledby="first-task-title"]')
+    await settle(() => panel() !== null, 'first task')
+    expect(panel()!.textContent).toContain("It's on your first task")
+    expect(panel()!.textContent).toContain('Fix the flaky checkout test')
+    expect(panel()!.textContent).toContain('just now')
+    expect(
+      panel()!.querySelector('a[href="https://acme.slack.com/archives/C1/p11"]')
+        ?.textContent,
+    ).toBe('Open the thread')
+    // Nothing to dismiss while it works.
+    expect(panel()!.querySelector('button[aria-label="Dismiss"]')).toBeNull()
+
+    computerApi.getComputerSessions.mockResolvedValue([
+      { ...liveSession, status: 'idle' },
+    ])
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['managed-computer'] })
+    })
+    await settle(
+      () => panel()?.textContent?.includes('It answered') === true,
+      'first task answered',
+    )
+    act(() => {
+      panel()!
+        .querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!
+        .click()
+    })
+    expect(panel()).toBeNull()
+  })
+
+  it('leaves a finished first task out of a later visit', async () => {
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    computerApi.getComputerSessions.mockResolvedValue([doneSession])
+
+    render('/computer')
+    await settle(
+      () => container.textContent?.includes('Explain the billing') === true,
+      'sessions',
+    )
+    expect(
+      container.querySelector('section[aria-labelledby="first-task-title"]'),
+    ).toBeNull()
+  })
+
   it('opens a DM with the app when the bot is known', async () => {
     computerApi.getComputer.mockResolvedValue({
       ...onboarded,

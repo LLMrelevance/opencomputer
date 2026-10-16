@@ -293,11 +293,56 @@ export function splitSessions(sessions: readonly ComputerSession[]): {
 export const LIVE_SESSION_POLL_MS = 5_000
 export const SESSION_POLL_MS = 15_000
 
-/** Watch closely while something is being worked on. */
+/**
+ * Watch closely while something is being worked on, and while the first task
+ * is awaited: setup promises to move on by itself the moment it lands.
+ */
 export function sessionPollInterval(
   sessions: readonly ComputerSession[] | undefined,
 ): number {
+  if (sessions?.length === 0) return LIVE_SESSION_POLL_MS
   return sessions?.some(sessionIsLive) ? LIVE_SESSION_POLL_MS : SESSION_POLL_MS
+}
+
+/** The organization's only session, while it has had just the one. */
+export function firstSession(
+  sessions: readonly ComputerSession[] | undefined,
+): ComputerSession | null {
+  return sessions?.length === 1 ? sessions[0] : null
+}
+
+/** What the first-task panel says, true to where the task is. */
+export function firstTaskCopy(status: ComputerSessionStatus): {
+  headline: string
+  body: string
+} {
+  switch (status) {
+    case 'starting':
+      return {
+        headline: "It's picking up your first task",
+        body: 'Follow along in the thread. This updates by itself.',
+      }
+    case 'busy':
+      return {
+        headline: "It's on your first task",
+        body: 'Follow along in the thread, or steer it there. This updates by itself.',
+      }
+    case 'idle':
+      return {
+        headline: 'It answered your first task',
+        body: 'Reply in the thread to keep going.',
+      }
+    case 'ended':
+      return {
+        headline: 'Your first task is done',
+        body: `Ask again whenever you need it. ${START_SESSION_COPY}`,
+      }
+    case 'error':
+      return {
+        headline: 'Your first task hit a problem',
+        body: 'Open the thread to see what happened, then ask again.',
+      }
+  }
 }
 
 const MINUTE = 60_000

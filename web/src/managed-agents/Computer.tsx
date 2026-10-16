@@ -76,7 +76,10 @@ import {
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
+  firstSession,
+  firstTaskCopy,
   relativeTime,
+  sessionIsLive,
   sessionPollInterval,
   firstTaskLead,
   setupStep,
@@ -162,6 +165,14 @@ function ComputerPageContent() {
     setSearchParams(next, { replace: true })
   }, [queryClient, searchParams, setSearchParams])
 
+  // Someone who waited here for the first task sees it land: setup gives way
+  // to the work with that task on top, live, and a way into its thread.
+  // Without the wait, only a first task still under way earns the panel.
+  const step = status.data ? setupStep(status.data, sessions.data) : null
+  const [waitedForFirstTask, setWaitedForFirstTask] = useState(false)
+  const [firstTaskDismissed, setFirstTaskDismissed] = useState(false)
+  if (step === 'hello' && !waitedForFirstTask) setWaitedForFirstTask(true)
+
   if (status.isLoading) {
     return (
       <div
@@ -226,8 +237,12 @@ function ComputerPageContent() {
 
   // Once it is in Slack, knows the code and has had its first mention, the
   // page is about the work.
-  const step = setupStep(status.data, sessions.data)
   if (step === null) {
+    const first = firstSession(sessions.data)
+    const showFirstTask =
+      first !== null &&
+      !firstTaskDismissed &&
+      (waitedForFirstTask || sessionIsLive(first))
     return (
       <WithDeveloperFooter>
         <div className="space-y-8">
@@ -238,6 +253,13 @@ function ComputerPageContent() {
             onRetry={() => create.mutate()}
           />
           {slackProblemPanel}
+          {showFirstTask ? (
+            <FirstTask
+              session={first}
+              readAt={sessions.dataUpdatedAt}
+              onDismiss={() => setFirstTaskDismissed(true)}
+            />
+          ) : null}
           <SessionsPanel
             live={live}
             recent={recent}
@@ -537,6 +559,94 @@ function AlreadyLinked({
               <SlackInstallButton variant="outline" />
             </div>
           )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The payoff of setup: the first task, landed. Where it is, live, and the way
+ * into its thread, so the person sees the loop close.
+ */
+function FirstTask({
+  session,
+  readAt,
+  onDismiss,
+}: {
+  session: ComputerSession
+  readAt: number
+  onDismiss: () => void
+}) {
+  const now = Math.max(useNow(30_000), readAt)
+  const copy = firstTaskCopy(session.status)
+  const live = sessionIsLive(session)
+  return (
+    <section
+      aria-labelledby="first-task-title"
+      aria-live="polite"
+      className="bg-panel relative rounded-xl border px-6 py-5 shadow-sm"
+    >
+      {live ? null : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground absolute top-3 right-3"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+        >
+          <X className="size-4" aria-hidden />
+        </Button>
+      )}
+      <div className="flex gap-5">
+        <div
+          className={cn(
+            'flex size-11 shrink-0 items-center justify-center rounded-full',
+            session.status === 'error'
+              ? 'bg-destructive/10 text-destructive'
+              : live
+                ? 'bg-amber-500/10'
+                : 'bg-primary/15 text-primary',
+          )}
+          aria-hidden
+        >
+          {session.status === 'error' ? (
+            <TriangleAlert className="size-5" />
+          ) : live ? (
+            <PulseDot tone="busy" className="size-2.5" />
+          ) : (
+            <Check className="size-5" />
+          )}
+        </div>
+        <div className="max-w-2xl min-w-0 pr-8">
+          <h2
+            id="first-task-title"
+            className="text-lg font-semibold tracking-tight text-balance"
+          >
+            {copy.headline}
+          </h2>
+          <p className="text-muted-foreground mt-1 flex min-w-0 items-baseline gap-2 text-sm">
+            <span className="text-foreground truncate font-medium">
+              {session.title || 'Untitled session'}
+            </span>
+            <span aria-hidden>·</span>
+            <time
+              className="whitespace-nowrap"
+              dateTime={session.updatedAt}
+              title={new Date(session.updatedAt).toLocaleString()}
+            >
+              {relativeTime(session.updatedAt, now)}
+            </time>
+          </p>
+          <p className="text-muted-foreground mt-3 text-sm">{copy.body}</p>
+          {session.slackUrl ? (
+            <Button className="mt-5" asChild>
+              <a href={session.slackUrl} target="_blank" rel="noreferrer">
+                <MessagesSquare className="size-4" aria-hidden />
+                Open the thread
+              </a>
+            </Button>
+          ) : null}
         </div>
       </div>
     </section>
