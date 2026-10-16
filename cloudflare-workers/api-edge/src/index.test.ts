@@ -639,3 +639,53 @@ describe("/api/managed-agents/computer/slack — public mounts", () => {
     expect(headers.get("x-slack-signature")).toBe("v0=abc");
   });
 });
+
+describe("/internal/computer-keys", () => {
+  const MANAGED = "managed-secret";
+  const sign = async (secret: string, ts: string, body: string): Promise<string> => {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${ts}.${body}`));
+    return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  };
+  const post = async (secret: string, orgID: string, authEnv: Env) => {
+    const body = JSON.stringify({ org_id: orgID });
+    const ts = Math.floor(Date.now() / 1000).toString();
+    return worker.fetch(
+      new Request("https://app.opencomputer.dev/internal/computer-keys", {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-Timestamp": ts, "X-Signature": await sign(secret, ts, body) },
+        body,
+      }),
+      authEnv,
+      ctx,
+    );
+  };
+
+  it("refuses any other secret", async () => {
+    const authEnv = { ...env, CF_ADMIN_SECRET: "admin", OC_MANAGED_CRED_HMAC_SECRET: MANAGED } as unknown as Env;
+    expect((await post("admin", "org-x", authEnv)).status).toBe(401);
+  });
+
+  it("mints a one-hour key for an existing org", async () => {
+    const runs: unknown[][] = [];
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (...args: unknown[]) => ({
+          first: async () => (sql.includes("FROM orgs") && args[0] === "org-x" ? { id: "org-x" } : null),
+          run: async () => { runs.push(args); return {}; },
+        }),
+      }),
+    };
+    const authEnv = { ...env, OC_MANAGED_CRED_HMAC_SECRET: MANAGED, OPENCOMPUTER_DB: db } as unknown as Env;
+    expect((await post(MANAGED, "org-missing", authEnv)).status).toBe(404);
+    const res = await post(MANAGED, "org-x", authEnv);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { key: string; expiresAt: string };
+    expect(out.key).toMatch(/^osb_/);
+    const ttl = Date.parse(out.expiresAt) - Date.now();
+    expect(ttl).toBeGreaterThan(3500_000);
+    expect(ttl).toBeLessThanOrEqual(3600_000);
+    expect(runs[0][1]).toBe("org-x");
+    expect(runs[0][2]).toBe("computer");
+  });
+});

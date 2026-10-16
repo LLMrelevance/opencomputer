@@ -5418,6 +5418,32 @@ export default {
       }
     }
 
+    // /internal/computer-keys — a one-hour org key for an organization's computer
+    // (work 067): managed agents mints one when a session runs `opencomputer`,
+    // instead of a long-lived key living on the VM. HMAC-auth'd with the scoped
+    // OC_MANAGED_CRED_HMAC_SECRET over `${ts}.${body}`. Body: { org_id }.
+    if (path === "/internal/computer-keys" && req.method === "POST") {
+      const ts = req.headers.get("X-Timestamp") ?? "";
+      const sig = req.headers.get("X-Signature") ?? "";
+      const body = await req.text();
+      const ok = env.OC_MANAGED_CRED_HMAC_SECRET
+        ? constantTimeEqual(await hmacHex(env.OC_MANAGED_CRED_HMAC_SECRET, `${ts}.${body}`), sig)
+        : false;
+      if (!ok) return json({ error: "signature mismatch" }, 401);
+      if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return json({ error: "timestamp out of window" }, 401);
+      const parsed = JSON.parse(body) as { org_id?: string };
+      if (!parsed.org_id) return json({ error: "org_id required" }, 400);
+      const org = await env.OPENCOMPUTER_DB.prepare(`SELECT id FROM orgs WHERE id = ?1`).bind(parsed.org_id).first();
+      if (!org) return json({ error: "org not found" }, 404);
+      const created = await createAPIKey(env, {
+        orgID: parsed.org_id,
+        userID: "computer",
+        name: "Computer session",
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      });
+      return json({ key: created.key, expiresAt: created.expiresAt });
+    }
+
     // /internal/secret-stores/:id — HMAC-auth'd, called by CP at sandbox-create
     // time to materialize the encrypted entry list. CP decrypts with the
     // shared SECRET_ENCRYPTION_KEY before injecting into worker env.
