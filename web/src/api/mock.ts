@@ -1280,27 +1280,41 @@ const previewServiceConnection = {
 // one live and two recent sessions; `?computer=setup` shows the page before
 // Slack and GitHub are connected (no computer yet: it comes with the Slack
 // install), `?computer=quiet` nothing live, `?computer=parked` a sleeping
-// computer and `?computer=first` the last setup step until its first task
-// lands a few seconds in.
+// computer, `?computer=first` the last setup step until its first task
+// lands a few seconds in, and `?computer=booting` a new computer coming online
+// over about twenty seconds.
 function previewComputerMode() {
   return new URLSearchParams(window.location.search).get('computer')
 }
+
+// When the booting preview first asked for the computer.
+let previewBootSince: number | null = null
 
 function previewComputer() {
   const mode = previewComputerMode()
   const setup = mode === 'setup'
   const parked = mode === 'parked'
+  let booted = { state: parked ? 'parked' : 'ready', connected: !parked }
+  if (mode === 'booting') {
+    previewBootSince ??= Date.now()
+    const elapsed = Date.now() - previewBootSince
+    booted =
+      elapsed < 12_000
+        ? { state: 'provisioning', connected: false }
+        : { state: 'ready', connected: elapsed >= 20_000 }
+  }
   return {
     computer: setup
       ? null
       : {
-          state: parked ? 'parked' : 'ready',
-          connected: !parked,
+          ...booted,
           vcpus: 2,
           memoryGiB: 8,
           diskGiB: 128,
           lastError: null,
-          createdAt: new Date(BASE).toISOString(),
+          createdAt: new Date(
+            mode === 'booting' ? (previewBootSince ?? BASE) : BASE,
+          ).toISOString(),
           updatedAt: new Date(BASE).toISOString(),
         },
     slack: setup
@@ -1345,6 +1359,7 @@ function previewComputerSessions() {
     slackUrl: `https://acme.slack.com/archives/C0PREVIEW/p${ts.replace('.', '')}`,
   })
   const mode = previewComputerMode()
+  if (mode === 'booting') return []
   if (mode === 'first') {
     previewFirstTaskSince ??= Date.now()
     return Date.now() - previewFirstTaskSince < 6_000
