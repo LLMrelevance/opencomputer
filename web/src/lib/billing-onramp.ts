@@ -1,13 +1,21 @@
 import posthog from 'posthog-js'
+import { USAGE_PLAN_NAMES } from '@/lib/plan-label'
 
 // Payment on-ramp experiment (low-credit banner, sidebar meter, post-session
-// upsell, Pro-first halt copy). Set the build-time value to "0" to fall back to
+// upsell, Pro paywall copy). Set the build-time value to "0" to fall back to
 // the halt-only behaviour.
 export const billingOnrampV2Enabled =
   import.meta.env.VITE_BILLING_ONRAMP_V2 !== '0'
 
 export type UsagePlanId = 'base' | 'pro' | 'max'
 export type PaidPlanId = Exclude<UsagePlanId, 'base'>
+
+// The one plan new customers can buy. Its Autumn id stays `max`; it is shown
+// as "Pro". The old $20/mo plan (Autumn id `pro`) is retired: it shows as
+// "Pro (legacy)" to its existing subscribers and is never offered to anyone
+// else. Top-ups are no longer sold.
+export const UPGRADE_PLAN = 'max' as const satisfies PaidPlanId
+export type UpgradePlanId = typeof UPGRADE_PLAN
 
 export const PLAN_OFFERS: Record<
   PaidPlanId,
@@ -16,6 +24,18 @@ export const PLAN_OFFERS: Record<
   pro: { priceUsd: 20, creditsUsd: 200 },
   max: { priceUsd: 200, creditsUsd: 2000 },
 }
+
+export const PLAN_NAMES: Record<UsagePlanId, string> = USAGE_PLAN_NAMES
+
+export const UPGRADE_OFFER = PLAN_OFFERS[UPGRADE_PLAN]
+
+// "Pro ($200/mo)": how every upgrade prompt names the plan to buy.
+export const UPGRADE_PLAN_LABEL = `${PLAN_NAMES[UPGRADE_PLAN]} ($${UPGRADE_OFFER.priceUsd}/mo)`
+
+// The free-tier paywall, the same on every surface. It does not state the
+// grant amount: that is still $5 today and changes in a later step.
+export const FREE_CREDITS_USED = "You've used your free credits."
+export const FREE_CREDITS_PAYWALL = `${FREE_CREDITS_USED} Upgrade to ${UPGRADE_PLAN_LABEL} to keep going, or to use your own Claude or ChatGPT subscription.`
 
 // Monthly grant per plan; the base grant is the signup allowance.
 export const BASE_GRANT_CENTS = 500
@@ -30,12 +50,31 @@ export function lowCreditThresholdCents(plan: UsagePlanId): number {
   return Math.round(PLAN_GRANT_CENTS[plan] * LOW_CREDIT_FRACTION)
 }
 
-export function upgradePlanFor(plan: UsagePlanId): PaidPlanId {
-  return plan === 'pro' ? 'max' : 'pro'
+// The plan an org is prompted to upgrade to: always the $200 Pro, from Free
+// and from legacy Pro alike. null when the org is already on it.
+export function upgradePlanFor(plan: UsagePlanId): UpgradePlanId | null {
+  return plan === UPGRADE_PLAN ? null : UPGRADE_PLAN
 }
 
-export function upgradeHref(plan: PaidPlanId): string {
+export function upgradeHref(plan: PaidPlanId = UPGRADE_PLAN): string {
   return `/billing?plan=${plan}`
+}
+
+// Paid plans an org may pick on the Billing page: the $200 Pro for everyone,
+// plus legacy Pro only for an org already subscribed to it.
+export function selectablePaidPlans(current: UsagePlanId): PaidPlanId[] {
+  return current === 'pro' ? ['pro', UPGRADE_PLAN] : [UPGRADE_PLAN]
+}
+
+// `?plan=` deep link → the plan whose checkout to open. Older links (and
+// agent transcripts) still carry `plan=pro`; for anyone not on legacy Pro they
+// mean "upgrade", so they open the $200 Pro. Never opens legacy Pro checkout.
+export function deepLinkedPlanFor(
+  requested: string | null,
+  current: UsagePlanId,
+): UpgradePlanId | null {
+  if (requested !== 'pro' && requested !== 'max') return null
+  return current === UPGRADE_PLAN ? null : UPGRADE_PLAN
 }
 
 export function formatUsd(cents: number): string {
@@ -88,7 +127,6 @@ export function attributedSurface(): UpsellSurface | undefined {
 
 export function trackCheckoutStarted(props: {
   plan?: PaidPlanId
-  topupUsd?: number
   usagePlan?: UsagePlanId
 }): void {
   posthog.capture('checkout_started', {
@@ -99,7 +137,6 @@ export function trackCheckoutStarted(props: {
 
 export function trackPlanActivated(props: {
   plan?: PaidPlanId
-  topupUsd?: number
   usagePlan?: UsagePlanId
 }): void {
   posthog.capture('plan_activated', { ...props, surface: attributedSurface() })

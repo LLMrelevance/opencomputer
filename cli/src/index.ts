@@ -48,7 +48,7 @@ Usage:
   opencomputer logout [--local]
   opencomputer whoami
   opencomputer billing
-  opencomputer upgrade [pro|max]
+  opencomputer upgrade [pro]
   opencomputer agents
   opencomputer init <directory|.>
   opencomputer template validate [directory] [--repository-url <url>] [--app-url <url>]

@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@/api/client'
-import { HttpRequestCard } from './session-conversation'
+import { HttpRequestCard, MessageBubble } from './session-conversation'
 
 describe('HttpRequestCard', () => {
   it('renders the attributed payload as structured, escaped JSON', () => {
@@ -28,5 +29,19 @@ describe('HttpRequestCard', () => {
     expect(markup).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(markup).not.toContain('<script>')
     expect(markup).toContain('&quot;count&quot;: 2')
+  })
+})
+
+describe('MessageBubble', () => {
+  it('offers the Pro upgrade, not a top-up, when the agent is out of credits', () => {
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <MessageBubble label="Agent" text="Out of credits" outOfCredits />
+      </MemoryRouter>,
+    )
+
+    expect(markup).toContain('href="/billing?plan=max"')
+    expect(markup).toContain('Upgrade to Pro ($200/mo)')
+    expect(markup).not.toMatch(/top.?up/i)
   })
 })

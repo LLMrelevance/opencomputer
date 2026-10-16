@@ -9,7 +9,6 @@ import {
   autumnBillingPortal,
   autumnSubscribeConcurrency,
   autumnSubscribeUsagePlan,
-  autumnTopup,
   billingPortal,
   billingSetup,
   getAutumnBilling,
@@ -35,10 +34,19 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ResourceTable, type Column } from '@/components/resource-table'
 import { cn } from '@/lib/utils'
 import {
+  FREE_CREDITS_PAYWALL,
+  PLAN_NAMES,
+  PLAN_OFFERS,
+  UPGRADE_PLAN,
+  UPGRADE_PLAN_LABEL,
   billingOnrampV2Enabled,
+  deepLinkedPlanFor,
+  selectablePaidPlans,
   trackCheckoutStarted,
   trackPlanActivated,
   trackUpsellShown,
+  type PaidPlanId,
+  type UsagePlanId,
 } from '@/lib/billing-onramp'
 
 type Tab = 'usage' | 'invoices'
@@ -249,38 +257,52 @@ function PlanTab() {
 
 /* ── Prepaid (Autumn) ─────────────────────────────────────────────────────── */
 
-const TOPUP_AMOUNTS = billingOnrampV2Enabled ? [10, 25, 100] : [5, 25, 100]
-const DEFAULT_TOPUP = billingOnrampV2Enabled ? 10 : 25
-
 const CONCURRENCY_TIERS = [
   { id: 'concurrency_pro', label: 'Pro', limit: 100, price: 150 },
   { id: 'concurrency_pro_plus', label: 'Pro+', limit: 600, price: 500 },
   { id: 'concurrency_pro_plus_plus', label: 'Pro++', limit: 1000, price: 1000 },
 ]
 
-const USAGE_PLANS = [
+// Plans on the Billing page. `max` is the one plan on sale, shown as "Pro".
+// The retired $20 plan (id `pro`, "Pro (legacy)") is listed only to orgs
+// already subscribed to it; see selectablePaidPlans.
+const USAGE_PLANS: Array<{
+  id: UsagePlanId
+  label: string
+  price: number
+  credits: number | null
+  description: string
+}> = [
   {
     id: 'base',
-    label: 'Usage',
+    label: PLAN_NAMES.base,
     price: 0,
     credits: null,
-    description: 'No subscription. Add prepaid credits whenever you need them.',
+    description: 'Free credits to get started. Upgrade when they run out.',
   },
   {
     id: 'pro',
-    label: 'Pro',
-    price: 20,
-    credits: 200,
-    description: '$200 in shared credits added every month.',
+    label: PLAN_NAMES.pro,
+    price: PLAN_OFFERS.pro.priceUsd,
+    credits: PLAN_OFFERS.pro.creditsUsd,
+    description: `$${PLAN_OFFERS.pro.creditsUsd} in shared credits added every month. No longer offered to new customers.`,
   },
   {
     id: 'max',
-    label: 'Max',
-    price: 200,
-    credits: 2000,
-    description: '$2,000 in shared credits added every month.',
+    label: PLAN_NAMES.max,
+    price: PLAN_OFFERS.max.priceUsd,
+    credits: PLAN_OFFERS.max.creditsUsd,
+    description: `$${PLAN_OFFERS.max.creditsUsd.toLocaleString()} in shared credits added every month. Use your own Claude or ChatGPT subscription.`,
   },
-] as const
+]
+
+// The plans shown to an org: Free, Pro, and legacy Pro only for its subscribers.
+function visibleUsagePlans(current: UsagePlanId) {
+  const paid = selectablePaidPlans(current)
+  return USAGE_PLANS.filter(
+    (plan) => plan.id === 'base' || paid.includes(plan.id),
+  )
+}
 
 function formatCreditAmount(cents: number) {
   return `$${(cents / 100).toFixed(2)}`
@@ -300,32 +322,24 @@ function PrepaidPlan() {
   const redirectedPlan = searchParams.get('usage-plan')
   const pendingUsagePlan =
     redirectedPlan === 'pro' || redirectedPlan === 'max' ? redirectedPlan : null
-  // `?plan=pro|max` (upsell deep link) opens the upgrade confirmation directly.
-  const requestedPlan = searchParams.get('plan')
-  const deepLinkedPlan =
-    billingOnrampV2Enabled &&
-    (requestedPlan === 'pro' || requestedPlan === 'max')
-      ? requestedPlan
-      : null
   const activationToastShown = useRef(false)
   const { data: autumn, isLoading } = useQuery({
     queryKey: ['autumn-billing'],
     queryFn: getAutumnBilling,
     refetchInterval: pendingUsagePlan != null ? 1_500 : 30_000,
   })
-  const [amount, setAmount] = useState(DEFAULT_TOPUP)
-  const [confirmTopup, setConfirmTopup] = useState(false)
+  // `?plan=` (upsell deep link) opens the Pro ($200) upgrade confirmation
+  // directly. Old `?plan=pro` links open it too; legacy Pro is never offered.
+  const deepLinkedPlan =
+    billingOnrampV2Enabled && autumn
+      ? deepLinkedPlanFor(searchParams.get('plan'), autumn.usagePlan)
+      : null
   const [confirmPlanId, setConfirmPlanId] = useState<string | null>(null)
-  const [confirmUsagePlanId, setConfirmUsagePlanId] = useState<
-    'pro' | 'max' | null
-  >(null)
+  const [confirmUsagePlanId, setConfirmUsagePlanId] =
+    useState<PaidPlanId | null>(null)
   // While `?plan=` is in the URL it drives the dialog; closing it clears the
   // param so the same link can reopen it later.
-  const openUsagePlanId =
-    confirmUsagePlanId ??
-    (deepLinkedPlan && autumn && autumn.usagePlan !== deepLinkedPlan
-      ? deepLinkedPlan
-      : null)
+  const openUsagePlanId = confirmUsagePlanId ?? deepLinkedPlan
   const clearDeepLink = () => {
     if (!searchParams.has('plan')) return
     const next = new URLSearchParams(searchParams)
@@ -356,7 +370,7 @@ function PrepaidPlan() {
       return
 
     if (!activationToastShown.current) {
-      const label = pendingUsagePlan === 'pro' ? 'Pro' : 'Max'
+      const label = PLAN_NAMES[pendingUsagePlan]
       toast.success(`${label} plan activated`, {
         description: 'Your monthly credits are ready to use.',
       })
@@ -374,17 +388,6 @@ function PrepaidPlan() {
     if (data.url) window.location.href = data.url
     else void queryClient.invalidateQueries({ queryKey: ['autumn-billing'] })
   }
-  const topupMutation = useMutation({
-    mutationFn: () => autumnTopup(amount),
-    onSuccess: (d) => {
-      setConfirmTopup(false)
-      trackCheckoutStarted({ topupUsd: amount, usagePlan: autumn?.usagePlan })
-      if (!d.url)
-        trackPlanActivated({ topupUsd: amount, usagePlan: autumn?.usagePlan })
-      onPurchase(d)
-    },
-    onError: (e) => notifyError("Couldn't complete the top-up.", e),
-  })
   const concurrencyPlanMutation = useMutation({
     mutationFn: (plan: string) => autumnSubscribeConcurrency(plan),
     onSuccess: (d) => {
@@ -399,7 +402,7 @@ function PrepaidPlan() {
       closeUsagePlanDialog()
       trackCheckoutStarted({ plan, usagePlan: autumn?.usagePlan })
       if (!d.url) {
-        const label = plan === 'pro' ? 'Pro' : 'Max'
+        const label = PLAN_NAMES[plan]
         toast.success(`${label} plan updated`, {
           description: 'Your billing status and credits are refreshing.',
         })
@@ -447,7 +450,7 @@ function PrepaidPlan() {
             <CircleCheck className="text-status-running mt-0.5 size-5 shrink-0" />
             <div>
               <h2 className="text-sm font-semibold">
-                Activating {pendingUsagePlan === 'pro' ? 'Pro' : 'Max'}…
+                Activating {PLAN_NAMES[pendingUsagePlan]}…
               </h2>
               <p className="text-muted-foreground mt-1 text-sm">
                 Payment completed. We are waiting for the plan and monthly
@@ -487,7 +490,7 @@ function PrepaidPlan() {
                   <p className="font-medium">
                     {autumn?.usagePlan === 'base'
                       ? 'Signup credits'
-                      : `${autumn?.usagePlan === 'max' ? 'Max' : 'Pro'} plan credits`}
+                      : `${PLAN_NAMES[autumn?.usagePlan ?? 'max']} plan credits`}
                   </p>
                   <p className="text-muted-foreground mt-0.5 text-xs">
                     {creditBreakdown.planResetsAt
@@ -535,63 +538,28 @@ function PrepaidPlan() {
                 <CircleAlert className="size-4 shrink-0" />
                 {autumn?.usagePlan === 'pro' || autumn?.usagePlan === 'max'
                   ? 'Credits exhausted — agents are running on an open-weight model (GLM)'
-                  : 'Credits exhausted — your agent sessions are paused'}
+                  : FREE_CREDITS_PAYWALL}
               </p>
-              {billingOnrampV2Enabled && autumn?.usagePlan !== 'max' ? (
+              {autumn?.usagePlan !== UPGRADE_PLAN ? (
                 <Button
                   size="sm"
-                  onClick={() =>
-                    setConfirmUsagePlanId(
-                      autumn?.usagePlan === 'pro' ? 'max' : 'pro',
-                    )
-                  }
+                  onClick={() => setConfirmUsagePlanId(UPGRADE_PLAN)}
                 >
-                  {autumn?.usagePlan === 'pro'
-                    ? 'Upgrade to Max — $200/mo'
-                    : 'Upgrade to Pro — $20/mo for $200 credits'}
+                  Upgrade to {UPGRADE_PLAN_LABEL}
                 </Button>
               ) : null}
             </div>
           ) : null}
-
-          <div className="mt-5">
-            <p className="text-muted-foreground mb-2.5 text-sm">
-              Add credits (billed at the same per-second rates)
-            </p>
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              {TOPUP_AMOUNTS.map((a) => (
-                <Button
-                  key={a}
-                  variant={amount === a ? 'default' : 'outline'}
-                  size="sm"
-                  className="font-mono"
-                  onClick={() => setAmount(a)}
-                >
-                  ${a}
-                </Button>
-              ))}
-              <Input
-                type="number"
-                min={1}
-                value={amount}
-                onChange={(e) =>
-                  setAmount(
-                    Math.max(1, Math.floor(Number(e.target.value) || 0)),
-                  )
-                }
-                className="w-24 font-mono"
-              />
-            </div>
-            <Button disabled={amount < 1} onClick={() => setConfirmTopup(true)}>
-              Top up ${amount}
-            </Button>
-          </div>
         </Panel>
 
-        <AutoTopupCard
-          current={autumn?.autoTopup ?? null}
-          hasToppedUp={autumn?.hasToppedUp ?? false}
-        />
+        {/* Top-ups are no longer sold. An org that already turned on
+            automatic top-up keeps the card so it can change or turn it off. */}
+        {autumn?.autoTopup?.enabled ? (
+          <AutoTopupCard
+            current={autumn.autoTopup}
+            hasToppedUp={autumn.hasToppedUp}
+          />
+        ) : null}
 
         {hasCard ? (
           <Panel className="p-6">
@@ -650,15 +618,6 @@ function PrepaidPlan() {
       </div>
 
       <ConfirmDialog
-        open={confirmTopup}
-        onOpenChange={(o) => !o && setConfirmTopup(false)}
-        title="Confirm top-up"
-        description={`Add $${amount} in prepaid credits. If a payment method is on file you'll be charged $${amount} now; otherwise you'll continue to checkout to add one.`}
-        confirmLabel={`Top up $${amount}`}
-        pending={topupMutation.isPending}
-        onConfirm={() => topupMutation.mutate()}
-      />
-      <ConfirmDialog
         open={!!tier}
         onOpenChange={(o) => !o && setConfirmPlanId(null)}
         title="Confirm subscription"
@@ -702,8 +661,8 @@ function UsagePlanCard({
   onManage,
   managing,
 }: {
-  currentPlan: 'base' | 'pro' | 'max'
-  onSelectPlan: (plan: 'pro' | 'max') => void
+  currentPlan: UsagePlanId
+  onSelectPlan: (plan: PaidPlanId) => void
   onManage: () => void
   managing: boolean
 }) {
@@ -713,11 +672,16 @@ function UsagePlanCard({
         <h2 className="text-sm font-semibold">Plan</h2>
         <p className="text-muted-foreground mt-1 text-sm">
           Monthly credits are shared by serverless-agent sessions and sandboxes.
-          Top-ups stack with every plan.
         </p>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        {USAGE_PLANS.map((plan) => {
+      <div
+        className={cn(
+          'grid gap-3',
+          currentPlan === 'pro' ? 'md:grid-cols-3' : 'md:grid-cols-2',
+        )}
+      >
+        {visibleUsagePlans(currentPlan).map((plan) => {
+          const planId = plan.id
           const current = plan.id === currentPlan
           return (
             <div key={plan.id} className="rounded-md border p-4">
@@ -751,7 +715,7 @@ function UsagePlanCard({
                     Manage subscription
                   </Button>
                 )
-              ) : plan.id === 'base' ? (
+              ) : planId === 'base' ? (
                 <Button
                   className="mt-4 w-full"
                   variant="outline"
@@ -764,9 +728,9 @@ function UsagePlanCard({
                 <Button
                   className="mt-4 w-full"
                   variant="outline"
-                  onClick={() => onSelectPlan(plan.id)}
+                  onClick={() => onSelectPlan(planId)}
                 >
-                  {currentPlan === 'base' ? 'Upgrade' : 'Switch plan'}
+                  {plan.id === UPGRADE_PLAN ? 'Upgrade' : 'Switch plan'}
                 </Button>
               )}
             </div>

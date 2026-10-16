@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { useCreditState } from '@/hooks/useCreditState'
 import {
   BASE_GRANT_CENTS,
-  PLAN_OFFERS,
+  UPGRADE_PLAN,
+  UPGRADE_PLAN_LABEL,
   billingOnrampV2Enabled,
   formatUsd,
   trackFirstSessionCompleted,
@@ -75,7 +76,7 @@ export function PostSessionUpsell({
       })
     trackUpsellShown({
       surface: 'post_session_card',
-      plan: 'pro',
+      plan: UPGRADE_PLAN,
       usagePlan,
       creditsRemainingCents,
     })
@@ -83,7 +84,6 @@ export function PostSessionUpsell({
   }, [show, sessionId])
 
   if (!show || spentCents === null) return null
-  const pro = PLAN_OFFERS.pro
   return (
     <Panel
       className={`flex flex-wrap items-center justify-between gap-4 p-4 ${className ?? ''}`}
@@ -97,25 +97,24 @@ export function PostSessionUpsell({
             {formatUsd(creditsRemainingCents ?? 0)} left.
           </p>
           <p className="text-muted-foreground mt-0.5">
-            Pro is ${pro.priceUsd}/mo for ${pro.creditsUsd} in credits —{' '}
-            {Math.round(pro.creditsUsd / pro.priceUsd)}× the value every month,
-            and your agents never pause.
+            Upgrade to {UPGRADE_PLAN_LABEL} to keep going when they run out, or
+            to use your own Claude or ChatGPT subscription.
           </p>
         </div>
       </div>
       <Button asChild size="sm">
         <Link
-          to={upgradeHref('pro')}
+          to={upgradeHref()}
           onClick={() =>
             trackUpsellClicked({
               surface: 'post_session_card',
-              plan: 'pro',
+              plan: UPGRADE_PLAN,
               usagePlan,
               creditsRemainingCents,
             })
           }
         >
-          Upgrade to Pro — ${pro.priceUsd}/mo
+          Upgrade to {UPGRADE_PLAN_LABEL}
         </Link>
       </Button>
     </Panel>

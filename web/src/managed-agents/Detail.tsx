@@ -76,8 +76,9 @@ import { useLiveSessionEvents } from './use-live-session-events'
 import { PostSessionUpsell } from '@/components/post-session-upsell'
 import { useCreditState } from '@/hooks/useCreditState'
 import {
-  PLAN_OFFERS,
-  billingOnrampV2Enabled,
+  FREE_CREDITS_USED,
+  UPGRADE_PLAN,
+  UPGRADE_PLAN_LABEL,
   trackUpsellClicked,
   upgradeHref,
 } from '@/lib/billing-onramp'
@@ -517,32 +518,22 @@ function PlaygroundChat({
           ) : null}
           {halted ? (
             <p className="text-destructive mb-2 text-xs">
-              Out of credits — this agent can&apos;t run until you{' '}
+              {FREE_CREDITS_USED}{' '}
               <Link
-                to={upgradeHref(credits.upgradePlan)}
+                to={upgradeHref()}
                 className="font-medium underline"
                 onClick={() =>
                   trackUpsellClicked({
                     surface: 'session_composer',
-                    plan: credits.upgradePlan,
+                    plan: UPGRADE_PLAN,
                     usagePlan: credits.usagePlan,
                     creditsRemainingCents: credits.creditsRemainingCents,
                   })
                 }
               >
-                upgrade to {credits.upgradePlan === 'max' ? 'Max' : 'Pro'} — $
-                {PLAN_OFFERS[credits.upgradePlan].priceUsd}/mo
-              </Link>
-              {billingOnrampV2Enabled ? (
-                <>
-                  {' '}
-                  or{' '}
-                  <Link to="/billing" className="underline">
-                    top up
-                  </Link>
-                </>
-              ) : null}
-              .
+                Upgrade to {UPGRADE_PLAN_LABEL}
+              </Link>{' '}
+              to keep going, or to use your own Claude or ChatGPT subscription.
             </p>
           ) : error ? (
             <p className="text-destructive mb-2 text-xs">{error.message}</p>

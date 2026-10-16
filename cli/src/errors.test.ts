@@ -40,19 +40,28 @@ test("out-of-credits responses tell the agent to stop and surface the upgrade li
       "Out of prepaid credits.",
       402,
       "insufficient_credits",
-      "https://app.opencomputer.dev/billing?plan=pro",
+      "https://app.opencomputer.dev/billing?plan=max",
     ),
   );
   assert.equal(halted.code, "insufficient_credits");
   assert.match(halted.hint, /do not retry/);
-  assert.match(halted.hint, /https:\/\/app\.opencomputer\.dev\/billing\?plan=pro/);
+  assert.match(halted.hint, /https:\/\/app\.opencomputer\.dev\/billing\?plan=max/);
   assert.deepEqual(halted.details, {
     status: 402,
     apiCode: "insufficient_credits",
-    upgradeUrl: "https://app.opencomputer.dev/billing?plan=pro",
+    upgradeUrl: "https://app.opencomputer.dev/billing?plan=max",
   });
 
   const bare = structuredError(new APIError("Payment required.", 402));
   assert.equal(bare.code, "insufficient_credits");
-  assert.match(bare.hint, /opencomputer upgrade pro/);
+  assert.match(bare.hint, /opencomputer upgrade/);
+  assert.match(bare.hint, /Pro \(\$200\/mo\)/);
+  assert.doesNotMatch(bare.hint + halted.hint, /\$20\/mo|top.?up/i);
+
+  // A $200 Pro org is pointed at billing (credits renew), not at an upgrade.
+  const pro = structuredError(
+    new APIError("Out of credits.", 402, "insufficient_credits", "https://app.opencomputer.dev/billing"),
+  );
+  assert.match(pro.hint, /renew/);
+  assert.doesNotMatch(pro.hint, /upgrade/i);
 });

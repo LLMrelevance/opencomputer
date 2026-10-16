@@ -31,13 +31,17 @@ export function structuredError(error: unknown): StructuredCLIError {
   if (error instanceof APIError) {
     if (error.code === "insufficient_credits" || error.status === 402) {
       const url = error.actionUrl;
+      // A $200 Pro org that has used its monthly credits gets the plain billing
+      // page (no `?plan=`): there is nothing to upgrade to, so don't say so.
+      const renewOnly = url !== undefined && !url.includes("?plan=");
       return {
         code: "insufficient_credits",
         message,
-        hint:
-          "Out of prepaid credits \u2014 do not retry. Tell the user to upgrade to Pro ($20/mo, $200 credits)" +
-          (url ? ` at ${url}` : " with `opencomputer upgrade pro`") +
-          ", then run the command again.",
+        hint: renewOnly
+          ? `Out of this month's credits \u2014 do not retry. They renew next billing period; the user can review billing at ${url}.`
+          : "Out of credits \u2014 do not retry. Tell the user to upgrade to Pro ($200/mo)" +
+          (url ? ` at ${url}` : " with `opencomputer upgrade`") +
+          " to keep going, or to use their own Claude or ChatGPT subscription, then run the command again.",
         details: {
           status: error.status,
           apiCode: error.code ?? "insufficient_credits",

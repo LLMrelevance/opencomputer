@@ -31,31 +31,71 @@ export interface BillingLinks {
   upgradeUrl: string;
 }
 
-export function billingLinks(request: Request, plan: "pro" | "max" = "pro"): BillingLinks {
+// The one plan new customers can buy. Its Autumn id stays `max` (no Stripe
+// migration); it is displayed as "Pro". The old $20/mo plan (Autumn id `pro`)
+// is retired for new customers and shown as "Pro (legacy)" to its existing
+// subscribers only, so nothing here ever links to it. Top-ups are no longer
+// sold either.
+export const UPGRADE_PLAN = "max" as const;
+export const UPGRADE_PLAN_PRICE_USD = 200;
+export const PLAN_DISPLAY_NAMES: Record<UsagePlan, string> = {
+  base: "Free",
+  pro: "Pro (legacy)",
+  max: "Pro",
+};
+
+// The free-tier paywall copy, shared by every surface. It does not state the
+// grant amount: that is still $5 today and changes in a later step.
+export const FREE_CREDITS_PAYWALL =
+  `You've used your free credits. Upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) to keep going, ` +
+  "or to use your own Claude or ChatGPT subscription.";
+
+export function billingLinks(request: Request): BillingLinks {
   const origin = new URL(request.url).origin;
   return {
     billingUrl: `${origin}/billing`,
-    upgradeUrl: `${origin}/billing?plan=${plan}`,
+    upgradeUrl: `${origin}/billing?plan=${UPGRADE_PLAN}`,
   };
+}
+
+// Agent-facing out-of-credits message. Free (and unknown/legacy) orgs get the
+// paywall; a legacy $20 Pro org is pointed at the same Pro upgrade; a $200 Pro
+// org keeps its current halt (a later step moves it to GLM) but is never
+// offered a top-up.
+export function insufficientCreditsMessage(links: BillingLinks, plan?: UsagePlan | null): string {
+  if (plan === "max") {
+    return (
+      "You've used this month's Pro credits. They renew at the start of the next billing period; " +
+      `the user can review billing at ${links.billingUrl}. Do not retry until credits renew.`
+    );
+  }
+  if (plan === "pro") {
+    return (
+      `You've used this month's credits. Ask the user to upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) at ${links.upgradeUrl} ` +
+      "to keep going, or to use their own Claude or ChatGPT subscription; do not retry until they have."
+    );
+  }
+  return (
+    `You've used your free credits. Ask the user to upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) at ${links.upgradeUrl} ` +
+    "to keep going, or to use their own Claude or ChatGPT subscription; do not retry until they have."
+  );
 }
 
 // The 402 body every credit gate returns. `error` is an object (code/message)
 // for the managed-agents API; sandbox routes historically used a string
 // `error`, so callers there spread `legacyStringError()` instead.
-export function insufficientCreditsError(request: Request) {
+export function insufficientCreditsError(request: Request, plan?: UsagePlan | null) {
   const links = billingLinks(request);
   return {
     code: "insufficient_credits" as const,
-    message:
-      `Out of prepaid credits. Ask the user to upgrade to Pro ($20/mo, $200 credits) at ${links.upgradeUrl} ` +
-      `or top up at ${links.billingUrl}; do not retry until they have.`,
-    actionUrl: links.billingUrl,
+    message: insufficientCreditsMessage(links, plan),
+    actionUrl: plan === "max" ? links.billingUrl : links.upgradeUrl,
     ...links,
   };
 }
 
-export function insufficientCreditsResponse(request: Request): Response {
-  return Response.json({ error: insufficientCreditsError(request) }, { status: 402 });
+export function insufficientCreditsResponse(request: Request, plan?: UsagePlan | null): Response {
+  return Response.json({ error: insufficientCreditsError(request, plan) }, { status: 402 });
 }
 
 // Sandbox-route flavour: keeps `error` a string (the `oc` Go CLI prints it
@@ -63,8 +103,9 @@ export function insufficientCreditsResponse(request: Request): Response {
 export function insufficientCreditsLegacyResponse(
   request: Request,
   extra: Record<string, unknown> = {},
+  plan?: UsagePlan | null,
 ): Response {
-  const e = insufficientCreditsError(request);
+  const e = insufficientCreditsError(request, plan);
   return Response.json(
     {
       error: e.message,
@@ -86,16 +127,23 @@ export interface CreditsStatus {
   isHalted: boolean;
   billingUrl: string;
   upgradeUrl: string;
-  plans: Array<{ id: "pro" | "max"; priceUsd: number; creditsUsd: number }>;
+  // Plans shown to this org. `name` is the display name (`max` is "Pro").
+  // The retired $20 plan is listed only for orgs already on it.
+  plans: Array<{ id: "pro" | "max"; name: string; priceUsd: number; creditsUsd: number }>;
 }
 
-export const USAGE_PLAN_OFFERS: CreditsStatus["plans"] = [
-  { id: "pro", priceUsd: 20, creditsUsd: 200 },
-  { id: "max", priceUsd: 200, creditsUsd: 2_000 },
-];
+const PRO_OFFER = { id: "max", name: PLAN_DISPLAY_NAMES.max, priceUsd: UPGRADE_PLAN_PRICE_USD, creditsUsd: 2_000 } as const;
+const LEGACY_PRO_OFFER = { id: "pro", name: PLAN_DISPLAY_NAMES.pro, priceUsd: 20, creditsUsd: 200 } as const;
+
+// Kept for callers that list offers without an org: only the plan on sale.
+export const USAGE_PLAN_OFFERS: CreditsStatus["plans"] = [PRO_OFFER];
+
+export function usagePlanOffers(current: UsagePlan): CreditsStatus["plans"] {
+  return current === "pro" ? [LEGACY_PRO_OFFER, PRO_OFFER] : [PRO_OFFER];
+}
 
 // GET /api/billing/credits — API-key authenticated credit status for the CLI.
-// Re-syncs Autumn → D1 like the dashboard endpoint so a fresh top-up clears a
+// Re-syncs Autumn → D1 like the dashboard endpoint so a fresh upgrade clears a
 // halt on the next CLI call too. Legacy (Stripe) orgs have no Autumn customer
 // and get a 404 — clients treat that as "no credit meter".
 export async function handleCreditsStatus(
@@ -117,7 +165,7 @@ export async function handleCreditsStatus(
   const usagePlan = activeUsagePlan(r.customer);
   const creditsRemainingCents = Math.max(0, Math.round(r.creditsRemaining * 100));
   const threshold = lowCreditThresholdCents(usagePlan);
-  const links = billingLinks(req, usagePlan === "pro" ? "max" : "pro");
+  const links = billingLinks(req);
   const status: CreditsStatus = {
     usagePlan,
     creditsRemainingCents,
@@ -125,7 +173,7 @@ export async function handleCreditsStatus(
     isLow: !r.halted && creditsRemainingCents <= threshold,
     isHalted: r.halted,
     ...links,
-    plans: USAGE_PLAN_OFFERS,
+    plans: usagePlanOffers(usagePlan),
   };
   return Response.json(status);
 }

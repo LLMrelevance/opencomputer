@@ -4,10 +4,20 @@ export function formatUsd(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+// The plan on sale is Pro ($200/mo); its billing id stays `max`. The old $20
+// plan (id `pro`) is shown as "Pro (legacy)" only to orgs already on it.
+export const UPGRADE_PLAN = "max" as const;
+export const UPGRADE_PLAN_LABEL = "Pro ($200/mo)";
+
 const PLAN_LABEL: Record<CreditsStatus["usagePlan"], string> = {
-  base: "Usage (prepaid)",
-  pro: "Pro ($20/mo)",
-  max: "Max ($200/mo)",
+  base: "Free",
+  pro: "Pro (legacy, $20/mo)",
+  max: UPGRADE_PLAN_LABEL,
+};
+
+const PLAN_NAME: Record<"pro" | "max", string> = {
+  pro: "Pro (legacy)",
+  max: "Pro",
 };
 
 /** Human-readable summary for `opencomputer billing`. */
@@ -21,12 +31,13 @@ export function formatBilling(status: CreditsStatus): string {
     "Plans:",
     ...status.plans.map(
       (p) =>
-        `  ${p.id.padEnd(5)} $${p.priceUsd}/mo — $${p.creditsUsd.toLocaleString("en-US")} in credits every month` +
+        `  ${(p.name ?? PLAN_NAME[p.id]).padEnd(12)} $${p.priceUsd}/mo — $${p.creditsUsd.toLocaleString("en-US")} in credits every month` +
         (p.id === status.usagePlan ? "  (current)" : ""),
     ),
     "",
-    `Upgrade:      ${status.upgradeUrl}`,
-    `Top up:       ${status.billingUrl}`,
+    ...(status.usagePlan === UPGRADE_PLAN
+      ? [`Billing:      ${status.billingUrl}`]
+      : [`Upgrade:      ${status.upgradeUrl}`]),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -38,16 +49,22 @@ export function formatBilling(status: CreditsStatus): string {
 export function creditsFooter(status: CreditsStatus | null): string {
   if (!status) return "";
   const left = formatUsd(status.creditsRemainingCents);
+  const onPro = status.usagePlan === UPGRADE_PLAN;
   if (status.isHalted) {
-    return `\nCredits exhausted — upgrade to keep running: ${status.upgradeUrl}\n`;
-  }
-  if (status.isLow) {
+    if (onPro) {
+      return `\nThis month's Pro credits are used up; they renew next billing period: ${status.billingUrl}\n`;
+    }
     return (
-      `\n${left} credits left (running low). Pro is $20/mo for $200 in credits: ${status.upgradeUrl}\n`
+      `\n${status.usagePlan === "base" ? "You've used your free credits." : "You've used this month's credits."} ` +
+      `Upgrade to ${UPGRADE_PLAN_LABEL} to keep going, or to use your own Claude or ChatGPT subscription: ${status.upgradeUrl}\n`
     );
   }
+  if (status.isLow) {
+    if (onPro) return `\n${left} credits left this month (running low).\n`;
+    return `\n${left} credits left (running low). Upgrade to ${UPGRADE_PLAN_LABEL}: ${status.upgradeUrl}\n`;
+  }
   if (status.usagePlan === "base") {
-    return `\n${left} free credits left · upgrade to Pro ($20/mo, $200 credits): ${status.upgradeUrl}\n`;
+    return `\n${left} free credits left · upgrade to ${UPGRADE_PLAN_LABEL}: ${status.upgradeUrl}\n`;
   }
   return "";
 }
@@ -91,7 +108,7 @@ export async function fetchCredits(
 export function upgradeUrlFor(
   status: CreditsStatus | null,
   apiUrl: string,
-  plan: "pro" | "max",
+  plan: typeof UPGRADE_PLAN = UPGRADE_PLAN,
 ): string {
   const base = status?.billingUrl ?? `${apiUrl.replace(/\/$/, "")}/billing`;
   return `${base}?plan=${plan}`;

@@ -55,7 +55,9 @@ import { managedAgentsExperimentEnabled } from '@/managed-agents/feature'
 import { useCreditState } from '@/hooks/useCreditState'
 import {
   BASE_GRANT_CENTS,
-  PLAN_OFFERS,
+  FREE_CREDITS_USED,
+  UPGRADE_PLAN,
+  UPGRADE_PLAN_LABEL,
   billingOnrampV2Enabled,
   formatUsd,
   trackUpsellClicked,
@@ -475,7 +477,7 @@ function SidebarCreditMeter({ onNavigate }: { onNavigate?: () => void }) {
     if (visible)
       trackUpsellShown({
         surface: 'sidebar_meter',
-        plan: 'pro',
+        plan: UPGRADE_PLAN,
         usagePlan,
         creditsRemainingCents,
       })
@@ -508,11 +510,11 @@ function SidebarCreditMeter({ onNavigate }: { onNavigate?: () => void }) {
         />
       </div>
       <Link
-        to={upgradeHref('pro')}
+        to={upgradeHref()}
         onClick={() => {
           trackUpsellClicked({
             surface: 'sidebar_meter',
-            plan: 'pro',
+            plan: UPGRADE_PLAN,
             usagePlan,
             creditsRemainingCents,
           })
@@ -520,8 +522,7 @@ function SidebarCreditMeter({ onNavigate }: { onNavigate?: () => void }) {
         }}
         className="text-foreground mt-2 block text-xs font-medium underline-offset-2 hover:underline"
       >
-        Upgrade to Pro · ${PLAN_OFFERS.pro.priceUsd}/mo → get $
-        {PLAN_OFFERS.pro.creditsUsd} in monthly credits
+        Upgrade to {UPGRADE_PLAN_LABEL} →
       </Link>
     </div>
   )
@@ -529,9 +530,10 @@ function SidebarCreditMeter({ onNavigate }: { onNavigate?: () => void }) {
 
 // Org-wide credit notice. Prepaid (autumn) orgs that exhaust credits get halted
 // (sandboxes hibernate); show a banner everywhere except Billing so users know
-// why things paused and where to resolve it. Below the low-credit threshold the
+// why things paused and where to resolve it. A free org sees the paywall: one
+// message, one link to the Pro checkout. Below the low-credit threshold the
 // banner is an amber nudge instead. Legacy orgs 404 on /billing/autumn → no
-// data → no banner.
+// data → no banner. Top-ups are no longer sold, so nothing here offers one.
 function HaltBanner() {
   const location = useLocation()
   const {
@@ -545,7 +547,7 @@ function HaltBanner() {
   const onBilling = location.pathname.startsWith('/billing')
   const state = isHalted ? 'halted' : isLow ? 'low' : null
   useEffect(() => {
-    if (state && !onBilling)
+    if (state && !onBilling && upgradePlan)
       trackUpsellShown({
         surface: state === 'halted' ? 'halt_banner' : 'low_credit_banner',
         plan: upgradePlan,
@@ -555,30 +557,39 @@ function HaltBanner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, onBilling])
   if (!state || onBilling) return null
-  const offer = PLAN_OFFERS[upgradePlan]
-  const planName = upgradePlan === 'pro' ? 'Pro' : 'Max'
-  const click = () =>
+  const click = () => {
+    if (!upgradePlan) return
     trackUpsellClicked({
       surface: state === 'halted' ? 'halt_banner' : 'low_credit_banner',
       plan: upgradePlan,
       usagePlan,
       creditsRemainingCents,
     })
+  }
+  const upgradeLink = (label: string) => (
+    <Link
+      to={upgradeHref()}
+      onClick={click}
+      className="font-semibold underline underline-offset-2"
+    >
+      {label}
+    </Link>
+  )
   if (state === 'low') {
     return (
       <div className="flex items-center justify-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-center text-sm font-medium text-amber-700 sm:px-8 dark:text-amber-400">
         <CircleAlert className="size-4 shrink-0" />
         <span>
-          {formatUsd(creditsRemainingCents ?? 0)} of credits left — sessions
-          pause at $0.{' '}
-          <Link
-            to={upgradeHref(upgradePlan)}
-            onClick={click}
-            className="font-semibold underline underline-offset-2"
-          >
-            Upgrade to {planName}
-          </Link>{' '}
-          for ${offer.creditsUsd}/mo of credits at ${offer.priceUsd}/mo.
+          {formatUsd(creditsRemainingCents ?? 0)}{' '}
+          {usagePlan === 'base'
+            ? 'of free credits left — sessions pause at $0.'
+            : "of this month's credits left."}
+          {upgradePlan ? (
+            <>
+              {' '}
+              {upgradeLink(`Upgrade to ${UPGRADE_PLAN_LABEL}`)} to keep going.
+            </>
+          ) : null}
         </span>
       </div>
     )
@@ -589,15 +600,15 @@ function HaltBanner() {
         <CircleAlert className="size-4 shrink-0" />
         <span>
           You&apos;ve used this month&apos;s credits — agents keep running on an
-          open-weight model (GLM).{' '}
-          <Link
-            to="/billing"
-            onClick={click}
-            className="font-semibold underline underline-offset-2"
-          >
-            Top up
-          </Link>{' '}
-          to switch back to your selected models.
+          open-weight model (GLM)
+          {upgradePlan ? (
+            <>
+              . {upgradeLink(`Upgrade to ${UPGRADE_PLAN_LABEL}`)} to switch back
+              to your selected models.
+            </>
+          ) : (
+            ' until your plan renews.'
+          )}
         </span>
       </div>
     )
@@ -606,34 +617,8 @@ function HaltBanner() {
     <div className="border-destructive/40 bg-status-error-bg text-destructive flex items-center justify-center gap-2 border-b px-4 py-2.5 text-center text-sm font-medium sm:px-8">
       <CircleAlert className="size-4 shrink-0" />
       <span>
-        Your agent sessions are paused — you&apos;re out of prepaid credits.{' '}
-        {billingOnrampV2Enabled ? (
-          <>
-            <Link
-              to={upgradeHref(upgradePlan)}
-              onClick={click}
-              className="font-semibold underline underline-offset-2"
-            >
-              Upgrade to {planName} (${offer.priceUsd}/mo, ${offer.creditsUsd}{' '}
-              credits)
-            </Link>{' '}
-            or{' '}
-            <Link to="/billing" className="underline underline-offset-2">
-              top up
-            </Link>{' '}
-            to resume.
-          </>
-        ) : (
-          <>
-            <Link
-              to="/billing"
-              className="font-semibold underline underline-offset-2"
-            >
-              Top up &amp; turn on auto-recharge
-            </Link>{' '}
-            to resume.
-          </>
-        )}
+        {FREE_CREDITS_USED} {upgradeLink(`Upgrade to ${UPGRADE_PLAN_LABEL}`)} to
+        keep going, or to use your own Claude or ChatGPT subscription.
       </span>
     </div>
   )

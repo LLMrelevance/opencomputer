@@ -471,7 +471,7 @@ export interface CreditsStatus {
   isHalted: boolean;
   billingUrl: string;
   upgradeUrl: string;
-  plans: Array<{ id: "pro" | "max"; priceUsd: number; creditsUsd: number }>;
+  plans: Array<{ id: "pro" | "max"; name?: string; priceUsd: number; creditsUsd: number }>;
 }
 
 function errorMessage(body: unknown, status: number): string {
