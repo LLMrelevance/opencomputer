@@ -73,6 +73,7 @@ import {
   materializeTemplateCheckout,
 } from "./template-local.js";
 import { materializeProjectArchive } from "./project-local.js";
+import { pushToProjectRepository } from "./push.js";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1000,6 +1001,30 @@ export async function runCommand(
           `  npm run deploy -- --watch --api-url ${config.apiUrl}\n`,
       );
     }
+    return;
+  }
+
+  if (command === "push") {
+    const projectReference = option(args, "--project");
+    const ref = args.shift();
+    if (args.length) {
+      throw new Error("Usage: opencomputer push [<ref>] [--project <id|slug>]");
+    }
+    const root = await findOpenComputerProjectRoot(process.cwd());
+    const projectId = projectReference
+      ? (
+          (await client.projects()).find(
+            (candidate) =>
+              candidate.id === projectReference ||
+              candidate.slug === projectReference,
+          ) ?? { id: undefined }
+        ).id
+      : (await ensureProjectBinding(client, config, root)).projectId;
+    if (!projectId) throw new Error(`Project ${projectReference} was not found.`);
+    const credential = await client.projectRepositoryCredential(projectId);
+    pushToProjectRepository({ credential, directory: root, ...(ref ? { ref } : {}) });
+    if (globals.json) printJSON({ projectId, remoteUrl: credential.remoteUrl });
+    else process.stdout.write(`Pushed to ${credential.remoteUrl}\n`);
     return;
   }
 
