@@ -86,6 +86,12 @@ export default function App() {
               }
             />
             <Route path="computer" element={<ManagedComputer />} />
+            {managedAgentsExperimentEnabled ? (
+              <Route
+                path="automations"
+                element={<ManagedAgentsHome list />}
+              />
+            ) : null}
             <Route
               path="model-access/callback"
               element={<ModelAccessCallback />}
