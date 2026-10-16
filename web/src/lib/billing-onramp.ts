@@ -35,7 +35,7 @@ export const UPGRADE_PLAN_LABEL = `${PLAN_NAMES[UPGRADE_PLAN]} ($${UPGRADE_OFFER
 // The free-tier paywall, the same on every surface. It does not state the
 // grant amount: that is still $5 today and changes in a later step.
 export const FREE_CREDITS_USED = "You've used your free credits."
-export const FREE_CREDITS_PAYWALL = `${FREE_CREDITS_USED} Upgrade to ${UPGRADE_PLAN_LABEL} to keep going, or to use your own Claude or ChatGPT subscription.`
+export const FREE_CREDITS_PAYWALL = `${FREE_CREDITS_USED} Upgrade to ${UPGRADE_PLAN_LABEL} to keep going.`
 
 // Monthly grant per plan; the base grant is the signup allowance.
 export const BASE_GRANT_CENTS = 500

@@ -194,7 +194,7 @@ export function ManagedProjectBYOK({
         <EmptyState
           icon={LockKeyhole}
           title="BYOK is available on Pro"
-          description={`Bring your own provider keys and route this project's models through them. Available on ${UPGRADE_PLAN_LABEL}, which also lets you use your own Claude or ChatGPT subscription.`}
+          description={`Bring your own provider keys and route this project's models through them. Available on ${UPGRADE_PLAN_LABEL}.`}
           action={
             <Button asChild>
               <Link

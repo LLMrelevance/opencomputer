@@ -45,7 +45,7 @@ describe('billing on-ramp plans', () => {
 
   it('uses one paywall message without the grant amount or a top-up', () => {
     expect(FREE_CREDITS_PAYWALL).toBe(
-      "You've used your free credits. Upgrade to Pro ($200/mo) to keep going, or to use your own Claude or ChatGPT subscription.",
+      "You've used your free credits. Upgrade to Pro ($200/mo) to keep going.",
     )
     expect(FREE_CREDITS_PAYWALL).not.toMatch(/top.?up|\$5\b|\$10\b/i)
   })

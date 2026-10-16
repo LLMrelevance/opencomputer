@@ -638,8 +638,7 @@ for await (const event of session.events()) {
                 >
                   Upgrade to {UPGRADE_PLAN_LABEL}
                 </Link>{' '}
-                to keep going, or to use your own Claude or ChatGPT
-                subscription.
+                to keep going.
               </span>
             </div>
           )}

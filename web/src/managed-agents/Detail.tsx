@@ -533,7 +533,7 @@ function PlaygroundChat({
               >
                 Upgrade to {UPGRADE_PLAN_LABEL}
               </Link>{' '}
-              to keep going, or to use your own Claude or ChatGPT subscription.
+              to keep going.
             </p>
           ) : error ? (
             <p className="text-destructive mb-2 text-xs">{error.message}</p>

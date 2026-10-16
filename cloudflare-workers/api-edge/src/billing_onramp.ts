@@ -47,8 +47,7 @@ export const PLAN_DISPLAY_NAMES: Record<UsagePlan, string> = {
 // The free-tier paywall copy, shared by every surface. It does not state the
 // grant amount: that is still $5 today and changes in a later step.
 export const FREE_CREDITS_PAYWALL =
-  `You've used your free credits. Upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) to keep going, ` +
-  "or to use your own Claude or ChatGPT subscription.";
+  `You've used your free credits. Upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) to keep going.`;
 
 export function billingLinks(request: Request): BillingLinks {
   const origin = new URL(request.url).origin;
@@ -72,12 +71,12 @@ export function insufficientCreditsMessage(links: BillingLinks, plan?: UsagePlan
   if (plan === "pro") {
     return (
       `You've used this month's credits. Ask the user to upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) at ${links.upgradeUrl} ` +
-      "to keep going, or to use their own Claude or ChatGPT subscription; do not retry until they have."
+      "to keep going; do not retry until they have."
     );
   }
   return (
     `You've used your free credits. Ask the user to upgrade to Pro ($${UPGRADE_PLAN_PRICE_USD}/mo) at ${links.upgradeUrl} ` +
-    "to keep going, or to use their own Claude or ChatGPT subscription; do not retry until they have."
+    "to keep going; do not retry until they have."
   );
 }
 

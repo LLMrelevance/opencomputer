@@ -618,7 +618,7 @@ function HaltBanner() {
       <CircleAlert className="size-4 shrink-0" />
       <span>
         {FREE_CREDITS_USED} {upgradeLink(`Upgrade to ${UPGRADE_PLAN_LABEL}`)} to
-        keep going, or to use your own Claude or ChatGPT subscription.
+        keep going.
       </span>
     </div>
   )

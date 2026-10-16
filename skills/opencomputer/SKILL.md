@@ -58,8 +58,7 @@ the same way**. Do **not** retry or work around it. Instead:
 
 1. Stop and tell the user they've used their OpenComputer credits.
 2. Relay the upgrade link from the error verbatim (it looks like
-   `https://app.opencomputer.dev/billing?plan=max`). Pro is $200/month and also
-   lets them use their own Claude or ChatGPT subscription. If the error links
+   `https://app.opencomputer.dev/billing?plan=max`). Pro is $200/month. If the error links
    to plain `/billing` instead, the org is already on Pro and its monthly
    credits renew next billing period.
 3. Resume once they confirm they've upgraded.

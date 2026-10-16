@@ -292,7 +292,7 @@ const USAGE_PLANS: Array<{
     label: PLAN_NAMES.max,
     price: PLAN_OFFERS.max.priceUsd,
     credits: PLAN_OFFERS.max.creditsUsd,
-    description: `$${PLAN_OFFERS.max.creditsUsd.toLocaleString()} in shared credits added every month. Use your own Claude or ChatGPT subscription.`,
+    description: `$${PLAN_OFFERS.max.creditsUsd.toLocaleString()} in shared credits added every month.`,
   },
 ]
 

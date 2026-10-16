@@ -157,6 +157,5 @@ opencomputer upgrade       # prints the checkout link for Pro ($200/mo)
 
 When credits are exhausted every command fails with HTTP `402` and a structured
 `insufficient_credits` error whose `hint` and `details.upgradeUrl` point at
-checkout for Pro ($200/mo). Pro also lets the user connect their own Claude or
-ChatGPT subscription. Agents driving the CLI should stop, relay that link to
+checkout for Pro ($200/mo). Agents driving the CLI should stop, relay that link to
 the user, and resume once billing is sorted rather than retrying.

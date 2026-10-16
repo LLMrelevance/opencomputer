@@ -56,7 +56,7 @@ export function creditsFooter(status: CreditsStatus | null): string {
     }
     return (
       `\n${status.usagePlan === "base" ? "You've used your free credits." : "You've used this month's credits."} ` +
-      `Upgrade to ${UPGRADE_PLAN_LABEL} to keep going, or to use your own Claude or ChatGPT subscription: ${status.upgradeUrl}\n`
+      `Upgrade to ${UPGRADE_PLAN_LABEL} to keep going: ${status.upgradeUrl}\n`
     );
   }
   if (status.isLow) {

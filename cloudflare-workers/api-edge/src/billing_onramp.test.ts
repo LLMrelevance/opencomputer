@@ -86,7 +86,7 @@ describe("billing_onramp", () => {
 
   it("paywall copy names Pro and BYO subscriptions but not the grant amount", () => {
     expect(FREE_CREDITS_PAYWALL).toBe(
-      "You've used your free credits. Upgrade to Pro ($200/mo) to keep going, or to use your own Claude or ChatGPT subscription.",
+      "You've used your free credits. Upgrade to Pro ($200/mo) to keep going.",
     );
   });
 

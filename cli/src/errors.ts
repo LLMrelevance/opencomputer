@@ -41,7 +41,7 @@ export function structuredError(error: unknown): StructuredCLIError {
           ? `Out of this month's credits \u2014 do not retry. They renew next billing period; the user can review billing at ${url}.`
           : "Out of credits \u2014 do not retry. Tell the user to upgrade to Pro ($200/mo)" +
           (url ? ` at ${url}` : " with `opencomputer upgrade`") +
-          " to keep going, or to use their own Claude or ChatGPT subscription, then run the command again.",
+          " to keep going, then run the command again.",
         details: {
           status: error.status,
           apiCode: error.code ?? "insufficient_credits",

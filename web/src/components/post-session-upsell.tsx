@@ -97,8 +97,7 @@ export function PostSessionUpsell({
             {formatUsd(creditsRemainingCents ?? 0)} left.
           </p>
           <p className="text-muted-foreground mt-0.5">
-            Upgrade to {UPGRADE_PLAN_LABEL} to keep going when they run out, or
-            to use your own Claude or ChatGPT subscription.
+            Upgrade to {UPGRADE_PLAN_LABEL} to keep going when they run out.
           </p>
         </div>
       </div>
