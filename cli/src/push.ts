@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
-/** A one-hour push credential for a project's automation repository (work 067). */
-export interface ProjectRepositoryCredential {
+/** A one-hour push credential for the organization's automations repository (work 067). */
+export interface AutomationsRepositoryCredential {
   remoteUrl: string;
   username: string;
   password: string;
@@ -14,7 +14,7 @@ export interface ProjectRepositoryCredential {
  * config file.
  */
 export function gitPushEnvironment(
-  credential: ProjectRepositoryCredential,
+  credential: AutomationsRepositoryCredential,
 ): Record<string, string> {
   const authorization = Buffer.from(
     `${credential.username}:${credential.password}`,
@@ -29,11 +29,11 @@ export function gitPushEnvironment(
 
 /**
  * Pushes `ref` (HEAD by default) of the git repository at `directory` to the
- * automation repository's `main`. Git refuses a push that would drop commits
+ * automations repository's `main`. Git refuses a push that would drop commits
  * already there, so a person and the computer cannot overwrite each other.
  */
-export function pushToProjectRepository(input: {
-  credential: ProjectRepositoryCredential;
+export function pushToAutomationsRepository(input: {
+  credential: AutomationsRepositoryCredential;
   directory: string;
   ref?: string;
 }): void {

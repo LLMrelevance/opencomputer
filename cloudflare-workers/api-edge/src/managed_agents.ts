@@ -2337,9 +2337,9 @@ function publicSuccessBody(
     }
     return { url: url.toString(), expiresAt: body.expiresAt };
   }
-  if (method === "POST" && PROJECT_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
-    // A one-hour push credential for the project's automation repository
-    // (work 067): the remote carries no credential of its own.
+  if (method === "POST" && AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
+    // A one-hour push credential for the organization's automations
+    // repository (work 067): the remote carries no credential of its own.
     const remote =
       typeof body.remoteUrl === "string" ? new URL(body.remoteUrl) : null;
     if (
@@ -2351,7 +2351,7 @@ function publicSuccessBody(
       typeof body.password !== "string" ||
       typeof body.expiresAt !== "string"
     ) {
-      throw new Error("Invalid project repository credential");
+      throw new Error("Invalid automations repository credential");
     }
     return {
       remoteUrl: remote.toString(),
@@ -2363,8 +2363,8 @@ function publicSuccessBody(
   throw new Error("Unsupported managed agents response");
 }
 
-const PROJECT_REPOSITORY_CREDENTIAL_ROUTE =
-  /^\/projects\/[^/]+\/repository\/credentials$/;
+const AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE =
+  /^\/automations\/repository\/credentials$/;
 
 function publicWorkspaceFile(value: unknown): Record<string, unknown> {
   const file = record(value) ?? {};
@@ -2476,7 +2476,7 @@ async function publicSuccessResponse(
     suffix.includes("/event-subscriptions") ||
     suffix.startsWith("/channels/slack/setups") ||
     isLinearRouteSuffix(suffix) ||
-    PROJECT_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)
+    AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)
   ) {
     headers.set("cache-control", "no-store");
   }
@@ -2718,7 +2718,7 @@ function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
   if (method === "GET" && /^\/projects\/[^/]+\/source-archive$/.test(suffix)) {
     return true;
   }
-  if (method === "POST" && PROJECT_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
+  if (method === "POST" && AUTOMATIONS_REPOSITORY_CREDENTIAL_ROUTE.test(suffix)) {
     return true;
   }
   if (

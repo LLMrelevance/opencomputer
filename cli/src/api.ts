@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { ProjectRepositoryCredential } from "./push.js";
+import type { AutomationsRepositoryCredential } from "./push.js";
 import type { ResolvedConfig } from "./config.js";
 import type { MemoryDeclaration, ProjectResourceManifest } from "./project.js";
 
@@ -662,9 +662,9 @@ export class OpenComputerClient {
   }
 
   /** A one-hour push credential for the project's automation repository (work 067). */
-  projectRepositoryCredential(projectId: string) {
-    return this.request<ProjectRepositoryCredential>(
-      `/api/managed-agents/projects/${encodeURIComponent(projectId)}/repository/credentials`,
+  automationsRepositoryCredential() {
+    return this.request<AutomationsRepositoryCredential>(
+      "/api/managed-agents/automations/repository/credentials",
       { method: "POST" },
     );
   }

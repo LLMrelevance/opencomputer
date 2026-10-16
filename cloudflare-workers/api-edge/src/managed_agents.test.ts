@@ -359,14 +359,14 @@ describe("managed agents proxy", () => {
     ).resolves.toBe(true);
   });
 
-  it("passes a project repository credential through uncached", async () => {
+  it("passes an automations repository credential through uncached", async () => {
     const fetchSpy = vi.fn(async (target: RequestInfo | URL, init?: RequestInit) => {
       expect(String(target)).toBe(
-        "https://managedagents.test/v1/projects/prj_test/repository/credentials",
+        "https://managedagents.test/v1/automations/repository/credentials",
       );
       expect(init?.method).toBe("POST");
       return Response.json({
-        remoteUrl: "https://acme.code.storage/automation-prj_test.git",
+        remoteUrl: "https://acme.code.storage/automations-org_test.git",
         username: "t",
         password: "jwt",
         expiresAt: "2026-10-16T02:00:00.000Z",
@@ -377,7 +377,7 @@ describe("managed agents proxy", () => {
 
     const response = await proxyManagedAgents(
       new Request(
-        "https://mo-oc-dev.com/api/managed-agents/projects/prj_test/repository/credentials",
+        "https://mo-oc-dev.com/api/managed-agents/automations/repository/credentials",
         { method: "POST" },
       ),
       {
@@ -391,7 +391,7 @@ describe("managed agents proxy", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({
-      remoteUrl: "https://acme.code.storage/automation-prj_test.git",
+      remoteUrl: "https://acme.code.storage/automations-org_test.git",
       username: "t",
       password: "jwt",
       expiresAt: "2026-10-16T02:00:00.000Z",

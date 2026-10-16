@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gitPushEnvironment, pushToProjectRepository } from "./push.js";
+import { gitPushEnvironment, pushToAutomationsRepository } from "./push.js";
 
 const credential = {
-  remoteUrl: "https://acme.code.storage/automation-prj_1.git",
+  remoteUrl: "https://acme.code.storage/automations-acct.git",
   username: "t",
   password: "jwt",
   expiresAt: "2026-10-16T02:00:00.000Z",
@@ -46,14 +46,14 @@ test("pushes HEAD to main and refuses to drop commits already there", () => {
     return directory;
   };
   const computer = work("computer");
-  pushToProjectRepository({ credential: local, directory: computer });
+  pushToAutomationsRepository({ credential: local, directory: computer });
   assert.equal(
     git(remote, "rev-parse", "main"),
     git(computer, "rev-parse", "HEAD"),
   );
   assert.throws(
     () =>
-      pushToProjectRepository({ credential: local, directory: work("laptop") }),
+      pushToAutomationsRepository({ credential: local, directory: work("laptop") }),
     /fetch and merge/,
   );
 });

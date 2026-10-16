@@ -56,7 +56,7 @@ Usage:
   opencomputer template deploy <repository-url> [--project-name <name>] [--directory <path>] [--refresh]
   opencomputer template clone <repository-url> --commit <sha> --project <id> [--directory <path>]
   opencomputer project clone <project-id> [--directory <path>]
-  opencomputer push [<ref>] [--project <id|slug>]
+  opencomputer push [<ref>]
   opencomputer link (--project <id|slug> | --create-project <name>)
   opencomputer doctor
   opencomputer deploy --watch [--project <id|slug> | --create-project <name>]
