@@ -115,6 +115,33 @@ async function meterOrg(env: ModelMeterEnv, orgId: string, keys: ManagedModelKey
   return debited;
 }
 
+// syncModelCaps pushes one org's caps off its current Autumn balance now, for the
+// Autumn webhook: an upgrade or grant lifts a key still capped at the old balance
+// at once instead of on the next tick (a free org that upgraded kept hitting
+// OpenRouter 402s for up to 5 minutes). Caps only: spend is debited by the cron
+// alone, so a concurrent tick can never debit the same interval twice.
+export async function syncModelCaps(env: ModelMeterEnv, orgId: string): Promise<void> {
+  const org = await env.OPENCOMPUTER_DB.prepare("SELECT id, model_markup_bps, billing_provider FROM orgs WHERE id = ?1")
+    .bind(orgId)
+    .first<OrgMeterRow>();
+  if (!org || org.billing_provider !== "autumn") return;
+  const res = await env.OPENCOMPUTER_DB.prepare(
+    `SELECT * FROM managed_model_keys
+      WHERE org_id = ?1 AND status IN ('active','superseded','deleting') AND or_key_hash IS NOT NULL`,
+  )
+    .bind(orgId)
+    .all<ManagedModelKeyRow>();
+  const keys = res.results ?? [];
+  if (keys.length === 0) return;
+  const usage = new Map<string, { usageUsd: number; limitUsd: number | null }>();
+  for (const k of keys) {
+    const ok = await getOrKey(env, k.or_key_hash!);
+    usage.set(k.id, { usageUsd: ok.usage, limitUsd: ok.limit });
+  }
+  const remaining = (await getAutumnCustomer(env, orgId))?.balances?.credits?.remaining;
+  await pushCaps(env, keys, usage, typeof remaining === "number" ? remaining : 0, markupBps(env, org));
+}
+
 // debitKey moves a key's NEW OpenRouter spend into Autumn, exactly-once (§7):
 // persist an immutable [from,to) interval BEFORE the track; on a crashed retry,
 // re-send the SAME interval/key (never recompute against newer usage).

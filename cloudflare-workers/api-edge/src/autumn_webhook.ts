@@ -206,7 +206,14 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-export async function autumnWebhook(req: Request, env: AutumnEnv): Promise<Response> {
+// `afterProject` runs once the org is projected (index.ts: syncModelCaps, so an
+// upgrade lifts the org's OpenRouter cap now). Its failure is logged, not retried:
+// the model-meter cron pushes the same caps within 5 minutes.
+export async function autumnWebhook(
+  req: Request,
+  env: AutumnEnv,
+  afterProject?: (orgID: string) => Promise<void>,
+): Promise<Response> {
   const rawBody = await req.text();
 
   if (!env.AUTUMN_WEBHOOK_SECRET) {
@@ -238,6 +245,7 @@ export async function autumnWebhook(req: Request, env: AutumnEnv): Promise<Respo
     console.error(`autumn-webhook: project ${orgID} (${type}) failed`, err);
     return json({ error: "projection failed" }, 502);
   }
+  await afterProject?.(orgID).catch((err) => console.error(`autumn-webhook: after-project ${orgID} (${type}) failed`, err));
   return json({ ok: true, type, org_id: orgID });
 }
 
