@@ -184,6 +184,7 @@ describe('Computer page', () => {
     )
 
     expect(container.textContent).toContain('Step 1 of 3')
+    expect(container.textContent).toContain('Not a Slack admin?')
     // Before Slack there is no computer to report on, and no pitch.
     expect(container.textContent).not.toContain('Not set up yet')
     expect(container.textContent).not.toContain('Setting up')
@@ -234,7 +235,7 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('Setting up') === true,
+      () => container.textContent?.includes('Creating') === true,
       'provisioning computer',
     )
     expect(computerApi.createComputer).toHaveBeenCalledTimes(1)
@@ -246,7 +247,7 @@ describe('Computer page', () => {
 
     render('/computer')
     await settle(
-      () => container.textContent?.includes('Setting up') === true,
+      () => container.textContent?.includes('Creating') === true,
       'computer status',
     )
     expect(computerApi.createComputer).not.toHaveBeenCalled()
@@ -514,6 +515,37 @@ describe('Computer page', () => {
     expect(
       container.querySelector('section[aria-labelledby="first-task-title"]'),
     ).toBeNull()
+  })
+
+  it('shows a new computer coming to life during setup', async () => {
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      computer: {
+        ...onboarded.computer,
+        state: 'provisioning',
+        connected: false,
+        createdAt: minutesAgo(1),
+      },
+    })
+
+    render('/computer')
+    const boot = () =>
+      container.querySelector('[role="status"][aria-label^="Your computer"]')
+    await settle(() => boot() !== null, 'boot progress')
+    expect(boot()!.getAttribute('aria-label')).toBe('Your computer: Creating')
+    expect(boot()!.textContent).toContain('Starting')
+    expect(boot()!.textContent).toMatch(/1:0\d/)
+
+    computerApi.getComputer.mockResolvedValue(onboarded)
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['managed-computer'] })
+    })
+    await settle(
+      () => boot()?.getAttribute('aria-label') === 'Your computer: Online',
+      'online',
+    )
+    // Done: no clock left running.
+    expect(boot()!.textContent).not.toMatch(/\d:\d\d/)
   })
 
   it('opens a DM with the app when the bot is known', async () => {

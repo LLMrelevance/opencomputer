@@ -75,7 +75,10 @@ import {
   START_SESSION_COPY,
   computerIsOnboarded,
   computerPollInterval,
+  BOOT_STAGES,
+  bootProgress,
   computerPresentation,
+  elapsedClock,
   firstSession,
   firstTaskCopy,
   relativeTime,
@@ -385,6 +388,77 @@ function StatusLabel({
             status.slack.installed,
           ).label}
     </span>
+  )
+}
+
+/**
+ * A new computer coming to life, stage by stage, with the time it has taken
+ * so far: waiting reads as progress, not as a page that forgot about you.
+ */
+function BootProgress({
+  stage,
+  since,
+}: {
+  stage: number
+  since: string | null
+}) {
+  const now = useNow(1_000)
+  const online = stage === BOOT_STAGES.length - 1
+  return (
+    <div
+      role="status"
+      aria-label={`Your computer: ${BOOT_STAGES[stage]}`}
+      className="flex items-center gap-2 text-sm"
+    >
+      <ol className="flex items-center gap-2">
+        {BOOT_STAGES.map((label, index) => {
+          const done = index < stage || online
+          const current = index === stage && !online
+          return (
+            <li key={label} className="flex items-center gap-2">
+              {index > 0 ? (
+                <span
+                  className={cn(
+                    'h-px w-4 transition-colors',
+                    done || current ? 'bg-foreground/30' : 'bg-border',
+                  )}
+                  aria-hidden
+                />
+              ) : null}
+              {done ? (
+                online && index === stage ? (
+                  <PulseDot tone="alive" />
+                ) : (
+                  <Check className="size-3.5 text-emerald-600" aria-hidden />
+                )
+              ) : current ? (
+                <PulseDot tone="busy" />
+              ) : (
+                <span
+                  className="border-muted-foreground/40 size-2 rounded-full border"
+                  aria-hidden
+                />
+              )}
+              <span
+                className={cn(
+                  current || (online && index === stage)
+                    ? 'font-medium'
+                    : 'text-muted-foreground',
+                )}
+              >
+                {label}
+              </span>
+            </li>
+          )
+        })}
+      </ol>
+      {since && !online ? (
+        <span className="text-muted-foreground tabular-nums">
+          <span aria-hidden>· </span>
+          <time dateTime={since}>{elapsedClock(since, now)}</time>
+        </span>
+      ) : null}
+    </div>
   )
 }
 
@@ -724,6 +798,7 @@ function Setup({
   const failedToCreate = !computer && createError !== null
   const failed = failedToCreate || computer?.state === 'failed'
   const position = SETUP_STEPS.indexOf(step) + 1
+  const boot = bootProgress(status)
   const done: Record<SetupStep, boolean> = {
     slack: status.slack.installed,
     github: status.github.connected,
@@ -742,8 +817,11 @@ function Setup({
             <p className="text-muted-foreground text-sm font-medium">
               Step {position} of {SETUP_STEPS.length}
             </p>
-            {/* Before Slack there is no computer to report on. */}
-            {computer || status.slack.installed ? (
+            {/* Before Slack there is no computer to report on; while it
+                comes to life, how far along it is. */}
+            {boot && !failed ? (
+              <BootProgress stage={boot.stage} since={boot.since} />
+            ) : computer || status.slack.installed ? (
               <StatusLabel status={status} failedToCreate={failedToCreate} />
             ) : null}
           </div>
@@ -814,6 +892,12 @@ function Setup({
                 right there.
               </p>
               <SlackInstallButton size="lg" label="Add to Slack" />
+              {/* Most workspaces only let admins add apps; where approval is
+                  on, Slack itself lets a member ask for it. */}
+              <p className="text-xs">
+                Not a Slack admin? Click it anyway: Slack lets you ask your
+                admin to approve it. Come back here once they have.
+              </p>
             </SetupItem>
             <SetupItem
               number={2}

@@ -23,6 +23,8 @@ import {
   alreadyLinkedCopy,
   firstSession,
   firstTaskCopy,
+  bootProgress,
+  elapsedClock,
   slackReturnFromSearch,
   splitSessions,
 } from './computer-state'
@@ -380,6 +382,49 @@ describe('first task', () => {
     expect(firstTaskCopy('error').headline).toBe(
       'Your first task hit a problem',
     )
+  })
+})
+
+describe('boot progress', () => {
+  const base = {
+    computer: null,
+    slack: { installed: true },
+    github: { connected: true, installations: [] },
+    plan: 'free' as const,
+  }
+  const at = '2026-10-11T10:00:00.000Z'
+  const withState = (state: Computer['state'], connected = false) => ({
+    ...base,
+    computer: { ...computer, state, connected, createdAt: at },
+  })
+
+  it('walks from the Slack install to online', () => {
+    expect(bootProgress({ ...base, slack: { installed: false } })).toBeNull()
+    expect(bootProgress(base)).toEqual({ stage: 0, since: null })
+    expect(bootProgress(withState('provisioning'))).toEqual({
+      stage: 0,
+      since: at,
+    })
+    expect(bootProgress(withState('ready'))).toEqual({ stage: 1, since: at })
+    expect(bootProgress(withState('ready', true))).toEqual({
+      stage: 2,
+      since: at,
+    })
+  })
+
+  it('is not booting asleep, failed or going', () => {
+    for (const state of ['parked', 'waking', 'failed', 'deleting'] as const) {
+      expect(bootProgress(withState(state))).toBeNull()
+    }
+  })
+
+  it('reads the time taken as a clock', () => {
+    const start = new Date(at).getTime()
+    expect(elapsedClock(at, start + 7_000)).toBe('0:07')
+    expect(elapsedClock(at, start + 161_000)).toBe('2:41')
+    expect(elapsedClock(at, start + 3_723_000)).toBe('1:02:03')
+    expect(elapsedClock(at, start - 5_000)).toBe('0:00')
+    expect(elapsedClock('nope', start)).toBe('')
   })
 })
 

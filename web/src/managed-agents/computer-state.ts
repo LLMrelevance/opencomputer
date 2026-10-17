@@ -100,6 +100,38 @@ export function computerPresentation(
   }
 }
 
+export const BOOT_STAGES = ['Creating', 'Starting', 'Online'] as const
+
+/**
+ * How far a new computer is in coming to life, from the Slack install to
+ * online: the stage it is in (the last one, Online, means done) and when it
+ * began. Null when it is not booting: not set up, asleep, failed or going.
+ */
+export function bootProgress(
+  status: ComputerStatus,
+): { stage: number; since: string | null } | null {
+  const { computer } = status
+  if (!computer)
+    return status.slack.installed ? { stage: 0, since: null } : null
+  if (computer.state === 'provisioning')
+    return { stage: 0, since: computer.createdAt }
+  if (computer.state !== 'ready') return null
+  return { stage: computer.connected ? 2 : 1, since: computer.createdAt }
+}
+
+/** Time since `iso` as a clock: "0:07", "2:41", "1:02:03". */
+export function elapsedClock(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const seconds = Math.floor(Math.max(0, now - then) / 1000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor(seconds / 60) % 60
+  return hours > 0
+    ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}`
+    : `${minutes}:${pad(seconds % 60)}`
+}
+
 export const FAST_POLL_MS = 5_000
 export const SLOW_POLL_MS = 30_000
 
