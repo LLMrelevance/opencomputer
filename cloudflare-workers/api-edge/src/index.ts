@@ -72,7 +72,7 @@ import {
 } from "./autumn_webhook";
 import { runAutumnMeter } from "./autumn_meter";
 import { disableManagedBilling, enableManagedBilling } from "./model_billing";
-import { runModelMeter } from "./model_meter";
+import { runModelMeter, syncModelCaps } from "./model_meter";
 import {
   enforceManagedAgentCreditGate,
   insufficientManagedAgentCredits,
@@ -5616,7 +5616,7 @@ export default {
 
     // Autumn (useautumn.com) webhook — Svix-signed; projects authoritative
     // balance/plans into D1 (is_halted, max_concurrent) + dispatches to cells.
-    if (path === "/webhooks/autumn" && req.method === "POST") return autumnWebhook(req, env);
+    if (path === "/webhooks/autumn" && req.method === "POST") return autumnWebhook(req, env, (orgID) => syncModelCaps(env, orgID));
 
     // Dashboard API — everything under /api/dashboard/*. Edge-native handlers
     // back D1 reads/writes; sandbox-runtime calls proxy to the sandbox's cell.

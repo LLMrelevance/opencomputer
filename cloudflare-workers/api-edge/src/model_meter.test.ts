@@ -10,7 +10,7 @@ vi.mock("./autumn_webhook", () => ({
 
 import { getOrKey, patchOrKey } from "./openrouter";
 import { getAutumnCustomer, trackAutumnUsage, projectOrg } from "./autumn_webhook";
-import { runModelMeter, type ModelMeterEnv } from "./model_meter";
+import { runModelMeter, syncModelCaps, type ModelMeterEnv } from "./model_meter";
 import type { ManagedModelKeyRow } from "./model_billing";
 
 const gOrKey = getOrKey as unknown as ReturnType<typeof vi.fn>;
@@ -187,5 +187,29 @@ describe("model_meter cap + halt (§5.4/§7)", () => {
 
     await runModelMeter(env(db), 0);
     expect(gProject).toHaveBeenCalledWith(expect.anything(), "org1");
+  });
+});
+
+describe("syncModelCaps (Autumn webhook)", () => {
+  it("lifts the active cap to the new balance at once, without debiting", async () => {
+    const db = new FakeDb();
+    db.orgs.set("org1", { id: "org1", model_markup_bps: 0, billing_provider: "autumn" });
+    db.keys.push(key({ committed_micro: 8000000 }));
+    gOrKey.mockResolvedValue(orKey(8.7, 10)); // capped at the old free balance
+    gCust.mockResolvedValue({ id: "org1", balances: { credits: { remaining: 200 } } }); // upgraded
+
+    await syncModelCaps(env(db), "org1");
+    expect(gPatch).toHaveBeenCalledWith(expect.anything(), "hash1", { limitUsd: expect.closeTo(208.7, 5) });
+    expect(gTrack).not.toHaveBeenCalled();
+    expect(db.keys[0].committed_micro).toBe(8000000);
+  });
+
+  it("leaves non-autumn orgs alone", async () => {
+    const db = new FakeDb();
+    db.orgs.set("org1", { id: "org1", model_markup_bps: 0, billing_provider: "stripe" });
+    db.keys.push(key());
+    await syncModelCaps(env(db), "org1");
+    expect(gOrKey).not.toHaveBeenCalled();
+    expect(gPatch).not.toHaveBeenCalled();
   });
 });
