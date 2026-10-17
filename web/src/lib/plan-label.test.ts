@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { organizationPlanLabel, planLabel } from '@/lib/plan-label'
+import {
+  organizationPlanLabel,
+  planLabel,
+  usagePlanLabel,
+} from '@/lib/plan-label'
 
 describe('planLabel', () => {
   it.each([
@@ -13,6 +17,17 @@ describe('planLabel', () => {
 
   it('formats an unknown plan instead of exposing its identifier', () => {
     expect(planLabel('enterprise_custom')).toBe('Enterprise Custom')
+  })
+})
+
+describe('usagePlanLabel', () => {
+  it.each([
+    ['base', 'Free'],
+    ['pro', 'Pro (legacy)'],
+    ['max', 'Pro'],
+    ['enterprise_custom', 'Enterprise Custom'],
+  ])('names usage plan %s as %s', (plan, label) => {
+    expect(usagePlanLabel(plan)).toBe(label)
   })
 })
 
@@ -31,7 +46,17 @@ describe('organizationPlanLabel', () => {
           usagePlan: 'max',
         },
       ),
-    ).toBe('Max')
+    ).toBe('Pro')
+  })
+
+  it('labels the retired $20 plan as legacy and the free plan as Free', () => {
+    const autumnBilling = { plan: 'free', billingProvider: 'autumn' }
+    expect(
+      organizationPlanLabel(org, autumnBilling, { usagePlan: 'pro' }),
+    ).toBe('Pro (legacy)')
+    expect(
+      organizationPlanLabel(org, autumnBilling, { usagePlan: 'base' }),
+    ).toBe('Free')
   })
 
   it('uses the standard billing plan for legacy billing', () => {

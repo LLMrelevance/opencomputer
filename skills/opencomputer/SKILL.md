@@ -56,11 +56,12 @@ message mentioning "credits exhausted" / "out of prepaid credits", the
 organization has no prepaid credits left and **every further command will fail
 the same way**. Do **not** retry or work around it. Instead:
 
-1. Stop and tell the user their OpenComputer credits are exhausted.
+1. Stop and tell the user they've used their OpenComputer credits.
 2. Relay the upgrade link from the error verbatim (it looks like
-   `https://app.opencomputer.dev/billing?plan=pro`). Pro is $20/month for $200 in
-   credits; one-off top-ups are on the same page.
-3. Resume once they confirm they've upgraded or topped up.
+   `https://app.opencomputer.dev/billing?plan=max`). Pro is $200/month. If the error links
+   to plain `/billing` instead, the org is already on Pro and its monthly
+   credits renew next billing period.
+3. Resume once they confirm they've upgraded.
 
 A response that carries `warning: "low_credits"` (or a "credits left (running
 low)" line) still succeeded — finish the task, then mention the balance and

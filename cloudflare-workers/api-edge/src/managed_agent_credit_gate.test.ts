@@ -243,12 +243,14 @@ describe("managed-agent credit admission", () => {
     const body = (await response.json()) as { error: Record<string, unknown> };
     expect(body.error).toMatchObject({
       code: "insufficient_credits",
-      actionUrl: "https://mo-oc-dev.com/billing",
+      actionUrl: "https://mo-oc-dev.com/billing?plan=max",
       billingUrl: "https://mo-oc-dev.com/billing",
-      upgradeUrl: "https://mo-oc-dev.com/billing?plan=pro",
+      upgradeUrl: "https://mo-oc-dev.com/billing?plan=max",
     });
-    expect(body.error.message).toContain("https://mo-oc-dev.com/billing?plan=pro");
+    expect(body.error.message).toContain("https://mo-oc-dev.com/billing?plan=max");
+    expect(body.error.message).toContain("upgrade to Pro ($200/mo)");
     expect(body.error.message).toContain("do not retry");
+    expect(body.error.message).not.toMatch(/top.?up|\$20\b/i);
   });
 
   it("allows active organizations and fails open when D1 is unavailable", async () => {

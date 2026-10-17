@@ -76,7 +76,7 @@ export function httpRequestPayloadText(ev: SessionEvent): string | null {
 }
 
 // The runtime's failPreExec emits an agent.message tagged with an
-// insufficient_credits code so the UI can offer a "top up" affordance.
+// insufficient_credits code so the UI can offer the upgrade-to-Pro paywall.
 export function isOutOfCredits(ev: SessionEvent): boolean {
   return (
     ev.type === 'agent.message' &&

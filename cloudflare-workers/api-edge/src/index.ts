@@ -77,7 +77,7 @@ import {
   enforceManagedAgentCreditGate,
   insufficientManagedAgentCredits,
 } from "./managed_agent_credit_gate";
-import { handleCreditsStatus, insufficientCreditsLegacyResponse } from "./billing_onramp";
+import { handleCreditsStatus, insufficientCreditsLegacyResponse, type UsagePlan } from "./billing_onramp";
 export { ManagedAgentBillingService } from "./managed_agent_billing_service";
 import { runRetentionSweep } from "./retention";
 import * as secretStores from "./secret_stores";
@@ -1383,6 +1383,24 @@ async function refreshOrgPolicy(env: Env, orgID: string): Promise<OrgPolicy | nu
   return policy;
 }
 
+// The usage plan behind an out-of-credits 402, so its message fits the org:
+// free gets the paywall, legacy $20 Pro the upgrade to Pro, $200 Pro no upsell.
+// Only read on the (rare) halted path; any failure falls back to the paywall.
+function usagePlanOf(value: string | null | undefined): UsagePlan {
+  return value === "pro" || value === "max" ? value : "base";
+}
+
+async function haltedUsagePlan(env: Env, orgID: string): Promise<UsagePlan> {
+  try {
+    const row = await env.OPENCOMPUTER_DB.prepare("SELECT usage_plan FROM orgs WHERE id = ?1")
+      .bind(orgID)
+      .first<{ usage_plan: string | null }>();
+    return usagePlanOf(row?.usage_plan);
+  } catch {
+    return "base";
+  }
+}
+
 // enforceCreatePolicy applies every org-level gate for creating or forking a
 // sandbox, reading authoritative state from D1 (and the CreditAccount DO for
 // free orgs). Returns an error Response to short-circuit, or null when allowed.
@@ -1413,7 +1431,7 @@ async function enforceCreatePolicy(
   // pay per GB-second); only the per-org max_disk_mb cap applies.
   if (org.billing_provider === "autumn") {
     if (org.is_halted === 1 && (await selfHealHalt(env, orgID))) {
-      return insufficientCreditsLegacyResponse(req);
+      return insufficientCreditsLegacyResponse(req, {}, await haltedUsagePlan(env, orgID));
     }
   } else if (plan === "free") {
     // Legacy free-tier gate. is_halted is the D1 fast path; otherwise ask the
@@ -3369,10 +3387,10 @@ async function proxyToCellSDK(req: Request, env: Env, ctx: ExecutionContext, cal
     // silently fell through, letting halted orgs wake. Mirror the create
     // flow's halt check here so wake gets the same treatment.
     const haltRow = await env.OPENCOMPUTER_DB.prepare(
-      "SELECT is_halted, billing_provider FROM orgs WHERE id = ?1",
+      "SELECT is_halted, billing_provider, usage_plan FROM orgs WHERE id = ?1",
     )
       .bind(caller.orgID)
-      .first<{ is_halted: number; billing_provider: string }>();
+      .first<{ is_halted: number; billing_provider: string; usage_plan: string | null }>();
     if (haltRow?.is_halted === 1) {
       // Autumn orgs self-heal: re-check the authoritative balance before
       // blocking a wake, so a just-topped-up user resumes without waiting for
@@ -3380,7 +3398,7 @@ async function proxyToCellSDK(req: Request, env: Env, ctx: ExecutionContext, cal
       const stillHalted =
         haltRow.billing_provider === "autumn" ? await selfHealHalt(env, caller.orgID) : true;
       if (stillHalted) {
-        return insufficientCreditsLegacyResponse(req);
+        return insufficientCreditsLegacyResponse(req, {}, usagePlanOf(haltRow.usage_plan));
       }
     }
   }

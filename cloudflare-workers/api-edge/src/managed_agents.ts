@@ -1,4 +1,5 @@
 import { getAutumnCustomer } from "./autumn_webhook";
+import { FREE_CREDITS_PAYWALL } from "./billing_onramp";
 import {
   COMPUTER_ERROR_MESSAGES,
   computerFallbackMessage,
@@ -67,7 +68,7 @@ function byokPlanRequired(): Response {
     {
       error: {
         code: "model_access_plan_required",
-        message: "Upgrade to Pro to connect or enable a BYOK account.",
+        message: "Upgrade to Pro ($200/mo) to connect or enable a BYOK account.",
       },
     },
     { status: 403 },
@@ -359,7 +360,7 @@ async function publicErrorResponse(
   } else if (upstream.status === 402) {
     message =
       backendCode === "insufficient_credits"
-        ? "Insufficient prepaid credits. Top up or enable automatic top-up."
+        ? FREE_CREDITS_PAYWALL
         : "The agent request requires additional prepaid credits.";
   } else if (upstream.status >= 500) {
     message = "The agent service is temporarily unavailable.";

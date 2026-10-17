@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   activeUsagePlan,
   billingLinks,
+  FREE_CREDITS_PAYWALL,
   insufficientCreditsLegacyResponse,
   insufficientCreditsResponse,
   lowCreditThresholdCents,
+  USAGE_PLAN_OFFERS,
+  usagePlanOffers,
 } from "./billing_onramp";
 import type { AutumnCustomer } from "./autumn_webhook";
 
@@ -29,7 +32,7 @@ describe("billing_onramp", () => {
   });
 
   it("builds deep links off the request origin", () => {
-    expect(billingLinks(req, "max")).toEqual({
+    expect(billingLinks(req)).toEqual({
       billingUrl: "https://app.opencomputer.dev/billing",
       upgradeUrl: "https://app.opencomputer.dev/billing?plan=max",
     });
@@ -41,8 +44,50 @@ describe("billing_onramp", () => {
     const body = (await res.json()) as { error: Record<string, string> };
     expect(body.error.code).toBe("insufficient_credits");
     expect(body.error.message).toMatch(/do not retry/);
-    expect(body.error.upgradeUrl).toBe("https://app.opencomputer.dev/billing?plan=pro");
-    expect(body.error.actionUrl).toBe("https://app.opencomputer.dev/billing");
+    expect(body.error.message).toContain("You've used your free credits.");
+    expect(body.error.message).toContain(
+      "upgrade to Pro ($200/mo) at https://app.opencomputer.dev/billing?plan=max",
+    );
+    expect(body.error.upgradeUrl).toBe("https://app.opencomputer.dev/billing?plan=max");
+    expect(body.error.actionUrl).toBe("https://app.opencomputer.dev/billing?plan=max");
+  });
+
+  it("never offers top-ups or the retired $20 plan in any 402", async () => {
+    for (const plan of [undefined, "base", "pro", "max"] as const) {
+      const body = (await insufficientCreditsResponse(req, plan).json()) as {
+        error: Record<string, string>;
+      };
+      expect(body.error.message).not.toMatch(/top.?up|\$20\b|plan=pro/i);
+      expect(body.error.upgradeUrl).not.toContain("plan=pro");
+    }
+  });
+
+  it("points a legacy $20 Pro org at the $200 Pro, and does not upsell a $200 Pro org", async () => {
+    const legacy = (await insufficientCreditsResponse(req, "pro").json()) as {
+      error: Record<string, string>;
+    };
+    expect(legacy.error.message).toContain("upgrade to Pro ($200/mo) at https://app.opencomputer.dev/billing?plan=max");
+    const max = (await insufficientCreditsResponse(req, "max").json()) as {
+      error: Record<string, string>;
+    };
+    expect(max.error.message).not.toMatch(/upgrade/i);
+    expect(max.error.actionUrl).toBe("https://app.opencomputer.dev/billing");
+  });
+
+  it("offers only the $200 Pro, listing legacy Pro to its own subscribers", () => {
+    expect(USAGE_PLAN_OFFERS).toEqual([{ id: "max", name: "Pro", priceUsd: 200, creditsUsd: 2_000 }]);
+    expect(usagePlanOffers("base").map((p) => p.id)).toEqual(["max"]);
+    expect(usagePlanOffers("max").map((p) => p.id)).toEqual(["max"]);
+    expect(usagePlanOffers("pro").map((p) => [p.id, p.name])).toEqual([
+      ["pro", "Pro (legacy)"],
+      ["max", "Pro"],
+    ]);
+  });
+
+  it("paywall copy names Pro and BYO subscriptions but not the grant amount", () => {
+    expect(FREE_CREDITS_PAYWALL).toBe(
+      "You've used your free credits. Upgrade to Pro ($200/mo) to keep going.",
+    );
   });
 
   it("legacy sandbox 402 keeps `error` a string and adds structured fields", async () => {
@@ -50,7 +95,7 @@ describe("billing_onramp", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(typeof body.error).toBe("string");
     expect(body.code).toBe("insufficient_credits");
-    expect(body.upgradeUrl).toBe("https://app.opencomputer.dev/billing?plan=pro");
+    expect(body.upgradeUrl).toBe("https://app.opencomputer.dev/billing?plan=max");
     expect(body.creditsRemainingCents).toBe(0);
   });
 });

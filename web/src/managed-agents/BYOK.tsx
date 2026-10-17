@@ -21,7 +21,8 @@ import {
   type ProjectEnvironmentMode,
 } from './project-context'
 import {
-  PLAN_OFFERS,
+  UPGRADE_PLAN,
+  UPGRADE_PLAN_LABEL,
   trackUpsellClicked,
   trackUpsellShown,
   upgradeHref,
@@ -82,7 +83,7 @@ export function ManagedProjectBYOK({
   const planEligible = hasBYOKPlanAccess(usagePlan)
   const showGate = !billing.isLoading && !billing.isError && !planEligible
   useEffect(() => {
-    if (showGate) trackUpsellShown({ surface: 'byok_gate', plan: 'pro' })
+    if (showGate) trackUpsellShown({ surface: 'byok_gate', plan: UPGRADE_PLAN })
   }, [showGate])
   const billingLoading =
     billing.isLoading ||
@@ -193,16 +194,19 @@ export function ManagedProjectBYOK({
         <EmptyState
           icon={LockKeyhole}
           title="BYOK is available on Pro"
-          description={`Bring your own provider keys and route this project's models through them. Pro is $${PLAN_OFFERS.pro.priceUsd}/mo and includes $${PLAN_OFFERS.pro.creditsUsd} in credits every month.`}
+          description={`Bring your own provider keys and route this project's models through them. Available on ${UPGRADE_PLAN_LABEL}.`}
           action={
             <Button asChild>
               <Link
-                to={upgradeHref('pro')}
+                to={upgradeHref()}
                 onClick={() =>
-                  trackUpsellClicked({ surface: 'byok_gate', plan: 'pro' })
+                  trackUpsellClicked({
+                    surface: 'byok_gate',
+                    plan: UPGRADE_PLAN,
+                  })
                 }
               >
-                Upgrade to Pro — ${PLAN_OFFERS.pro.priceUsd}/mo
+                Upgrade to {UPGRADE_PLAN_LABEL}
               </Link>
             </Button>
           }

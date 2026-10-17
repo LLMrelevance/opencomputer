@@ -5,7 +5,7 @@ import {
   billingOnrampV2Enabled,
   lowCreditThresholdCents,
   upgradePlanFor,
-  type PaidPlanId,
+  type UpgradePlanId,
   type UsagePlanId,
 } from '@/lib/billing-onramp'
 
@@ -21,7 +21,9 @@ export interface CreditState {
   // Below the low-credit threshold but not yet halted; only for prepaid orgs
   // with the on-ramp experiment enabled.
   isLow: boolean
-  upgradePlan: PaidPlanId
+  // The plan to prompt for (always the $200 Pro, Autumn id `max`); null when
+  // the org is already on it. Legacy $20 Pro is never offered.
+  upgradePlan: UpgradePlanId | null
 }
 
 // Shares the same 30s poll as useHalted/HaltBanner via the 'autumn-billing' key.

@@ -19,6 +19,7 @@ import {
   fetchCredits,
   formatBilling,
   upgradeUrlFor,
+  UPGRADE_PLAN,
 } from "./billing.js";
 import { codexLogin } from "./codex-oauth.js";
 import { resolveConfig } from "./config.js";
@@ -1269,20 +1270,25 @@ export async function runCommand(
   }
 
   if (command === "upgrade") {
-    const plan = args.shift() ?? "pro";
-    if (plan !== "pro" && plan !== "max") {
-      throw new Error("Usage: opencomputer upgrade [pro|max]");
+    // `pro` and `max` are both accepted for older scripts; both open the one
+    // plan on sale, Pro ($200/mo), whose billing id is `max`.
+    const requested = args.shift() ?? "pro";
+    if (requested !== "pro" && requested !== "max") {
+      throw new Error("Usage: opencomputer upgrade [pro]");
     }
     if (args.length) throw new Error(`Unexpected argument: ${args[0]}`);
+    const plan = UPGRADE_PLAN;
     const status = await fetchCredits(client);
     const url = upgradeUrlFor(status, config.apiUrl, plan);
     if (globals.json) {
       printJSON({ plan, url, credits: creditsSummary(status) });
+    } else if (status?.usagePlan === plan) {
+      process.stdout.write(`This organization is already on Pro. Manage billing at ${status.billingUrl}\n`);
     } else {
       const offer = status?.plans.find((p) => p.id === plan);
       process.stdout.write(
-        `Open this link to upgrade to ${plan === "pro" ? "Pro" : "Max"}` +
-          (offer ? ` ($${offer.priceUsd}/mo, $${offer.creditsUsd.toLocaleString("en-US")} in credits every month)` : "") +
+        "Open this link to upgrade to Pro" +
+          (offer ? ` ($${offer.priceUsd}/mo, $${offer.creditsUsd.toLocaleString("en-US")} in credits every month)` : " ($200/mo)") +
           `:\n\n  ${url}\n\nCheckout completes in the browser; the CLI resumes working as soon as the plan is active.\n`,
       );
     }
