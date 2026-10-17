@@ -46,6 +46,10 @@ const PLAN_GRANT_CENTS: Record<UsagePlanId, number> = {
 }
 const LOW_CREDIT_FRACTION = 0.3
 
+export function planGrantCents(plan: UsagePlanId): number {
+  return PLAN_GRANT_CENTS[plan]
+}
+
 export function lowCreditThresholdCents(plan: UsagePlanId): number {
   return Math.round(PLAN_GRANT_CENTS[plan] * LOW_CREDIT_FRACTION)
 }

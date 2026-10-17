@@ -44,6 +44,8 @@ import {
   deepLinkedPlanFor,
   formatCreditCount,
   formatCredits,
+  lowCreditThresholdCents,
+  planGrantCents,
   selectablePaidPlans,
   trackCheckoutStarted,
   trackPlanActivated,
@@ -307,6 +309,37 @@ function visibleUsagePlans(current: UsagePlanId) {
   )
 }
 
+// How much of the plan's grant is left, like the sidebar meter.
+function CreditMeter({
+  remainingCents,
+  plan,
+  halted,
+}: {
+  remainingCents: number
+  plan: UsagePlanId
+  halted: boolean
+}) {
+  const grant = Math.max(planGrantCents(plan), remainingCents)
+  const pct = Math.max(0, Math.min(100, (remainingCents / grant) * 100))
+  const low = !halted && remainingCents <= lowCreditThresholdCents(plan)
+  return (
+    <div className="mt-4">
+      <div className="bg-secondary h-2 overflow-hidden rounded-full">
+        <div
+          className={cn(
+            'h-full rounded-full transition-[width] duration-700',
+            halted ? 'bg-destructive' : low ? 'bg-amber-500' : 'bg-primary',
+          )}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="text-muted-foreground mt-1.5 font-mono text-[11px]">
+        {formatCreditCount(remainingCents)} of {formatCredits(grant)} left
+      </p>
+    </div>
+  )
+}
+
 function formatResetDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     month: 'long',
@@ -464,92 +497,95 @@ function PrepaidPlan() {
         onManage={() => portalMutation.mutate()}
         managing={portalMutation.isPending}
       />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-        {/* Credits */}
-        <Panel className="p-6">
-          <h2 className="mb-4 text-sm font-semibold">Prepaid credits</h2>
-          <div className="flex items-baseline gap-3">
-            <span
-              className={cn(
-                'font-mono text-4xl font-semibold',
-                halted ? 'text-status-error' : 'text-status-running',
-              )}
-            >
-              {formatCreditCount(autumn?.creditsRemainingCents ?? 0)}
-            </span>
-            <span className="text-muted-foreground text-xs">
-              credits available
-            </span>
-          </div>
-          {creditBreakdown?.available ? (
-            <div className="mt-5 space-y-3 border-t pt-4 text-sm">
+      {/* Credits */}
+      <Panel className="p-6">
+        <h2 className="mb-4 text-sm font-semibold">Prepaid credits</h2>
+        <div className="flex items-baseline gap-3">
+          <span
+            className={cn(
+              'font-mono text-4xl font-semibold',
+              halted ? 'text-status-error' : 'text-status-running',
+            )}
+          >
+            {formatCreditCount(autumn?.creditsRemainingCents ?? 0)}
+          </span>
+          <span className="text-muted-foreground text-xs">
+            credits available
+          </span>
+        </div>
+        <CreditMeter
+          remainingCents={autumn?.creditsRemainingCents ?? 0}
+          plan={autumn?.usagePlan ?? 'base'}
+          halted={halted}
+        />
+        {creditBreakdown?.available ? (
+          <div className="mt-5 space-y-3 border-t pt-4 text-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-medium">
+                  {autumn?.usagePlan === 'base'
+                    ? 'Signup credits'
+                    : `${PLAN_NAMES[autumn?.usagePlan ?? 'max']} plan credits`}
+                </p>
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  {creditBreakdown.planResetsAt
+                    ? `Used first · resets to ${formatCredits((USAGE_PLANS.find((plan) => plan.id === autumn?.usagePlan)?.credits ?? 0) * CENTS_PER_CREDIT)} on ${formatResetDate(creditBreakdown.planResetsAt)}`
+                    : 'One-time included balance'}
+                </p>
+              </div>
+              <span className="font-mono font-medium">
+                {formatCredits(creditBreakdown.planRemainingCents)}
+              </span>
+            </div>
+            {creditBreakdown.topupRemainingCents > 0 ? (
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-medium">
-                    {autumn?.usagePlan === 'base'
-                      ? 'Signup credits'
-                      : `${PLAN_NAMES[autumn?.usagePlan ?? 'max']} plan credits`}
-                  </p>
+                  <p className="font-medium">Top-up credits</p>
                   <p className="text-muted-foreground mt-0.5 text-xs">
-                    {creditBreakdown.planResetsAt
-                      ? `Used first · resets to ${formatCredits((USAGE_PLANS.find((plan) => plan.id === autumn?.usagePlan)?.credits ?? 0) * CENTS_PER_CREDIT)} on ${formatResetDate(creditBreakdown.planResetsAt)}`
-                      : 'One-time included balance'}
+                    Used after plan credits · carries forward
                   </p>
                 </div>
                 <span className="font-mono font-medium">
-                  {formatCredits(creditBreakdown.planRemainingCents)}
+                  {formatCredits(creditBreakdown.topupRemainingCents)}
                 </span>
               </div>
-              {creditBreakdown.topupRemainingCents > 0 ? (
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="font-medium">Top-up credits</p>
-                    <p className="text-muted-foreground mt-0.5 text-xs">
-                      Used after plan credits · carries forward
-                    </p>
-                  </div>
-                  <span className="font-mono font-medium">
-                    {formatCredits(creditBreakdown.topupRemainingCents)}
-                  </span>
+            ) : null}
+            {creditBreakdown.otherRemainingCents > 0 ? (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-medium">Carried or promotional credits</p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    Preserved separately from this month&apos;s allowance
+                  </p>
                 </div>
-              ) : null}
-              {creditBreakdown.otherRemainingCents > 0 ? (
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="font-medium">
-                      Carried or promotional credits
-                    </p>
-                    <p className="text-muted-foreground mt-0.5 text-xs">
-                      Preserved separately from this month&apos;s allowance
-                    </p>
-                  </div>
-                  <span className="font-mono font-medium">
-                    {formatCredits(creditBreakdown.otherRemainingCents)}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {halted ? (
-            <div className="text-status-error mt-2 space-y-2 text-sm">
-              <p className="flex items-center gap-1.5">
-                <CircleAlert className="size-4 shrink-0" />
-                {autumn?.usagePlan === 'pro' || autumn?.usagePlan === 'max'
-                  ? 'Credits exhausted — agents are running on an open-weight model (GLM)'
-                  : FREE_CREDITS_PAYWALL}
-              </p>
-              {autumn?.usagePlan !== UPGRADE_PLAN ? (
-                <Button
-                  size="sm"
-                  onClick={() => setConfirmUsagePlanId(UPGRADE_PLAN)}
-                >
-                  Upgrade to {UPGRADE_PLAN_LABEL}
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-        </Panel>
+                <span className="font-mono font-medium">
+                  {formatCredits(creditBreakdown.otherRemainingCents)}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {halted ? (
+          <div className="text-status-error mt-2 space-y-2 text-sm">
+            <p className="flex items-center gap-1.5">
+              <CircleAlert className="size-4 shrink-0" />
+              {autumn?.usagePlan === 'pro' || autumn?.usagePlan === 'max'
+                ? 'Credits exhausted — agents are running on an open-weight model (GLM)'
+                : FREE_CREDITS_PAYWALL}
+            </p>
+            {autumn?.usagePlan !== UPGRADE_PLAN ? (
+              <Button
+                size="sm"
+                onClick={() => setConfirmUsagePlanId(UPGRADE_PLAN)}
+              >
+                Upgrade to {UPGRADE_PLAN_LABEL}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </Panel>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         {/* Top-ups are no longer sold. An org that already turned on
             automatic top-up keeps the card so it can change or turn it off. */}
         {autumn?.autoTopup?.enabled ? (
@@ -839,7 +875,7 @@ function ModelUsageCard({
         <div>
           <div className="text-muted-foreground text-xs">Provider cost</div>
           <div className="text-foreground font-mono">
-            {formatCost(usage?.providerSpendCents ?? 0)}
+            ${((usage?.providerSpendCents ?? 0) / 100).toFixed(2)}
           </div>
         </div>
         <div>
@@ -997,7 +1033,7 @@ function AgentUsageBreakdown({
               {formatCost(runtimeCostCents)}
             </span>
             <span className="text-muted-foreground text-xs">
-              {formatDuration(runtimeSeconds)} in recent sessions
+              credits · {formatDuration(runtimeSeconds)} in recent sessions
             </span>
           </div>
           <p className="text-muted-foreground mt-2 text-sm">
@@ -1212,12 +1248,13 @@ function formatDuration(seconds: number): string {
   return `${(seconds / 3600).toFixed(1)}h`
 }
 
-// Cost can be fractional cents — show real value below a cent rather than $0.00.
+// Usage in credits. Can be a fraction of a hundredth — show the real value
+// rather than 0.
 function formatCost(cents: number): string {
-  const dollars = cents / 100
-  if (dollars <= 0) return '$0.00'
-  if (dollars < 0.01) return `$${dollars.toFixed(4)}`
-  return `$${dollars.toFixed(2)}`
+  const credits = cents / CENTS_PER_CREDIT
+  if (credits <= 0) return '0'
+  if (credits < 0.01) return credits.toFixed(4)
+  return formatCreditCount(cents)
 }
 
 function UsageBreakdown() {
