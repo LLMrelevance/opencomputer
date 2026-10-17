@@ -138,7 +138,7 @@ export interface AutumnCreditBalanceSummary {
 }
 
 const PLAN_CREDIT_GRANTS: Record<string, number> = {
-  base: 5,
+  base: 10,
   pro: 200,
   max: 2_000,
 };

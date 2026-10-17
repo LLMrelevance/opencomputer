@@ -117,7 +117,7 @@ export const base = plan({
   items: [
     item({
       featureId: credits.id,
-      included: 5,
+      included: 10,
       reset: { interval: "one_off" },
     }),
   ],
