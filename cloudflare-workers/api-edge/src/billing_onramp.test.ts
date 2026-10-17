@@ -15,7 +15,7 @@ const req = new Request("https://app.opencomputer.dev/api/v3/sessions");
 
 describe("billing_onramp", () => {
   it("low-credit threshold is 30% of the plan grant", () => {
-    expect(lowCreditThresholdCents("base")).toBe(150);
+    expect(lowCreditThresholdCents("base")).toBe(300);
     expect(lowCreditThresholdCents("pro")).toBe(6_000);
     expect(lowCreditThresholdCents("max")).toBe(60_000);
   });

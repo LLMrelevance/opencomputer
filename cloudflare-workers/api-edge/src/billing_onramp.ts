@@ -16,7 +16,7 @@ export { activeUsagePlan, type UsagePlan };
 // Mirror of PLAN_CREDIT_GRANTS in autumn_webhook.ts (dollars). The base grant is
 // the signup credit; low-balance fires at LOW_CREDIT_FRACTION of the plan grant.
 const PLAN_GRANT_CENTS: Record<UsagePlan, number> = {
-  base: 500,
+  base: 1_000,
   pro: 20_000,
   max: 200_000,
 };

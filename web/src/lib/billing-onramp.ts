@@ -38,7 +38,7 @@ export const FREE_CREDITS_USED = "You've used your free credits."
 export const FREE_CREDITS_PAYWALL = `${FREE_CREDITS_USED} Upgrade to ${UPGRADE_PLAN_LABEL} to keep going.`
 
 // Monthly grant per plan; the base grant is the signup allowance.
-export const BASE_GRANT_CENTS = 500
+export const BASE_GRANT_CENTS = 1_000
 const PLAN_GRANT_CENTS: Record<UsagePlanId, number> = {
   base: BASE_GRANT_CENTS,
   pro: 20_000,
