@@ -1458,6 +1458,7 @@ export class OpenComputerClient {
     models: Array<{ provider: string; model: string }>;
     region?: string;
     egress?: { domains: string[]; cidrs: string[] };
+    fixedIps?: string;
     projectDeployment?: {
       id: string;
       digest: string;

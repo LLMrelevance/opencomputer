@@ -78,6 +78,7 @@ async function registerBuiltDeployment(
     models: built.models,
     ...(built.region ? { region: built.region } : {}),
     ...(built.egress ? { egress: built.egress } : {}),
+    ...(built.fixedIps ? { fixedIps: built.fixedIps } : {}),
     ...(projectDeployment ? { projectDeployment } : {}),
     source: {
       digest: built.digest,

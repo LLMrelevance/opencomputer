@@ -68,6 +68,8 @@ export interface AgentManifest {
   region?: DeploymentRegion;
   /** `[egress] allow`, split; absent means an open network. */
   egress?: DeploymentEgress;
+  /** `[egress] fixed_ips`: the region whose fixed IPs sandboxes leave from. */
+  fixedIps?: string;
 }
 
 export interface BuiltAgentArtifact {
@@ -81,6 +83,7 @@ export interface BuiltAgentArtifact {
   models: Array<{ provider: string; model: string }>;
   region?: DeploymentRegion;
   egress?: DeploymentEgress;
+  fixedIps?: string;
   body: Buffer;
   digest: string;
   elapsedMs: number;
@@ -347,29 +350,41 @@ export async function readManifest(root: string): Promise<AgentManifest> {
       `opencomputer.toml region ${JSON.stringify(region)} is not supported; use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
     );
   }
-  const egress = manifestEgress(toml.egress);
+  const { egress, fixedIps } = manifestEgress(toml.egress);
   return {
     schema: 1,
     id,
     name,
     ...(region ? { region: region as DeploymentRegion } : {}),
     ...(egress ? { egress } : {}),
+    ...(fixedIps ? { fixedIps } : {}),
   };
 }
 
-/** The `[egress]` table, or undefined when the manifest has none. */
-function manifestEgress(table: unknown): DeploymentEgress | undefined {
-  if (table === undefined) return undefined;
+/**
+ * The `[egress]` table. `allow` restricts the network; `fixed_ips` sends it
+ * out through a region's fixed IPs (the service lists them at
+ * /v1/egress-ips and refuses a region without them). With `fixed_ips` and no
+ * `allow` the network stays open; a table with neither allows only the
+ * platform's own hosts.
+ */
+function manifestEgress(table: unknown): { egress?: DeploymentEgress; fixedIps?: string } {
+  if (table === undefined) return {};
   if (typeof table !== "object" || table === null || Array.isArray(table)) {
     throw new Error("opencomputer.toml egress must be a table: [egress]");
   }
-  const unknown = Object.keys(table).filter((key) => key !== "allow");
+  const unknown = Object.keys(table).filter((key) => key !== "allow" && key !== "fixed_ips");
   if (unknown.length) {
     throw new Error(
-      `opencomputer.toml [egress] has unknown key ${JSON.stringify(unknown[0])}; only allow is supported`,
+      `opencomputer.toml [egress] has unknown key ${JSON.stringify(unknown[0])}; only allow and fixed_ips are supported`,
     );
   }
-  return splitEgressAllow((table as { allow?: unknown }).allow ?? []);
+  const { allow, fixed_ips: fixedIps } = table as { allow?: unknown; fixed_ips?: unknown };
+  if (fixedIps !== undefined && (typeof fixedIps !== "string" || !/^[a-z]{2,3}$/.test(fixedIps))) {
+    throw new Error('opencomputer.toml [egress] fixed_ips must be a region, e.g. fixed_ips = "au"');
+  }
+  if (fixedIps === undefined) return { egress: splitEgressAllow(allow ?? []) };
+  return { ...(allow !== undefined ? { egress: splitEgressAllow(allow) } : {}), fixedIps };
 }
 
 export async function findAgentRoot(
@@ -3986,6 +4001,7 @@ export async function buildAgentArtifact(
     models,
     ...(manifest.region ? { region: manifest.region } : {}),
     ...(manifest.egress ? { egress: manifest.egress } : {}),
+    ...(manifest.fixedIps ? { fixedIps: manifest.fixedIps } : {}),
     body,
     digest: createHash("sha256").update(body).digest("hex"),
     elapsedMs: Math.round(performance.now() - startedAt),
