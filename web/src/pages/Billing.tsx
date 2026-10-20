@@ -7,7 +7,6 @@ import { notifyError } from '@/lib/errors'
 import { useTransientFlag } from '@/lib/use-transient-flag'
 import {
   autumnBillingPortal,
-  autumnSubscribeConcurrency,
   autumnSubscribeUsagePlan,
   billingPortal,
   billingSetup,
@@ -15,7 +14,6 @@ import {
   getAgentSessionUsage,
   getBilling,
   getBillingInvoices,
-  getSandboxUsage,
   redeemPromoCode,
   setAutumnAutoTopup,
   type AutumnBilling,
@@ -262,12 +260,6 @@ function PlanTab() {
 
 /* ── Prepaid (Autumn) ─────────────────────────────────────────────────────── */
 
-const CONCURRENCY_TIERS = [
-  { id: 'concurrency_pro', label: 'Pro', limit: 100, price: 150 },
-  { id: 'concurrency_pro_plus', label: 'Pro+', limit: 600, price: 500 },
-  { id: 'concurrency_pro_plus_plus', label: 'Pro++', limit: 1000, price: 1000 },
-]
-
 // Plans on the Billing page. `max` is the one plan on sale, shown as "Pro".
 // The retired $20 plan (id `pro`, "Pro (legacy)") is listed only to orgs
 // already subscribed to it; see selectablePaidPlans.
@@ -366,7 +358,6 @@ function PrepaidPlan() {
     billingOnrampV2Enabled && autumn
       ? deepLinkedPlanFor(searchParams.get('plan'), autumn.usagePlan)
       : null
-  const [confirmPlanId, setConfirmPlanId] = useState<string | null>(null)
   const [confirmUsagePlanId, setConfirmUsagePlanId] =
     useState<PaidPlanId | null>(null)
   // While `?plan=` is in the URL it drives the dialog; closing it clears the
@@ -393,9 +384,6 @@ function PrepaidPlan() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkedPlan, autumn?.usagePlan])
-  const [usageProduct, setUsageProduct] = useState<
-    'sandboxes' | 'serverless-agents'
-  >('serverless-agents')
 
   useEffect(() => {
     if (pendingUsagePlan == null || autumn?.usagePlan !== pendingUsagePlan)
@@ -420,14 +408,6 @@ function PrepaidPlan() {
     if (data.url) window.location.href = data.url
     else void queryClient.invalidateQueries({ queryKey: ['autumn-billing'] })
   }
-  const concurrencyPlanMutation = useMutation({
-    mutationFn: (plan: string) => autumnSubscribeConcurrency(plan),
-    onSuccess: (d) => {
-      setConfirmPlanId(null)
-      onPurchase(d)
-    },
-    onError: (e) => notifyError("Couldn't update your subscription.", e),
-  })
   const usagePlanMutation = useMutation({
     mutationFn: (plan: 'pro' | 'max') => autumnSubscribeUsagePlan(plan),
     onSuccess: (d, plan) => {
@@ -463,8 +443,6 @@ function PrepaidPlan() {
 
   const creditBreakdown = autumn?.creditBreakdown
   const halted = autumn?.isHalted ?? false
-  const currentPlan = autumn?.concurrencyPlan ?? 'base'
-  const tier = CONCURRENCY_TIERS.find((t) => t.id === confirmPlanId)
   const selectedUsagePlan = USAGE_PLANS.find(
     (plan) => plan.id === openUsagePlanId,
   )
@@ -615,55 +593,8 @@ function PrepaidPlan() {
         ) : null}
       </div>
 
-      <div>
-        <div className="mb-4 flex gap-1 border-b">
-          {(
-            [
-              ['serverless-agents', 'Serverless agents'],
-              ['sandboxes', 'Sandboxes'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setUsageProduct(value)}
-              className={cn(
-                '-mb-px border-b-2 px-3 py-2 text-sm transition-colors',
-                usageProduct === value
-                  ? 'border-foreground text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground border-transparent',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {usageProduct === 'sandboxes' ? (
-          <div className="space-y-4">
-            <ConcurrencyCard
-              currentPlan={currentPlan}
-              maxConcurrent={autumn?.maxConcurrentSandboxes ?? 50}
-              onSelectPlan={setConfirmPlanId}
-            />
-            <UsageBreakdown />
-          </div>
-        ) : (
-          <AgentUsageBreakdown usage={autumn?.modelUsage ?? null} />
-        )}
-      </div>
+      <AgentUsageBreakdown usage={autumn?.modelUsage ?? null} />
 
-      <ConfirmDialog
-        open={!!tier}
-        onOpenChange={(o) => !o && setConfirmPlanId(null)}
-        title="Confirm subscription"
-        description={
-          tier
-            ? `Subscribe to ${tier.label} (${tier.limit} concurrent sandboxes) for $${tier.price}/mo. If a payment method is on file you'll be charged now and monthly; otherwise you'll continue to checkout.`
-            : ''
-        }
-        confirmLabel={tier ? `Subscribe — $${tier.price}/mo` : 'Subscribe'}
-        pending={concurrencyPlanMutation.isPending}
-        onConfirm={() => tier && concurrencyPlanMutation.mutate(tier.id)}
-      />
       <ConfirmDialog
         open={!!selectedUsagePlan}
         onOpenChange={(open) => !open && closeUsagePlanDialog()}
@@ -770,72 +701,6 @@ function UsagePlanCard({
             </div>
           )
         })}
-      </div>
-    </Panel>
-  )
-}
-
-function ConcurrencyCard({
-  currentPlan,
-  maxConcurrent,
-  onSelectPlan,
-}: {
-  currentPlan: string
-  maxConcurrent: number
-  onSelectPlan: (plan: string) => void
-}) {
-  return (
-    <Panel className="p-6">
-      <h2 className="mb-2 text-sm font-semibold">Concurrency</h2>
-      <p className="text-muted-foreground mb-4 text-sm">
-        You can run <strong className="text-foreground">{maxConcurrent}</strong>{' '}
-        sandboxes at once on the{' '}
-        <strong className="text-foreground">
-          {currentPlan === 'base' ? 'Base' : currentPlan}
-        </strong>{' '}
-        tier. Subscribe to a higher tier for more — billed monthly, separate
-        from usage credits.
-      </p>
-      <div className="space-y-2">
-        {CONCURRENCY_TIERS.map((tier) => {
-          const active = currentPlan === tier.id
-          return (
-            <div
-              key={tier.id}
-              className={cn(
-                'flex items-center justify-between rounded-md border px-4 py-3',
-                active && 'border-foreground/40 bg-secondary',
-              )}
-            >
-              <div>
-                <div className="text-foreground text-sm font-medium">
-                  {tier.label} — {tier.limit} concurrent
-                </div>
-                <div className="text-muted-foreground font-mono text-xs">
-                  ${tier.price}/mo
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={active}
-                onClick={() => onSelectPlan(tier.id)}
-              >
-                {active ? 'Current' : 'Subscribe'}
-              </Button>
-            </div>
-          )
-        })}
-        <p className="text-muted-foreground text-xs">
-          Need more than 1000?{' '}
-          <a
-            href="mailto:support@digger.dev"
-            className="text-foreground font-medium underline underline-offset-4"
-          >
-            Contact us
-          </a>
-          .
-        </p>
       </div>
     </Panel>
   )
@@ -1255,78 +1120,6 @@ function formatCost(cents: number): string {
   if (credits <= 0) return '0'
   if (credits < 0.01) return credits.toFixed(4)
   return formatCreditCount(cents)
-}
-
-function UsageBreakdown() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['sandbox-usage'],
-    queryFn: () => getSandboxUsage(30),
-  })
-  const rows = data?.sandboxes ?? []
-
-  const columns: Column<(typeof rows)[number]>[] = [
-    {
-      key: 'sandbox',
-      header: 'Sandbox',
-      cell: (r) => (
-        <span className="flex items-center gap-2">
-          <code className="text-foreground font-mono text-xs">
-            {r.sandboxId}
-          </code>
-          <span className="text-muted-foreground text-xs">{r.status}</span>
-        </span>
-      ),
-    },
-    {
-      key: 'runtime',
-      header: 'Runtime',
-      align: 'right',
-      cell: (r) => (
-        <span className="text-muted-foreground font-mono text-xs">
-          {formatDuration(r.seconds)}
-        </span>
-      ),
-    },
-    {
-      key: 'cost',
-      header: 'Cost',
-      align: 'right',
-      cell: (r) => (
-        <span className="text-foreground font-mono text-xs font-medium">
-          {formatCost(r.costCents)}
-        </span>
-      ),
-    },
-  ]
-
-  return (
-    <Panel className="overflow-hidden">
-      <div className="px-6 pt-6">
-        <h2 className="text-sm font-semibold">Usage by sandbox</h2>
-        <p className="text-muted-foreground mt-1 text-xs">
-          Compute cost over the last {data?.windowDays ?? 30} days (disk overage
-          not included).
-        </p>
-      </div>
-      <div className="mt-3">
-        <ResourceTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.sandboxId}
-          loading={isLoading}
-          empty={<EmptyState title="No recent sandbox usage to show yet." />}
-        />
-      </div>
-      {rows.length > 0 ? (
-        <div className="flex items-center justify-between border-t px-6 py-3 text-sm font-medium">
-          <span className="text-muted-foreground">Total</span>
-          <span className="text-foreground font-mono">
-            {formatCost(data?.totalCents ?? 0)}
-          </span>
-        </div>
-      ) : null}
-    </Panel>
-  )
 }
 
 /* ── Invoices ─────────────────────────────────────────────────────────────── */
