@@ -3110,7 +3110,7 @@ test("opencomputer.toml [egress] allow is split into domains and CIDRs and valid
         "",
       ].join("\n"),
     );
-    const read = await readManifest(root);
+    let read = await readManifest(root);
     assert.equal(read.region, "au");
     assert.deepEqual(read.egress, {
       domains: ["*.cypen.io", "api.github.com"],
@@ -3130,6 +3130,16 @@ test("opencomputer.toml [egress] allow is split into domains and CIDRs and valid
     await assert.rejects(readManifest(root), /is not a domain/);
     await manifest('[egress]\nallow = "api.github.com"\n');
     await assert.rejects(readManifest(root), /allow must be a list/);
+    await manifest('[egress]\nfixed_ips = "au"\n');
+    assert.deepEqual(await readManifest(root), { schema: 1, id: "cypen", name: "Cypen", fixedIps: "au" });
+    await manifest('[egress]\nfixed_ips = "au"\nallow = ["api.github.com"]\n');
+    read = await readManifest(root);
+    assert.equal(read.fixedIps, "au");
+    assert.deepEqual(read.egress, { domains: ["api.github.com"], cidrs: [] });
+    await manifest('[egress]\nfixed_ips = true\n');
+    await assert.rejects(readManifest(root), /fixed_ips must be a region/);
+    await manifest('[egress]\nfixed_ips = "Sydney"\n');
+    await assert.rejects(readManifest(root), /fixed_ips must be a region/);
     await manifest('[egress]\ndeny = ["a.com"]\n');
     await assert.rejects(readManifest(root), /unknown key "deny"/);
     await manifest('egress = ["a.com"]\n');

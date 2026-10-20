@@ -55,6 +55,7 @@ export interface TemplateBuildArtifact {
   models: Array<{ provider: string; model: string }>;
   region?: string;
   egress?: { domains: string[]; cidrs: string[] };
+  fixedIps?: string;
 }
 
 export interface TemplateBuildBundle {
@@ -336,6 +337,7 @@ export async function buildTemplateProject(
       models: built.models,
       ...(built.region ? { region: built.region } : {}),
       ...(built.egress ? { egress: built.egress } : {}),
+      ...(built.fixedIps ? { fixedIps: built.fixedIps } : {}),
     });
     for (const connection of built.connections)
       compiledConnections.add(connection);

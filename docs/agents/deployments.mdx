@@ -53,6 +53,10 @@ only the hosts it needs, add an `[egress]` table with an `allow` list to the
 agent's `opencomputer.toml` and deploy again. See
 [Outbound network](/agents/egress) for what each entry allows and the rules.
 
+To have its traffic leave from fixed IP addresses that others can allowlist,
+set `fixed_ips` in the same table. See
+[Fixed IP addresses](/agents/egress#fixed-ip-addresses).
+
 ## Select an agent and environment
 
 Clients identify an agent with `agent-id@alias`:

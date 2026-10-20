@@ -3149,6 +3149,7 @@ describe("managed agents proxy", () => {
             createdAt: "2026-07-30T00:00:00.000Z",
             region: "au",
             egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] },
+            fixedIps: "au",
             artifact: { bucket: "private-bucket" },
             imageArn: "arn:aws:private",
           },
@@ -3209,6 +3210,7 @@ describe("managed agents proxy", () => {
             ],
             region: "au",
             egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] },
+            fixedIps: "au",
             source: {
               digest,
               size: source.length,
@@ -3275,9 +3277,9 @@ describe("managed agents proxy", () => {
     });
     expect(
       JSON.parse(String((fetchSpy.mock.calls[2]?.[1] as RequestInit).body)),
-    ).toMatchObject({ region: "au", egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] } });
+    ).toMatchObject({ region: "au", egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] }, fixedIps: "au" });
     const published = await response.json();
-    expect(published).toMatchObject({ region: "au", egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] } });
+    expect(published).toMatchObject({ region: "au", egress: { domains: ["*.cypen.io"], cidrs: ["10.0.0.0/8"] }, fixedIps: "au" });
     expect(JSON.stringify(published)).not.toMatch(
       /bucket|imageArn|arn:aws|uploads\.test/i,
     );

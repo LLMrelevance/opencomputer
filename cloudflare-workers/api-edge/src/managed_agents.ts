@@ -319,7 +319,9 @@ async function publicErrorResponse(
               ? 'The region in opencomputer.toml is not supported. Use a Modal region, such as "us", "eu-west" or "au".'
               : backendCode === "invalid_egress"
                 ? 'The [egress] allow list in opencomputer.toml is invalid. Use domains ("api.github.com", "*.example.com"), IP addresses or CIDRs, at most 64 of each.'
-                : "The agent request was invalid.";
+                : backendCode === "invalid_fixed_ips"
+                  ? 'The [egress] fixed_ips region in opencomputer.toml is not supported. https://managedagents.opencomputer.dev/v1/egress-ips lists the regions, such as "au".'
+                  : "The agent request was invalid.";
   } else if (upstream.status === 401 || upstream.status === 403) {
     message = "The agent request was not authorized.";
   } else if (upstream.status === 404) {
@@ -352,6 +354,8 @@ async function publicErrorResponse(
         message =
           "Slack could not verify that conversation. Check its ID and app membership.";
       }
+    } else if (backendCode === "fixed_ips_unsupported") {
+      message = "This deployment's fixed IPs need a Modal sandbox.";
     } else {
       message = "The agent request conflicts with the current state.";
     }
@@ -363,7 +367,10 @@ async function publicErrorResponse(
         ? FREE_CREDITS_PAYWALL
         : "The agent request requires additional prepaid credits.";
   } else if (upstream.status >= 500) {
-    message = "The agent service is temporarily unavailable.";
+    message =
+      backendCode === "fixed_ips_unavailable"
+        ? "Fixed IPs are not available in this region right now. Try again shortly."
+        : "The agent service is temporarily unavailable.";
   }
   const headers = new Headers({ "content-type": "application/json" });
   const retryAfter = upstream.headers.get("retry-after");
@@ -586,6 +593,7 @@ function publicDeployment(value: unknown): Record<string, unknown> {
     createdAt: deployment.createdAt,
     ...(typeof deployment.region === "string" ? { region: deployment.region } : {}),
     ...(publicEgress(deployment.egress) ? { egress: publicEgress(deployment.egress)! } : {}),
+    ...(typeof deployment.fixedIps === "string" ? { fixedIps: deployment.fixedIps } : {}),
     ...(Array.isArray(deployment.models)
       ? {
           models: deployment.models.flatMap((value) => {
@@ -2668,6 +2676,8 @@ async function deploySourceAgent(
       ...(body.region !== undefined ? { region: body.region } : {}),
       // Validated by the service, which answers 400 invalid_egress (work 057).
       ...(body.egress !== undefined ? { egress: body.egress } : {}),
+      // Validated by the service, which answers 400 invalid_fixed_ips (work 073).
+      ...(body.fixedIps !== undefined ? { fixedIps: body.fixedIps } : {}),
       ...(body.projectDeployment && typeof body.projectDeployment === "object"
         ? { projectDeployment: body.projectDeployment }
         : {}),
