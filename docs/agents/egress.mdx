@@ -69,6 +69,39 @@ The API rejects it too, with `400 invalid_egress`, if you call
 `"egress": { "domains": [...], "cidrs": [...] }`; the CLI splits `allow` into
 these two lists for you.
 
+## Fixed IP addresses
+
+To have the sandbox's traffic leave from a fixed set of IP addresses, for
+example so a customer can allowlist your agent, set `fixed_ips` to a region:
+
+```toml
+[egress]
+fixed_ips = "au"
+```
+
+All of the sandbox's outbound traffic then leaves from that region's
+addresses. A region can have more than one; successive tool calls take turns
+between them, so allowlist every address the region lists. The regions and
+their addresses are public:
+
+```bash
+curl https://managedagents.opencomputer.dev/v1/egress-ips
+```
+
+```json
+{ "regions": { "au": { "ipv4": ["209.71.97.179", "209.71.110.167"] }, ... } }
+```
+
+- `fixed_ips` works with or without `allow`. With both, the sandbox reaches
+  only the allowed hosts, and reaches them from the fixed addresses.
+- If the region's addresses are unreachable, the sandbox has no network rather
+  than falling back to other addresses.
+- The region of `fixed_ips` is independent of the agent's `region`; pick the
+  same one to keep latency down.
+
+An unknown region stops the deploy, and the API answers `400 invalid_fixed_ips`
+to `"fixedIps": "<region>"` on `POST /v1/deployments`.
+
 ## Changing the list
 
 A change applies to sandboxes started after the deploy. A sandbox that is
