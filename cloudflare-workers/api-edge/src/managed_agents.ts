@@ -24,6 +24,10 @@ export interface ManagedAgentsCaller {
   orgID: string;
   userID: string | null;
   role?: string;
+  /** The organization's computer (work 080); absent for people's keys. */
+  principal?: "computer";
+  /** The computer session (Slack thread) the key was minted for. */
+  sessionKey?: string;
 }
 
 const DEFAULT_MANAGED_AGENTS_API_URL = "https://managedagents.opencomputer.dev";
@@ -101,6 +105,8 @@ export async function mintManagedAgentsAssertion(
   };
   if (caller.userID) payload.user_id = caller.userID;
   if (caller.role) payload.role = caller.role;
+  if (caller.principal) payload.principal = caller.principal;
+  if (caller.principal && caller.sessionKey) payload.session_key = caller.sessionKey;
   const encoder = new TextEncoder();
   const signingInput =
     `${b64url(encoder.encode(JSON.stringify(header)))}.` +
@@ -2691,6 +2697,28 @@ async function deploySourceAgent(
   return publicSuccessResponse(deploymentResponse, "POST", "/deployments");
 }
 
+// Routes that create, attach, grant or revoke a credential (work 080). A
+// computer key may read and use connections (`POST /connections/:service/fetch`)
+// but never change who can reach what: a thread can ask, only a person grants.
+// Reads stay open; so do the automation routes the computer needs (work 067).
+const COMPUTER_FETCH_ROUTE = /^\/connections\/[^/]+\/fetch$/;
+
+export function isGrantRoute(method: string, suffix: string): boolean {
+  if (method === "GET" || method === "HEAD") return false;
+  if (/^\/connections(?:\/|$)/.test(suffix)) {
+    return !(method === "POST" && COMPUTER_FETCH_ROUTE.test(suffix));
+  }
+  return (
+    /^\/projects\/[^/]+\/service-connections$/.test(suffix) ||
+    /^\/(?:projects\/[^/]+\/)?model-access(?:\/|$)/.test(suffix) ||
+    isLinearRouteSuffix(suffix) ||
+    /^\/channels(?:\/|$)/.test(suffix) ||
+    suffix === "/channel-connections/claim" ||
+    suffix === "/github/connect" ||
+    /^\/projects\/[^/]+\/github(?:\/(?:connect|attach))?$/.test(suffix)
+  );
+}
+
 function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
   // The organization's computer: only the contract's routes (work 052).
   if (isComputerRouteSuffix(suffix)) return isComputerRoute(method, suffix);
@@ -3545,6 +3573,21 @@ export async function proxyManagedAgents(
   }
   if (!isAllowedManagedAgentsRoute(request.method.toUpperCase(), suffix)) {
     return Response.json({ error: "route not found" }, { status: 404 });
+  }
+  if (
+    caller.principal === "computer" &&
+    isGrantRoute(request.method.toUpperCase(), suffix)
+  ) {
+    return Response.json(
+      {
+        error: {
+          code: "computer_key_forbidden",
+          message:
+            "The computer cannot connect, attach or grant credentials; a person does that from Slack or the dashboard.",
+        },
+      },
+      { status: 403 },
+    );
   }
   // The computer is a dashboard surface in v1; API keys do not reach it.
   if (

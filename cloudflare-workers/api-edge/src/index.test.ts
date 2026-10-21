@@ -647,8 +647,8 @@ describe("/internal/computer-keys", () => {
     const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${ts}.${body}`));
     return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
   };
-  const post = async (secret: string, orgID: string, authEnv: Env) => {
-    const body = JSON.stringify({ org_id: orgID });
+  const post = async (secret: string, orgID: string, authEnv: Env, extra: Record<string, unknown> = {}) => {
+    const body = JSON.stringify({ org_id: orgID, ...extra });
     const ts = Math.floor(Date.now() / 1000).toString();
     return worker.fetch(
       new Request("https://app.opencomputer.dev/internal/computer-keys", {
@@ -687,5 +687,24 @@ describe("/internal/computer-keys", () => {
     expect(ttl).toBeLessThanOrEqual(3600_000);
     expect(runs[0][1]).toBe("org-x");
     expect(runs[0][2]).toBe("computer");
+    expect(runs[0][8]).toBeNull();
+  });
+
+  it("records the session a key is for, and refuses a malformed one", async () => {
+    const runs: unknown[][] = [];
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (...args: unknown[]) => ({
+          first: async () => (sql.includes("FROM orgs") ? { id: "org-x" } : null),
+          run: async () => { runs.push(args); return {}; },
+        }),
+      }),
+    };
+    const authEnv = { ...env, OC_MANAGED_CRED_HMAC_SECRET: MANAGED, OPENCOMPUTER_DB: db } as unknown as Env;
+    expect((await post(MANAGED, "org-x", authEnv, { session_key: "T1:C1:1.2" })).status).toBe(200);
+    expect(runs[0][8]).toBe("T1:C1:1.2");
+    expect((await post(MANAGED, "org-x", authEnv, { session_key: "T1:C1" })).status).toBe(400);
+    expect((await post(MANAGED, "org-x", authEnv, { session_key: 7 })).status).toBe(400);
+    expect(runs).toHaveLength(1);
   });
 });
