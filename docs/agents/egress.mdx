@@ -15,7 +15,8 @@ name = "Support"
 [egress]
 allow = [
   "api.github.com",   # exact domain
-  "*.example.com",    # wildcard: example.com and every subdomain
+  "example.com",      # exact domain
+  "*.example.com",    # wildcard: every subdomain, not example.com itself
   "203.0.113.10",     # IP address
   "10.20.0.0/16",     # CIDR
 ]
@@ -30,10 +31,13 @@ refused.
 | Entry | Allows |
 | --- | --- |
 | `"api.github.com"` | HTTPS (TLS on port 443) to that host |
-| `"*.example.com"` | HTTPS to `example.com` and any subdomain |
+| `"*.example.com"` | HTTPS to any subdomain, at any depth, but not `example.com` itself |
 | `"203.0.113.10"`, `"2001:db8::1"` | any protocol and port to that address |
 | `"10.20.0.0/16"`, `"2001:db8::/32"` | any protocol and port to that range |
 
+- **A wildcard does not cover its own domain.** `"*.example.com"` allows
+  `api.example.com` and `a.b.example.com`, not `example.com`. To reach both,
+  list `"example.com"` and `"*.example.com"`.
 - **Domains cover HTTPS on port 443 only.** Plain `http://`, other ports, and
   non-TLS protocols to a domain are refused. To reach those, list the
   destination's IP address or CIDR instead.
