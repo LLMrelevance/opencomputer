@@ -64,7 +64,11 @@ import {
   trackUpsellShown,
   upgradeHref,
 } from '@/lib/billing-onramp'
-import { getManagedProject } from '@/managed-agents/api'
+import {
+  getManagedMemoryResources,
+  getManagedProject,
+} from '@/managed-agents/api'
+import { SECURITY_FINDINGS_RESOURCE } from '@/managed-agents/security/catalog'
 import {
   projectEnvironmentMode,
   projectEnvironmentSearch,
@@ -335,12 +339,25 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate()
   const projectId = projectIdFromPath(location.pathname)
   const computerEnabled = user?.computerEnabled ?? false
+  // A CVE Swarm project is the one that declares the findings resource; only
+  // those get the Swarm grid in their nav.
+  const swarmResources = useQuery({
+    queryKey: ['managed-memory-resources', projectId],
+    queryFn: () =>
+      getManagedMemoryResources({ projectId: projectId!, environment: 'default' }),
+    enabled: Boolean(managedAgentsExperimentEnabled && projectId),
+    staleTime: 60_000,
+  })
+  const swarmEnabled = (swarmResources.data?.resources ?? []).some(
+    (resource) => resource.id === SECURITY_FINDINGS_RESOURCE,
+  )
   const nav = managedAgentsExperimentEnabled
     ? managedAgentsNav({
         projectId,
         durableSessionsEnabled: user?.durableSessionsEnabled ?? false,
         infrastructureEnabled: user?.infrastructureEnabled ?? false,
         computerEnabled,
+        swarmEnabled,
       })
     : LEGACY_NAV
   const activeCollapsibleGroup = nav.find(

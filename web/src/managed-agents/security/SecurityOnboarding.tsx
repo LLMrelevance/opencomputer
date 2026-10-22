@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   FolderGit2,
   Loader2,
   Radar,
-  RotateCcw,
   Rocket,
   ShieldCheck,
   X,
@@ -39,15 +39,16 @@ import {
   composeCellPrompt,
   composeLaunchPrompt,
   DEFAULT_SWARM_MODEL,
+  runManifestDocumentId,
   SCAN_DECLARATION,
   SECURITY_FINDINGS_RESOURCE,
   SECURITY_SWARM_TEMPLATE_REPOSITORY,
   SEED_CVES,
+  serializeRunManifest,
   swarmCells,
   type LaunchedCell,
   type SwarmPayload,
 } from './catalog'
-import { SwarmGrid } from './SwarmGrid'
 
 // Each cell is one microVM session, so cap the matrix to keep an accidental
 // 20×20 launch from spinning up hundreds of sandboxes at once.
@@ -71,10 +72,8 @@ async function waitForInstallation(id: string) {
   return installation
 }
 
-type SwarmRun = { runId: string; cells: LaunchedCell[] }
-
 export default function SecurityOnboarding() {
-  const [run, setRun] = useState<SwarmRun | null>(null)
+  const navigate = useNavigate()
 
   // Step 1 — GitHub connection. An active install means the boundary is set.
   const connections = useQuery({
@@ -166,13 +165,14 @@ export default function SecurityOnboarding() {
     onError: (error) => notifyError("Couldn't deploy the CVE Swarm.", error),
   })
 
-  // Launch fans the payload's repository × CVE matrix out into one bound,
-  // labelled session per cell. Each cell gets its own findings document, created
-  // first (a binding to a missing document fails admission), then a session
-  // bound read-write to it with labels that tie it back to the run. The sessions
-  // run in parallel; the grid below polls them by `swarmRun` label.
+  // Launch fans the payload's repository × CVE matrix out into one bound session
+  // per cell. Each cell gets its own findings document, created first (a binding
+  // to a missing document fails admission), then a session bound read-write to
+  // it. The session ids are recorded in a run manifest document so the swarm
+  // page can rebuild the grid after we navigate to it — the ids don't survive in
+  // React state across the route change.
   const launch = useMutation({
-    mutationFn: async (payload: SwarmPayload): Promise<SwarmRun> => {
+    mutationFn: async (payload: SwarmPayload): Promise<{ projectId: string }> => {
       if (!deployed) throw new Error('Deploy the swarm before launching.')
       const cells = swarmCells(payload)
       if (cells.length === 0) {
@@ -212,9 +212,26 @@ export default function SecurityOnboarding() {
           return { cell, sessionId }
         }),
       )
-      return { runId, cells: launched }
+      // Persist the run so the swarm page is reachable by URL and survives a
+      // reload. agentWrites stays disabled — only cell findings are agent-owned.
+      await createManagedMemoryDocument({
+        projectId: deployed.projectId,
+        resource: SECURITY_FINDINGS_RESOURCE,
+        environment: 'default',
+        id: runManifestDocumentId(runId),
+        title: `Swarm run ${runId}`,
+        text: serializeRunManifest({
+          runId,
+          model: payload.model,
+          target: payload.target,
+          cells: launched,
+        }),
+        agentWrites: 'disabled',
+      })
+      return { projectId: deployed.projectId }
     },
-    onSuccess: (started) => setRun(started),
+    onSuccess: ({ projectId }) =>
+      navigate(`/projects/${encodeURIComponent(projectId)}/swarm`),
     onError: (error) => notifyError("Couldn't start the swarm.", error),
   })
 
@@ -312,32 +329,14 @@ export default function SecurityOnboarding() {
           index={2}
           current={step}
           icon={Radar}
-          title={run ? 'Swarm running' : 'Launch swarm from payload'}
+          title="Launch swarm from payload"
           done={false}
         >
-          {run && deployed ? (
-            <div className="space-y-4">
-              <SwarmGrid
-                projectId={deployed.projectId}
-                runId={run.runId}
-                cells={run.cells}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setRun(null)}
-              >
-                <RotateCcw />
-                New swarm
-              </Button>
-            </div>
-          ) : (
-            <PayloadBuilder
-              canLaunch={!!deployed}
-              launching={launch.isPending}
-              onLaunch={(payload) => launch.mutate(payload)}
-            />
-          )}
+          <PayloadBuilder
+            canLaunch={!!deployed}
+            launching={launch.isPending}
+            onLaunch={(payload) => launch.mutate(payload)}
+          />
         </StepCard>
       </div>
     </div>

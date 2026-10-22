@@ -1,6 +1,14 @@
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ExternalLink, Loader2, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import {
+  ArrowUpRight,
+  ExternalLink,
+  Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   getManagedAgentSession,
@@ -21,6 +29,7 @@ import {
 // each cell's findings document (for the verdict) until every cell settles.
 type CellState = {
   cell: SwarmCell
+  sessionId: string
   sessionStatus?: string
   finding: CellFinding | null
 }
@@ -128,6 +137,7 @@ export function SwarmGrid({
 
   const states: CellState[] = cells.map(({ cell, sessionId }) => ({
     cell,
+    sessionId,
     sessionStatus: statusBySession[sessionId],
     finding: findings.data?.[cellDocumentId(runId, cell)] ?? null,
   }))
@@ -174,11 +184,12 @@ export function SwarmGrid({
         ) : null}
       </div>
 
-      <div className="grid gap-2.5 sm:grid-cols-2">
+      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {states.map((state) => (
           <CellTile
             key={cellDocumentId(runId, state.cell)}
             state={state}
+            projectId={projectId}
           />
         ))}
       </div>
@@ -211,7 +222,13 @@ function SummaryPill({
   )
 }
 
-function CellTile({ state }: { state: CellState }) {
+function CellTile({
+  state,
+  projectId,
+}: {
+  state: CellState
+  projectId: string
+}) {
   const phase = cellPhase(state)
   const [owner, name] = state.cell.repository.split('/')
   return (
@@ -233,17 +250,26 @@ function CellTile({ state }: { state: CellState }) {
           {state.finding.reasoning}
         </p>
       ) : null}
-      {state.finding?.pullRequest ? (
-        <a
-          href={state.finding.pullRequest}
-          target="_blank"
-          rel="noreferrer"
-          className="text-status-running mt-2 inline-flex items-center gap-1 text-xs hover:underline"
+      <div className="mt-2 flex items-center gap-3">
+        <Link
+          to={`/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(state.sessionId)}`}
+          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs hover:underline"
         >
-          <ExternalLink className="size-3" />
-          Fix pull request
-        </a>
-      ) : null}
+          <ArrowUpRight className="size-3" />
+          Open session
+        </Link>
+        {state.finding?.pullRequest ? (
+          <a
+            href={state.finding.pullRequest}
+            target="_blank"
+            rel="noreferrer"
+            className="text-status-running inline-flex items-center gap-1 text-xs hover:underline"
+          >
+            <ExternalLink className="size-3" />
+            Fix pull request
+          </a>
+        ) : null}
+      </div>
     </div>
   )
 }
