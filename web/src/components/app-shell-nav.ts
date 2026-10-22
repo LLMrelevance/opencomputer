@@ -14,6 +14,7 @@ import {
   Monitor,
   Package,
   Plug,
+  Radar,
   Rocket,
   Settings,
   Webhook,
@@ -40,6 +41,7 @@ export function managedAgentsNav(options: {
   durableSessionsEnabled: boolean
   infrastructureEnabled: boolean
   computerEnabled?: boolean
+  swarmEnabled?: boolean
 }): NavGroup[] {
   const groups: NavGroup[] = []
 
@@ -57,6 +59,11 @@ export function managedAgentsNav(options: {
       },
       {
         items: [
+          // Only CVE Swarm projects declare the findings resource, so the
+          // Swarm grid is offered just for them.
+          ...(options.swarmEnabled
+            ? [{ to: `${projectPath}/swarm`, label: 'Swarm', icon: Radar }]
+            : []),
           {
             to: `${projectPath}/deployments`,
             label: 'Deployments',

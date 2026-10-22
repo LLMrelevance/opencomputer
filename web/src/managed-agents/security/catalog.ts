@@ -80,8 +80,8 @@ export type SwarmPayload = {
 
 // A single unit of swarm work: one repository checked against one CVE. The
 // launch fans the payload's repository × CVE matrix into one cell per pair, and
-// starts one bound, labelled session for each so they run in parallel and each
-// writes its own findings document.
+// starts one bound session for each so they run in parallel and each writes its
+// own findings document.
 export type SwarmCell = {
   readonly repository: string
   readonly cveId: string
@@ -124,6 +124,80 @@ function slug(value: string): string {
 // reads them all back as a collection.
 export function cellDocumentId(runId: string, cell: SwarmCell): string {
   return `${runId}__${slug(cell.repository)}__${slug(cell.cveId)}`
+}
+
+// The launch records what it started as a run manifest, persisted as its own
+// document under the findings resource so the swarm page can rebuild the grid
+// after navigation or a reload (the session ids live in the manifest, not in
+// React state). The `manifest__` prefix keeps it clear of the cell findings
+// documents, whose ids are `<runId>__<repo>__<cve>`.
+export const SWARM_MANIFEST_PREFIX = 'manifest__'
+
+export function runManifestDocumentId(runId: string): string {
+  return `${SWARM_MANIFEST_PREFIX}${runId}`
+}
+
+export type SwarmRunManifest = {
+  readonly runId: string
+  readonly model: string
+  readonly target: string
+  readonly cells: readonly LaunchedCell[]
+}
+
+export function serializeRunManifest(manifest: SwarmRunManifest): string {
+  return JSON.stringify(manifest)
+}
+
+// Rebuild a manifest from its stored text. Returns null for anything that is
+// not a well-formed manifest with at least one launched cell, so the swarm page
+// can fall back to its empty state rather than render a broken grid.
+export function parseRunManifest(text: string): SwarmRunManifest | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const obj = parsed as Record<string, unknown>
+  if (typeof obj.runId !== 'string' || !Array.isArray(obj.cells)) return null
+  const cells: LaunchedCell[] = []
+  for (const entry of obj.cells) {
+    if (!entry || typeof entry !== 'object') return null
+    const e = entry as Record<string, unknown>
+    const cell = e.cell as Record<string, unknown> | undefined
+    if (
+      !cell ||
+      typeof cell.repository !== 'string' ||
+      typeof cell.cveId !== 'string' ||
+      typeof e.sessionId !== 'string'
+    ) {
+      return null
+    }
+    cells.push({
+      cell: { repository: cell.repository, cveId: cell.cveId },
+      sessionId: e.sessionId,
+    })
+  }
+  if (cells.length === 0) return null
+  return {
+    runId: obj.runId,
+    model: typeof obj.model === 'string' ? obj.model : '',
+    target: typeof obj.target === 'string' ? obj.target : '',
+    cells,
+  }
+}
+
+// From a page of findings-resource documents, the id of the most recently
+// updated run manifest — the run the swarm page shows by default. Null when no
+// swarm has run in the project yet.
+export function latestManifestId(
+  docs: readonly { id: string; updatedAt: string }[],
+): string | null {
+  const manifests = docs
+    .filter((doc) => doc.id.startsWith(SWARM_MANIFEST_PREFIX))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  return manifests[0]?.id ?? null
 }
 
 // One cell's first-run input: a single repository checked against a single CVE.

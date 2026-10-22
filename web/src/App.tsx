@@ -43,6 +43,9 @@ const ManagedTemplateNew = lazy(() => import('./managed-agents/TemplateNew'))
 const ManagedSecurityOnboarding = lazy(
   () => import('./managed-agents/security/SecurityOnboarding'),
 )
+const ManagedProjectSwarm = lazy(
+  () => import('./managed-agents/security/ProjectSwarm'),
+)
 const ModelAccessCallback = lazy(
   () => import('./managed-agents/ModelAccessCallback'),
 )
@@ -117,6 +120,10 @@ export default function App() {
             <Route
               path="projects/:projectId/sessions/:sessionId"
               element={<ManagedSessionDetail />}
+            />
+            <Route
+              path="projects/:projectId/swarm"
+              element={<ManagedProjectSwarm />}
             />
             <Route
               path="projects/:projectId/:tab"

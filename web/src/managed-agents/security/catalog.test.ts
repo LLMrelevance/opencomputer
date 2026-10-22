@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   cellDocumentId,
   composeCellPrompt,
+  latestManifestId,
   parseCellFinding,
+  parseRunManifest,
+  runManifestDocumentId,
+  serializeRunManifest,
   swarmCells,
   type SwarmPayload,
+  type SwarmRunManifest,
 } from './catalog'
 
 const payload: SwarmPayload = {
@@ -91,5 +96,56 @@ describe('parseCellFinding', () => {
       disposition: 'not-exposed',
       reasoning: 'Not installed.',
     })
+  })
+})
+
+describe('run manifest', () => {
+  const manifest: SwarmRunManifest = {
+    runId: 'run-abc',
+    model: 'GLM-5.3',
+    target: 'https://app.example.com',
+    cells: [
+      { cell: { repository: 'acme/web', cveId: 'CVE-2026-1' }, sessionId: 's1' },
+      { cell: { repository: 'acme/api', cveId: 'CVE-2026-1' }, sessionId: 's2' },
+    ],
+  }
+
+  it('keeps the manifest document clear of cell findings documents', () => {
+    expect(runManifestDocumentId('run-abc')).toBe('manifest__run-abc')
+    expect(runManifestDocumentId('run-abc')).not.toBe(
+      cellDocumentId('run-abc', { repository: 'acme/web', cveId: 'CVE-2026-1' }),
+    )
+  })
+
+  it('round-trips through serialize and parse', () => {
+    expect(parseRunManifest(serializeRunManifest(manifest))).toEqual(manifest)
+  })
+
+  it('rejects malformed or empty manifests', () => {
+    expect(parseRunManifest('not json')).toBeNull()
+    expect(parseRunManifest('{}')).toBeNull()
+    expect(parseRunManifest(JSON.stringify({ runId: 'r', cells: [] }))).toBeNull()
+    expect(
+      parseRunManifest(
+        JSON.stringify({ runId: 'r', cells: [{ cell: { repository: 'a/b' } }] }),
+      ),
+    ).toBeNull()
+  })
+
+  it('picks the most recently updated manifest, ignoring findings docs', () => {
+    const latest = latestManifestId([
+      { id: 'run-old__acme-web__cve-2026-1', updatedAt: '2026-10-22T10:00:00Z' },
+      { id: 'manifest__run-old', updatedAt: '2026-10-22T09:00:00Z' },
+      { id: 'manifest__run-new', updatedAt: '2026-10-22T12:00:00Z' },
+    ])
+    expect(latest).toBe('manifest__run-new')
+  })
+
+  it('returns null when no manifest has been written', () => {
+    expect(
+      latestManifestId([
+        { id: 'run-x__acme-web__cve-1', updatedAt: '2026-10-22T10:00:00Z' },
+      ]),
+    ).toBeNull()
   })
 })
