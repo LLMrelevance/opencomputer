@@ -19,7 +19,18 @@ export function isComputerRoute(method: string, suffix: string): boolean {
   }
   if (method === "GET" && suffix === "/computer/sessions") return true;
   if (method === "POST" && suffix === "/computer/slack/install") return true;
-  return method === "DELETE" && suffix === "/computer/slack";
+  if (method === "DELETE" && suffix === "/computer/slack") return true;
+  // Choose your agent (work 081).
+  if (
+    (method === "PUT" || method === "DELETE") &&
+    suffix === "/computer/agent/claude"
+  ) {
+    return true;
+  }
+  if (method === "POST" && suffix === "/computer/agent/claude/resume") {
+    return true;
+  }
+  return method === "PUT" && suffix === "/computer/agent/choice";
 }
 
 // The backend's codes are stable; the messages are written here so no
@@ -39,6 +50,18 @@ export const COMPUTER_ERROR_MESSAGES: Record<string, string> = {
     "No Slack workspace is linked to this organization.",
   computer_slack_already_linked:
     "That Slack workspace is already linked to another organization.",
+  // Choose your agent (work 081).
+  computer_agent_token_format:
+    "That's not a setup token. It starts with sk-ant-oat01-.",
+  computer_agent_token_rejected:
+    "That token didn't work. Run claude setup-token again and paste the new one.",
+  computer_agent_rate_limited: "Too many tries. Wait a few minutes.",
+  computer_agent_already_connected:
+    "Someone else already connected a subscription for this organization.",
+  computer_agent_connect_in_slack: "Connect from Slack: !claude connect",
+  computer_agent_disabled: "Your workspace admin turned this off.",
+  computer_agent_not_member:
+    "You're not a member of this organization's Slack workspace.",
 };
 
 /** Fallback copy for a computer route when the backend's code is unknown. */
@@ -82,9 +105,95 @@ function publicComputer(value: unknown): Record<string, unknown> | null {
   };
 }
 
+const AGENT_CHOICES = new Set(["claude", "codex", "credits"]);
+const SUBSCRIPTION_HEALTH = new Set([
+  "ok",
+  "unchecked",
+  "paused",
+  "limited",
+  "invalid",
+]);
+
+function publicSlackUser(value: unknown): Record<string, string> | null {
+  const user = record(value);
+  if (
+    !user ||
+    typeof user.id !== "string" ||
+    typeof user.name !== "string" ||
+    typeof user.teamName !== "string"
+  ) {
+    return null;
+  }
+  return { id: user.id, name: user.name, teamName: user.teamName };
+}
+
+// `undefined` when the value breaks the contract; `null` is a real "none".
+function publicSubscription(
+  value: unknown,
+): Record<string, unknown> | null | undefined {
+  if (value === null) return null;
+  const subscription = record(value);
+  if (
+    !subscription ||
+    subscription.provider !== "claude" ||
+    typeof subscription.health !== "string" ||
+    !SUBSCRIPTION_HEALTH.has(subscription.health) ||
+    typeof subscription.setAt !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    provider: "claude",
+    health: subscription.health,
+    ...(typeof subscription.limitedUntil === "string"
+      ? { limitedUntil: subscription.limitedUntil }
+      : {}),
+    setAt: subscription.setAt,
+  };
+}
+
+/**
+ * The person's agent block (work 081), rebuilt field by field. Null when the
+ * backend sends none or one that breaks the contract: the dashboard then
+ * skips the agent step rather than guessing.
+ */
+export function publicComputerAgent(
+  value: unknown,
+): Record<string, unknown> | null {
+  const agent = record(value);
+  if (!agent) return null;
+  const choice = agent.choice ?? null;
+  if (
+    choice !== null &&
+    !(typeof choice === "string" && AGENT_CHOICES.has(choice))
+  ) {
+    return null;
+  }
+  const subscription = publicSubscription(agent.subscription ?? null);
+  if (subscription === undefined) return null;
+  if (typeof agent.managedModel !== "string" || !agent.managedModel) {
+    return null;
+  }
+  const linkedSlackUser = publicSlackUser(agent.linkedSlackUser);
+  return {
+    choice,
+    linked: agent.linked === true,
+    ...(linkedSlackUser ? { linkedSlackUser } : {}),
+    subscription,
+    managedModel: agent.managedModel,
+  };
+}
+
+function requiredAgent(value: unknown): Record<string, unknown> {
+  const agent = publicComputerAgent(value);
+  if (!agent) throw new Error("Invalid computer agent");
+  return agent;
+}
+
 function publicComputerStatus(body: Record<string, unknown>) {
   const slack = record(body.slack) ?? {};
   const github = record(body.github) ?? {};
+  const agent = publicComputerAgent(body.agent);
   return {
     computer: publicComputer(body.computer),
     slack: {
@@ -113,6 +222,7 @@ function publicComputerStatus(body: Record<string, unknown>) {
         : [],
     },
     plan: body.plan === "paid" ? "paid" : "free",
+    ...(agent ? { agent } : {}),
   };
 }
 
@@ -164,6 +274,23 @@ export function publicComputerBody(
     const url = httpsURL(body.url);
     if (!url) throw new Error("Invalid Slack install URL");
     return { url };
+  }
+  if (method === "PUT" && suffix === "/computer/agent/claude") {
+    const via = body.via;
+    if (via !== "own" && via !== "pool" && via !== "none") {
+      throw new Error("Invalid computer agent connect response");
+    }
+    return {
+      agent: requiredAgent(body.agent),
+      verified: body.verified === true,
+      via,
+    };
+  }
+  if (
+    (method === "POST" && suffix === "/computer/agent/claude/resume") ||
+    (method === "PUT" && suffix === "/computer/agent/choice")
+  ) {
+    return { agent: requiredAgent(body.agent) };
   }
   throw new Error("Unsupported computer response");
 }

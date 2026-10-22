@@ -6681,6 +6681,201 @@ describe("organization computer (work 052)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // Choose your agent (work 081).
+  const agent = {
+    choice: null,
+    linked: true,
+    linkedSlackUser: { id: "U1", name: "igor", teamName: "Acme" },
+    subscription: {
+      provider: "claude",
+      health: "limited",
+      limitedUntil: "2026-10-22T15:00:00.000Z",
+      setAt: "2026-10-22T10:00:00.000Z",
+    },
+    managedModel: "Claude Opus 5.5",
+  };
+
+  it("passes the agent block of GET /computer field by field", async () => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({
+        ...computerStatus,
+        agent: {
+          ...agent,
+          owner: "web:user_test",
+          linkedSlackUser: { ...agent.linkedSlackUser, email: "i@acme.dev" },
+          subscription: {
+            ...agent.subscription,
+            fingerprint: "fp_private",
+            usage5hPct: 42,
+          },
+        },
+      }),
+    );
+    await expect(response.json()).resolves.toEqual({ ...computerStatus, agent });
+  });
+
+  it("keeps the minimal agent block and omits absent optionals", async () => {
+    const minimal = {
+      choice: "credits",
+      linked: false,
+      subscription: null,
+      managedModel: "Claude Opus 5.5",
+    };
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({ ...computerStatus, agent: minimal }),
+    );
+    await expect(response.json()).resolves.toEqual({
+      ...computerStatus,
+      agent: minimal,
+    });
+  });
+
+  it.each([
+    ["an unknown choice", { ...agent, choice: "gemini" }],
+    ["an unknown health", { ...agent, subscription: { ...agent.subscription, health: "great" } }],
+    ["an unknown provider", { ...agent, subscription: { ...agent.subscription, provider: "openai" } }],
+    ["no managed model", { ...agent, managedModel: undefined }],
+    ["a non-object", "claude"],
+  ])("drops an agent block with %s", async (_name, value) => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({ ...computerStatus, agent: value }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(computerStatus);
+  });
+
+  it("forwards a connect with its body and returns the contract", async () => {
+    const token = `sk-ant-oat01-${"a".repeat(40)}`;
+    const logs = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "info").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ];
+    let forwarded = "";
+    const fetchMock = vi.fn(async (_target: URL, init: RequestInit) => {
+      forwarded = await new Response(init.body).text();
+      return Response.json({
+        agent: { ...agent, choice: "claude" },
+        verified: false,
+        via: "none",
+        sealed: "private",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await proxyManagedAgents(
+        new Request(
+          `https://app.opencomputer.dev${dashboard}/computer/agent/claude`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token }),
+          },
+        ),
+        env,
+        caller,
+        dashboard,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        agent: { ...agent, choice: "claude" },
+        verified: false,
+        via: "none",
+      });
+      expect(JSON.parse(forwarded)).toEqual({ token });
+      const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+      expect(target.toString()).toBe(
+        "https://managedagents.test/v1/computer/agent/claude",
+      );
+      expect(init.method).toBe("PUT");
+      for (const spy of logs) {
+        expect(JSON.stringify(spy.mock.calls)).not.toContain(token);
+      }
+    } finally {
+      for (const spy of logs) spy.mockRestore();
+    }
+  });
+
+  it("refuses a connect response with an unknown via", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { response } = await call(
+      "PUT",
+      "/computer/agent/claude",
+      Response.json({ agent, verified: true, via: "somewhere" }),
+    );
+    error.mockRestore();
+    expect(response.status).toBe(502);
+  });
+
+  it.each([
+    ["POST", "/computer/agent/claude/resume"],
+    ["PUT", "/computer/agent/choice"],
+  ])("returns the agent from %s %s", async (method, path) => {
+    const { response, fetchMock } = await call(
+      method,
+      path,
+      Response.json({ agent: { ...agent, extra: true }, other: 1 }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ agent });
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(target.toString()).toBe(`https://managedagents.test/v1${path}`);
+    expect(init.method).toBe(method);
+  });
+
+  it("answers a disconnect with no content", async () => {
+    const { response, fetchMock } = await call(
+      "DELETE",
+      "/computer/agent/claude",
+      new Response(null, { status: 204 }),
+    );
+    expect(response.status).toBe(204);
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe(
+      "https://managedagents.test/v1/computer/agent/claude",
+    );
+  });
+
+  it.each([
+    ["GET", "/computer/agent/claude"],
+    ["POST", "/computer/agent/claude"],
+    ["GET", "/computer/agent/choice"],
+    ["DELETE", "/computer/agent/choice"],
+    ["PUT", "/computer/agent/codex"],
+    ["GET", "/computer/agent/claude/resume"],
+  ])("refuses agent route %s %s outside the contract", async (method, path) => {
+    const { response, fetchMock } = await call(method, path, Response.json({}));
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [422, "computer_agent_token_format", "That's not a setup token. It starts with sk-ant-oat01-."],
+    [422, "computer_agent_token_rejected", "That token didn't work. Run claude setup-token again and paste the new one."],
+    [429, "computer_agent_rate_limited", "Too many tries. Wait a few minutes."],
+    [409, "computer_agent_already_connected", "Someone else already connected a subscription for this organization."],
+    [409, "computer_agent_connect_in_slack", "Connect from Slack: !claude connect"],
+    [403, "computer_agent_disabled", "Your workspace admin turned this off."],
+    [403, "computer_agent_not_member", "You're not a member of this organization's Slack workspace."],
+  ])("maps %s %s to fixed copy", async (status, code, message) => {
+    const { response } = await call(
+      "PUT",
+      "/computer/agent/claude",
+      Response.json(
+        { error: { code, message: "upstream detail sk-ant-oat01-private" } },
+        { status },
+      ),
+    );
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: { code, message } });
+  });
+
   it("keeps the computer off the API-key mount", async () => {
     const { response, fetchMock } = await call(
       "GET",

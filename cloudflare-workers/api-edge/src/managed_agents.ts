@@ -3791,7 +3791,7 @@ export async function proxyManagedAgents(
     if (!upstream.ok) return publicErrorResponse(upstream, suffix);
     if (upstream.status === 204) return new Response(null, { status: 204 });
     if (isComputerRouteSuffix(suffix)) {
-      // Unlinking Slack has no response body in the contract.
+      // Unlinking Slack and disconnecting the agent have no response body.
       if (method === "DELETE") {
         return new Response(null, {
           status: 204,
