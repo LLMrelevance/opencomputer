@@ -2565,6 +2565,13 @@ async function waitForAgentEvent(
   }
 }
 
+/** One memory binding on session creation; see `POST /managed-agents/sessions`. */
+export type ManagedSessionMemoryBindingInput = {
+  scope: 'document' | 'collection'
+  id?: string
+  access?: 'read' | 'read-write'
+}
+
 export async function runManagedAgent(
   agentId: string,
   input: string,
@@ -2572,13 +2579,19 @@ export async function runManagedAgent(
   options: {
     onSession?: (sessionId: string) => void
     signal?: AbortSignal
+    memory?: Record<string, ManagedSessionMemoryBindingInput>
   } = {},
 ) {
+  const hasMemory = options.memory && Object.keys(options.memory).length > 0
   const created = await apiFetch(
     '/managed-agents/sessions',
     {
       method: 'POST',
-      body: JSON.stringify({ agentId, source: 'playground' }),
+      body: JSON.stringify({
+        agentId,
+        source: 'playground',
+        ...(hasMemory ? { memory: options.memory } : {}),
+      }),
       signal: options.signal,
     },
     sessionCreateSchema,

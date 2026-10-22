@@ -11,6 +11,11 @@ export const SECURITY_SWARM_TEMPLATE_REPOSITORY =
 // Default model for the swarm. GLM via the org's model-access connection.
 export const DEFAULT_SWARM_MODEL = 'GLM-5.3'
 
+// The document-memory resource the swarm writes its verdicts to. Must match the
+// `defineMemory` id in the template (agents/cve-swarm/memory/findings.ts); the
+// launch binds a per-run document under it so the run can persist findings.
+export const SECURITY_FINDINGS_RESOURCE = 'cve-findings'
+
 // The attestation the operator must accept before a scan can launch. Recorded
 // with the run; the scan stays passive in code regardless.
 export const SCAN_DECLARATION =
@@ -98,8 +103,8 @@ export function composeLaunchPrompt(payload: SwarmPayload): string {
     `Model: ${payload.model}`,
     '',
     payload.target
-      ? 'Run scan_surface on the target to fingerprint it passively, then prove_reachability across the repository × CVE matrix, then report_findings once.'
-      : 'Run prove_reachability across the repository × CVE matrix, then report_findings once.',
+      ? 'Run scan_surface on the target to fingerprint it passively, then prove reachability across the repository × CVE matrix by reading each clone, then save the findings once with memory_save.'
+      : 'Prove reachability across the repository × CVE matrix by reading each clone, then save the findings once with memory_save.',
     'For any EXPOSED verdict, open_fix_pull_request (dependency-only, single pin). Honor PUBLISH_ENABLED — dry run unless it is enabled.',
   ].filter((line): line is string => line !== null)
   return lines.join('\n')

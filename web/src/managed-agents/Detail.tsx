@@ -70,6 +70,7 @@ import {
   type ManagedAgentSessionSummary,
   type ManagedAgentSummary,
   type ManagedProjectOverview,
+  type ManagedSessionMemoryBindingInput,
 } from './api'
 import { ManagedAgentChatTransport } from './chat-transport'
 import { useLiveSessionEvents } from './use-live-session-events'
@@ -112,6 +113,7 @@ import { AgentMarkdown } from './AgentMarkdown'
 import { projectAgentPreviewReady } from './preview-state'
 import {
   projectCloneCommand,
+  templateFirstRunMemory,
   templateFirstRunPrompt,
 } from './template-continuation'
 
@@ -274,6 +276,7 @@ function PlaygroundChat({
   session,
   events,
   initialPrompt,
+  initialMemory,
   onInitialPromptConsumed,
   onSessionFinished,
 }: {
@@ -282,6 +285,7 @@ function PlaygroundChat({
   session?: ManagedAgentSession
   events: ManagedAgentEvent[]
   initialPrompt?: string
+  initialMemory?: Record<string, ManagedSessionMemoryBindingInput>
   onInitialPromptConsumed?: () => void
   onSessionFinished?: (sessionId: string) => void
 }) {
@@ -301,14 +305,19 @@ function PlaygroundChat({
     () => historicalMessages(session, events),
     [events, session],
   )
+  // Bindings are fixed when the session is created, so capture them once; the
+  // security launch clears its navigation state right after the first send.
+  const [memoryBinding] = useState(() => initialMemory)
   const transport = useMemo(
     () =>
       new ManagedAgentChatTransport(
         agentId,
         startingSessionId,
         setLiveSessionId,
+        {},
+        memoryBinding,
       ),
-    [agentId, startingSessionId],
+    [agentId, startingSessionId, memoryBinding],
   )
   const debugEvents = useQuery({
     queryKey: ['managed-agent-session-events', liveSessionId],
@@ -679,6 +688,7 @@ export default function ManagedAgentDetail({
   const playgroundAlias = previewAlias ?? environment
   const requestedPlaygroundId = playgroundSessionIdFromSearch(location.search)
   const firstRunPrompt = templateFirstRunPrompt(location.state)
+  const firstRunMemory = templateFirstRunMemory(location.state)
   const [newSessionKey, setNewSessionKey] = useState(() => crypto.randomUUID())
   const [adoptedPlaygroundId, setAdoptedPlaygroundId] = useState<string>()
   const projectId = project?.project.id
@@ -1270,6 +1280,7 @@ export default function ManagedAgentDetail({
                   selectedPlaygroundEvents.data ?? EMPTY_MANAGED_AGENT_EVENTS
                 }
                 initialPrompt={firstRunPrompt}
+                initialMemory={firstRunMemory}
                 onInitialPromptConsumed={() => {
                   void navigate(
                     { pathname: location.pathname, search: location.search },

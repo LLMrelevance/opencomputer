@@ -24,6 +24,7 @@ import { notifyError } from '@/lib/errors'
 import {
   addManagedGitHubConnection,
   attachManagedGitHub,
+  createManagedMemoryDocument,
   createManagedTemplateInstallation,
   finalizeManagedTemplateInstallation,
   getManagedGitHubConnections,
@@ -39,6 +40,7 @@ import {
   composeLaunchPrompt,
   DEFAULT_SWARM_MODEL,
   SCAN_DECLARATION,
+  SECURITY_FINDINGS_RESOURCE,
   SECURITY_SWARM_TEMPLATE_REPOSITORY,
   SEED_CVES,
   type SwarmPayload,
@@ -155,13 +157,41 @@ export default function SecurityOnboarding() {
     onError: (error) => notifyError("Couldn't deploy the CVE Swarm.", error),
   })
 
-  function launch(payload: SwarmPayload) {
-    const prompt = composeLaunchPrompt(payload)
-    if (!deployed) return
-    void navigate(templatePlaygroundPath(deployed), {
-      state: { templateFirstRunPrompt: prompt },
-    })
-  }
+  // Launch binds a per-run findings document to the session it starts. The
+  // document must exist before the session, so a binding to a missing document
+  // fails admission; we PUT it first, then navigate with the binding in state
+  // for the playground to create the session with.
+  const launch = useMutation({
+    mutationFn: async (payload: SwarmPayload) => {
+      if (!deployed) throw new Error('Deploy the swarm before launching.')
+      const runId = `run-${crypto.randomUUID()}`
+      await createManagedMemoryDocument({
+        projectId: deployed.projectId,
+        resource: SECURITY_FINDINGS_RESOURCE,
+        environment: 'default',
+        id: runId,
+        title: `CVE swarm ${runId}`,
+        text: '{}',
+      })
+      return { prompt: composeLaunchPrompt(payload), runId }
+    },
+    onSuccess: ({ prompt, runId }) => {
+      if (!deployed) return
+      void navigate(templatePlaygroundPath(deployed), {
+        state: {
+          templateFirstRunPrompt: prompt,
+          templateFirstRunMemory: {
+            [SECURITY_FINDINGS_RESOURCE]: {
+              scope: 'document',
+              id: runId,
+              access: 'read-write',
+            },
+          },
+        },
+      })
+    },
+    onError: (error) => notifyError("Couldn't start the swarm.", error),
+  })
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -260,7 +290,11 @@ export default function SecurityOnboarding() {
           title="Launch swarm from payload"
           done={false}
         >
-          <PayloadBuilder canLaunch={!!deployed} onLaunch={launch} />
+          <PayloadBuilder
+            canLaunch={!!deployed}
+            launching={launch.isPending}
+            onLaunch={(payload) => launch.mutate(payload)}
+          />
         </StepCard>
       </div>
     </div>
@@ -357,9 +391,11 @@ function StepCard({
 
 function PayloadBuilder({
   canLaunch,
+  launching,
   onLaunch,
 }: {
   canLaunch: boolean
+  launching: boolean
   onLaunch: (payload: SwarmPayload) => void
 }) {
   const [target, setTarget] = useState('')
@@ -520,10 +556,10 @@ function PayloadBuilder({
 
       <div className="flex items-center gap-3">
         <Button
-          disabled={!ready || !canLaunch}
+          disabled={!ready || !canLaunch || launching}
           onClick={() => onLaunch(payload)}
         >
-          <Radar />
+          {launching ? <Loader2 className="animate-spin" /> : <Radar />}
           Launch swarm
         </Button>
         <Button

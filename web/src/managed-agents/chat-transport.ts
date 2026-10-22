@@ -3,6 +3,7 @@ import {
   continueManagedAgentSession,
   runManagedAgent,
   type ManagedAgentEvent,
+  type ManagedSessionMemoryBindingInput,
 } from './api'
 import { UIMessageChunkPacer, type ChunkPacerOptions } from './chunk-pacer'
 
@@ -38,6 +39,10 @@ export class ManagedAgentChatTransport implements ChatTransport<UIMessage> {
     sessionId: string | undefined,
     private readonly onSession: (sessionId: string) => void,
     private readonly pacing: ChunkPacerOptions | false = {},
+    // Memory bindings for the session this transport creates on its first send.
+    // Bindings are fixed at creation, so they apply only when there is no
+    // sessionId yet; continuing a session ignores them.
+    private readonly memory?: Record<string, ManagedSessionMemoryBindingInput>,
   ) {
     this.sessionId = sessionId
   }
@@ -163,6 +168,7 @@ export class ManagedAgentChatTransport implements ChatTransport<UIMessage> {
                 )
               : runManagedAgent(this.agentId, input, onEvent, {
                   signal: abortSignal,
+                  memory: this.memory,
                   onSession: (sessionId) => {
                     this.sessionId = sessionId
                     this.onSession(sessionId)
