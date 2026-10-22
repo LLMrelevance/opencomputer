@@ -40,6 +40,9 @@ const ManagedProjectOnboarding = lazy(
   () => import('./managed-agents/ProjectOnboarding'),
 )
 const ManagedTemplateNew = lazy(() => import('./managed-agents/TemplateNew'))
+const ManagedSecurityOnboarding = lazy(
+  () => import('./managed-agents/security/SecurityOnboarding'),
+)
 const ModelAccessCallback = lazy(
   () => import('./managed-agents/ModelAccessCallback'),
 )
@@ -49,6 +52,15 @@ function NewProject() {
   const templatePath = templateDeployPathFromSearch(searchParams)
   if (templatePath) return <Navigate to={templatePath} replace />
   return <ManagedProjectOnboarding />
+}
+
+// `app.opencomputer.dev/?security=1` drops into the independent CVE Swarm
+// onboarding path; the param survives the login round-trip via returnTo.
+function HomeRoute() {
+  const [searchParams] = useSearchParams()
+  if (searchParams.get('security') === '1')
+    return <Navigate to="/security" replace />
+  return managedAgentsExperimentEnabled ? <ManagedAgentsHome /> : <Dashboard />
 }
 
 export default function App() {
@@ -65,16 +77,8 @@ export default function App() {
         </Route>
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
-            <Route
-              index
-              element={
-                managedAgentsExperimentEnabled ? (
-                  <ManagedAgentsHome />
-                ) : (
-                  <Dashboard />
-                )
-              }
-            />
+            <Route index element={<HomeRoute />} />
+            <Route path="security" element={<ManagedSecurityOnboarding />} />
             <Route
               path="getting-started"
               element={
@@ -87,10 +91,7 @@ export default function App() {
             />
             <Route path="computer" element={<ManagedComputer />} />
             {managedAgentsExperimentEnabled ? (
-              <Route
-                path="automations"
-                element={<ManagedAgentsHome list />}
-              />
+              <Route path="automations" element={<ManagedAgentsHome list />} />
             ) : null}
             <Route
               path="model-access/callback"
