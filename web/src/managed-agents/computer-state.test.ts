@@ -4,6 +4,7 @@ import {
   computerStatusSchema,
   computerSlackInstallSchema,
   type Computer,
+  type ComputerAgent,
   type ComputerSession,
   type ComputerStatus,
 } from './computer-api'
@@ -12,10 +13,12 @@ import {
   LIVE_SESSION_POLL_MS,
   SESSION_POLL_MS,
   SLOW_POLL_MS,
+  agentSummary,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
   firstTaskLead,
+  linkedSlackUserLine,
   setupStep,
   slackLinks,
   relativeTime,
@@ -221,6 +224,119 @@ describe('computer setup', () => {
 
   it('never holds the page on setup for sessions it could not read', () => {
     expect(setupStep(status({ slack, github }), undefined)).toBeNull()
+  })
+})
+
+describe('choosing the coding agent (work 081)', () => {
+  const slack = { installed: true, teamName: 'Acme' }
+  const fresh: ComputerAgent = {
+    choice: null,
+    linked: false,
+    subscription: null,
+    managedModel: 'Claude Opus 5.5',
+  }
+  const connected: ComputerAgent = {
+    ...fresh,
+    choice: 'claude',
+    subscription: {
+      provider: 'claude',
+      health: 'ok',
+      setAt: '2026-10-22T10:00:00.000Z',
+    },
+  }
+
+  it('comes first for a fresh organization', () => {
+    expect(setupStep(status({ agent: fresh }), undefined)).toBe('agent')
+  })
+
+  it('moves on once free credits are chosen or a subscription connected', () => {
+    const credits = { ...fresh, choice: 'credits' as const }
+    expect(setupStep(status({ agent: credits }), undefined)).toBe('slack')
+    expect(setupStep(status({ agent: connected }), undefined)).toBe('slack')
+    // A subscription without a recorded choice still counts.
+    expect(
+      setupStep(status({ agent: { ...connected, choice: null } }), undefined),
+    ).toBe('slack')
+  })
+
+  it('never sends an installed organization back to it', () => {
+    expect(setupStep(status({ slack, agent: fresh }), [])).toBe('github')
+  })
+
+  it('is skipped by an older backend that sends no agent', () => {
+    expect(setupStep(status(), undefined)).toBe('slack')
+    expect(
+      computerStatusSchema.parse({
+        computer: null,
+        slack: { installed: false },
+        github: { connected: false, installations: [] },
+        plan: 'free',
+      }).agent,
+    ).toBeUndefined()
+  })
+
+  it('keeps Codex on the step, on a later visit too', () => {
+    // Codex records interest and runs nothing yet: the step ends only with
+    // a subscription or free credits, so a reload lands on it again.
+    const codex = { ...fresh, choice: 'codex' as const }
+    expect(setupStep(status({ agent: codex }), undefined)).toBe('agent')
+    expect(setupStep(status({ slack, agent: codex }), [])).toBe('github')
+    expect(
+      setupStep(
+        status({ agent: { ...connected, choice: 'codex' } }),
+        undefined,
+      ),
+    ).toBe('slack')
+  })
+
+  it('names the linked Slack user only once Slack is in and the name is one', () => {
+    const user = { id: 'U1', name: 'maya', teamName: 'Acme' }
+    const linked = { ...connected, linked: true, linkedSlackUser: user }
+    expect(linkedSlackUserLine(linked, true)).toBe(
+      'Runs threads from @maya in Acme.',
+    )
+    expect(linkedSlackUserLine(linked, false)).toBeNull()
+    expect(linkedSlackUserLine(connected, true)).toBeNull()
+    for (const bad of [
+      { ...user, name: '' },
+      { ...user, name: 'U1' },
+      { ...user, teamName: '' },
+    ]) {
+      expect(
+        linkedSlackUserLine({ ...linked, linkedSlackUser: bad }, true),
+      ).toBeNull()
+    }
+  })
+
+  it('names what runs the threads', () => {
+    expect(agentSummary(connected)).toBe('Claude Code · your subscription')
+    expect(agentSummary({ ...fresh, choice: 'credits' })).toBe(
+      'Claude Opus 5.5 · free credits',
+    )
+  })
+
+  it('parses the agent block and refuses unknown health', () => {
+    const body = {
+      computer: null,
+      slack: { installed: false },
+      github: { connected: false, installations: [] },
+      plan: 'free',
+      agent: {
+        ...connected,
+        linked: true,
+        linkedSlackUser: { id: 'U1', name: 'maya', teamName: 'Acme' },
+      },
+    }
+    expect(computerStatusSchema.parse(body).agent).toEqual(body.agent)
+    expect(() =>
+      computerStatusSchema.parse({
+        ...body,
+        agent: {
+          ...body.agent,
+          subscription: { ...connected.subscription, health: 'weird' },
+        },
+      }),
+    ).toThrow()
   })
 })
 

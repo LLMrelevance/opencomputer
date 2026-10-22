@@ -26,6 +26,38 @@ export const computerSchema = z.object({
   updatedAt: z.string(),
 })
 
+// The person's coding agent (serverless-agents-ws work 081, "API"): what
+// they chose at setup step 1 and the health of the subscription they
+// connected. Health only: usage figures stay in `!claude status`.
+export const agentChoiceSchema = z.enum(['claude', 'codex', 'credits'])
+
+export const agentSubscriptionHealthSchema = z.enum([
+  'ok',
+  'unchecked',
+  'paused',
+  'limited',
+  'invalid',
+])
+
+export const computerAgentSchema = z.object({
+  choice: agentChoiceSchema.nullable(),
+  /** This dashboard user is linked to a Slack user (through the install). */
+  linked: z.boolean(),
+  linkedSlackUser: z
+    .object({ id: z.string(), name: z.string(), teamName: z.string() })
+    .optional(),
+  subscription: z
+    .object({
+      provider: z.literal('claude'),
+      health: agentSubscriptionHealthSchema,
+      limitedUntil: z.string().optional(),
+      setAt: z.string(),
+    })
+    .nullable(),
+  /** The model free credits run, e.g. "Claude Opus 5.5". */
+  managedModel: z.string(),
+})
+
 export const computerStatusSchema = z.object({
   computer: computerSchema.nullable(),
   slack: z.object({
@@ -42,6 +74,9 @@ export const computerStatusSchema = z.object({
     ),
   }),
   plan: z.enum(['free', 'paid']),
+  // Optional: an edge or backend without work 081 sends none, and setup then
+  // starts at Slack as before.
+  agent: computerAgentSchema.optional(),
 })
 
 export const computerSessionStatusSchema = z.enum([
@@ -69,9 +104,26 @@ export const computerSessionsSchema = z.object({
 
 export const computerSlackInstallSchema = z.object({ url: z.url() })
 
+export const computerAgentConnectSchema = z.object({
+  agent: computerAgentSchema,
+  verified: z.boolean(),
+  /** Where the token was checked: the org's computer, a spare one, or not. */
+  via: z.enum(['own', 'pool', 'none']),
+})
+
+export const computerAgentResultSchema = z.object({
+  agent: computerAgentSchema,
+})
+
 export type ComputerState = z.infer<typeof computerStateSchema>
 export type Computer = z.infer<typeof computerSchema>
 export type ComputerStatus = z.infer<typeof computerStatusSchema>
+export type ComputerAgent = z.infer<typeof computerAgentSchema>
+export type AgentChoice = z.infer<typeof agentChoiceSchema>
+export type AgentSubscriptionHealth = z.infer<
+  typeof agentSubscriptionHealthSchema
+>
+export type ComputerAgentConnect = z.infer<typeof computerAgentConnectSchema>
 export type ComputerSession = z.infer<typeof computerSessionSchema>
 export type ComputerSessionStatus = z.infer<typeof computerSessionStatusSchema>
 
@@ -117,4 +169,41 @@ export async function startComputerSlackInstall() {
 
 export async function unlinkComputerSlack() {
   await apiFetch('/managed-agents/computer/slack', { method: 'DELETE' })
+}
+
+/**
+ * Connects the person's Claude subscription. The server checks the token
+ * (about 9 s at worst) and answers in every branch, so this is never aborted:
+ * an abort could cancel the save and make "Saved" untrue.
+ */
+export function connectClaudeSubscription(token: string) {
+  return apiFetch(
+    '/managed-agents/computer/agent/claude',
+    { method: 'PUT', body: JSON.stringify({ token }) },
+    computerAgentConnectSchema,
+  )
+}
+
+export async function disconnectClaudeSubscription() {
+  await apiFetch('/managed-agents/computer/agent/claude', { method: 'DELETE' })
+}
+
+export async function resumeClaudeSubscription() {
+  return (
+    await apiFetch(
+      '/managed-agents/computer/agent/claude/resume',
+      { method: 'POST', body: '{}' },
+      computerAgentResultSchema,
+    )
+  ).agent
+}
+
+export async function setAgentChoice(choice: AgentChoice) {
+  return (
+    await apiFetch(
+      '/managed-agents/computer/agent/choice',
+      { method: 'PUT', body: JSON.stringify({ choice }) },
+      computerAgentResultSchema,
+    )
+  ).agent
 }

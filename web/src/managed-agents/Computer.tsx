@@ -58,6 +58,12 @@ import { addManagedGitHubConnection } from './api'
 import { launchAuthorizationWindow } from './authorization-window'
 import { SlackInstallButton, UnlinkSlackDialog } from './computer-slack'
 import {
+  AgentCard,
+  AgentChangeAction,
+  AgentSetup,
+  type AgentCardChoice,
+} from './AgentStep'
+import {
   computerQueryKey,
   computerSessionsQueryKey,
   createComputer,
@@ -69,6 +75,7 @@ import {
 import {
   EXAMPLE_ASKS,
   SETUP_STEPS,
+  agentSummary,
   SLACK_RETURN_PARAMS,
   alreadyLinkedCopy,
   SESSION_STATUS,
@@ -270,6 +277,7 @@ function ComputerPageContent() {
             loading={sessionsLoading}
             failed={sessions.isError}
           />
+          <AgentCard status={status.data} />
           <IdeasToTry />
         </div>
       </WithDeveloperFooter>
@@ -797,9 +805,21 @@ function Setup({
   const { computer } = status
   const failedToCreate = !computer && createError !== null
   const failed = failedToCreate || computer?.state === 'failed'
-  const position = SETUP_STEPS.indexOf(step) + 1
+  // Without the backend's agent block (an older edge), setup is the three
+  // steps it was.
+  const { agent } = status
+  const steps = SETUP_STEPS.filter((id) => id !== 'agent' || agent)
+  const position = steps.indexOf(step) + 1
+  const number = (id: SetupStep) => steps.indexOf(id) + 1
   const boot = bootProgress(status)
+  const [agentCard, setAgentCard] = useState<AgentCardChoice>(
+    agent?.choice === 'codex' ? 'codex' : 'claude',
+  )
   const done: Record<SetupStep, boolean> = {
+    // An installed organization that never chose and has no subscription
+    // reads "free credits": routing decides from the subscription row alone,
+    // so that is what runs its threads.
+    agent: Boolean(agent) && step !== 'agent',
     slack: status.slack.installed,
     github: status.github.connected,
     hello: false,
@@ -815,7 +835,7 @@ function Setup({
         <header className="max-w-2xl">
           <div className="flex items-center justify-between gap-4">
             <p className="text-muted-foreground text-sm font-medium">
-              Step {position} of {SETUP_STEPS.length}
+              Step {position} of {steps.length}
             </p>
             {/* Before Slack there is no computer to report on; while it
                 comes to life, how far along it is. */}
@@ -829,7 +849,7 @@ function Setup({
             Set up your computer
           </h1>
           <div className="mt-4 flex gap-1.5" aria-hidden>
-            {SETUP_STEPS.map((id) => (
+            {steps.map((id) => (
               <span
                 key={id}
                 className={cn(
@@ -880,8 +900,23 @@ function Setup({
           )}
         >
           <ol className="bg-panel divide-y self-start overflow-hidden rounded-xl border shadow-sm xl:[grid-area:steps]">
+            {agent ? (
+              <SetupItem
+                number={number('agent')}
+                title="Choose your coding agent"
+                state={progress('agent')}
+                summary={agentSummary(agent)}
+                doneAction={<AgentChangeAction agent={agent} />}
+              >
+                <AgentSetup
+                  agent={agent}
+                  selected={agentCard}
+                  onSelect={setAgentCard}
+                />
+              </SetupItem>
+            ) : null}
             <SetupItem
-              number={1}
+              number={number('slack')}
               title="Add OpenComputer to Slack"
               state={progress('slack')}
               summary={`In ${status.slack.teamName ?? 'your Slack workspace'}`}
@@ -900,7 +935,7 @@ function Setup({
               </p>
             </SetupItem>
             <SetupItem
-              number={2}
+              number={number('github')}
               title="Connect GitHub"
               state={progress('github')}
               summary={githubSummary(status.github)}
@@ -912,7 +947,7 @@ function Setup({
               <GitHubAction size="lg" />
             </SetupItem>
             <SetupItem
-              number={3}
+              number={number('hello')}
               title="Give it a first task"
               state={progress('hello')}
             >
@@ -953,13 +988,17 @@ function Setup({
               </p>
             </SetupItem>
           </ol>
-          <SetupContext step={step} className="xl:[grid-area:context]" />
+          <SetupContext
+            step={step}
+            agentCard={agentCard}
+            className="xl:[grid-area:context]"
+          />
           {/* The scene only uses height nobody else needs: its area is a size
               container that adds nothing to the page (no row gap either), and
               the scene shows when the space left fits it plus clearance. */}
           <div className="[container-type:size] relative hidden min-h-0 xl:block xl:[grid-area:scene]">
             <PixelScene
-              asleep={step === 'slack'}
+              asleep={step === 'agent' || step === 'slack'}
               shape={stepsRunLong ? 'compact' : 'wide'}
               className={cn(
                 'absolute inset-x-0 bottom-0 hidden',
@@ -981,9 +1020,11 @@ function Setup({
  */
 function SetupContext({
   step,
+  agentCard,
   className,
 }: {
   step: SetupStep
+  agentCard: AgentCardChoice
   className?: string
 }) {
   return (
@@ -991,7 +1032,16 @@ function SetupContext({
       aria-label="About your computer"
       className={cn('relative self-start text-sm', className)}
     >
-      {step === 'slack' ? (
+      {step === 'agent' ? (
+        <div className="bg-panel rounded-xl border p-5 shadow-sm">
+          <h2 className="font-semibold">Your agent, in the cloud</h2>
+          <p className="text-muted-foreground mt-2">
+            {agentCard === 'codex' ? 'Codex' : 'Claude Code'} on its own
+            machine, with your repos. Ask in Slack; it runs tests, opens PRs and
+            fixes CI.
+          </p>
+        </div>
+      ) : step === 'slack' ? (
         <>
           <ContextHeading>How it works</ContextHeading>
           <SlackThreadPreview />
