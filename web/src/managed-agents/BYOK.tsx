@@ -226,6 +226,17 @@ export function ManagedProjectBYOK({
               OpenAI-compatible API key. This project route overrides useModel()
               and also works when agent code selects no model.
             </PanelDescription>
+            {/* Two stores until 011 and 077 converge (work 081). */}
+            <PanelDescription className="mt-1 max-w-2xl">
+              For automations. Your computer&apos;s agent is set on{' '}
+              <Link
+                to="/computer"
+                className="hover:text-foreground underline underline-offset-4"
+              >
+                Computer
+              </Link>
+              .
+            </PanelDescription>
           </div>
         </PanelHeader>
         <PanelContent className="space-y-4">

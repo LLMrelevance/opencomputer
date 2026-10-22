@@ -1290,6 +1290,125 @@ function previewComputerMode() {
 // When the booting preview first asked for the computer.
 let previewBootSince: number | null = null
 
+// The person's coding agent (work 081). Setup starts with none chosen;
+// set up, a verified subscription linked to a Slack user. `?agent=` picks
+// another: unchecked, paused, limited, invalid, credits (free credits),
+// unlinked (free credits, not linked to Slack), or none (an older backend
+// that sends no agent block). The paste form answers by the token: one
+// containing "rejected" is refused, "taken" is someone else's, "unchecked"
+// is saved without a check; any other well-formed one is verified.
+type PreviewAgent = {
+  choice: 'claude' | 'codex' | 'credits' | null
+  linked: boolean
+  linkedSlackUser?: { id: string; name: string; teamName: string }
+  subscription: null | {
+    provider: 'claude'
+    health: 'ok' | 'unchecked' | 'paused' | 'limited' | 'invalid'
+    limitedUntil?: string
+    setAt: string
+  }
+  managedModel: string
+}
+let previewAgentState: PreviewAgent | null | undefined
+
+function previewAgent(): PreviewAgent | null {
+  if (previewAgentState !== undefined) return previewAgentState
+  const param = new URLSearchParams(window.location.search).get('agent')
+  const setup = previewComputerMode() === 'setup'
+  const linkedSlackUser = { id: 'U0PREVIEW', name: 'maya', teamName: 'Acme' }
+  const subscription = (
+    health: NonNullable<PreviewAgent['subscription']>['health'],
+  ) => ({
+    provider: 'claude' as const,
+    health,
+    ...(health === 'limited'
+      ? { limitedUntil: new Date(Date.now() + 3 * 3600_000).toISOString() }
+      : {}),
+    setAt: new Date(BASE).toISOString(),
+  })
+  const base = { managedModel: 'Claude Opus 5.5' }
+  previewAgentState =
+    param === 'none'
+      ? null
+      : param === 'credits'
+        ? {
+            ...base,
+            choice: 'credits',
+            linked: true,
+            linkedSlackUser,
+            subscription: null,
+          }
+        : param === 'unlinked'
+          ? { ...base, choice: 'credits', linked: false, subscription: null }
+          : param === 'unchecked' ||
+              param === 'paused' ||
+              param === 'limited' ||
+              param === 'invalid'
+            ? {
+                ...base,
+                choice: 'claude',
+                linked: !setup,
+                ...(setup ? {} : { linkedSlackUser }),
+                subscription: subscription(param),
+              }
+            : setup
+              ? { ...base, choice: null, linked: false, subscription: null }
+              : {
+                  ...base,
+                  choice: 'claude',
+                  linked: true,
+                  linkedSlackUser,
+                  subscription: subscription('ok'),
+                }
+  return previewAgentState
+}
+
+function previewAgentRequest(path: string, method: string, body: unknown) {
+  const agent = previewAgent()
+  if (!agent) throw new ApiError('Not found', 404, 'not_found')
+  const { token, choice } = (
+    typeof body === 'string' ? JSON.parse(body) : {}
+  ) as { token?: string; choice?: PreviewAgent['choice'] }
+  if (path.endsWith('/choice')) {
+    agent.choice = choice ?? null
+    return { agent: structuredClone(agent) }
+  }
+  if (path.endsWith('/resume')) {
+    if (agent.subscription) agent.subscription.health = 'ok'
+    return { agent: structuredClone(agent) }
+  }
+  if (method === 'DELETE') {
+    agent.subscription = null
+    return undefined
+  }
+  if (token?.includes('rejected')) {
+    throw new ApiError(
+      "That token didn't work. Run claude setup-token again and paste the new one.",
+      422,
+      'computer_agent_token_rejected',
+    )
+  }
+  if (token?.includes('taken')) {
+    throw new ApiError(
+      'Someone else already connected a subscription for this organization.',
+      409,
+      'computer_agent_already_connected',
+    )
+  }
+  const verified = !token?.includes('unchecked')
+  agent.choice = 'claude'
+  agent.subscription = {
+    provider: 'claude',
+    health: verified ? 'ok' : 'unchecked',
+    setAt: new Date().toISOString(),
+  }
+  return {
+    agent: structuredClone(agent),
+    verified,
+    via: verified ? 'pool' : 'none',
+  }
+}
+
 function previewComputer() {
   const mode = previewComputerMode()
   const setup = mode === 'setup'
@@ -1333,6 +1452,7 @@ function previewComputer() {
           ],
         },
     plan: 'free',
+    ...(previewAgent() ? { agent: structuredClone(previewAgent()) } : {}),
   }
 }
 
@@ -1784,6 +1904,9 @@ export function mockFetch<T>(path: string, options: RequestInit = {}): T {
     >
     Object.assign(me, updates)
     return me as T
+  }
+  if (method !== 'GET' && path.startsWith('/managed-agents/computer/agent/')) {
+    return previewAgentRequest(path, method, options.body) as T
   }
   if (method !== 'GET') {
     for (const [re, handler] of POST_ROUTES) {
