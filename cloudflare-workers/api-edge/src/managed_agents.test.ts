@@ -6876,6 +6876,51 @@ describe("organization computer (work 052)", () => {
     await expect(response.json()).resolves.toEqual({ error: { code, message } });
   });
 
+  it("tells a bad choice apart from a missing computer", async () => {
+    const { response } = await call(
+      "PUT",
+      "/computer/agent/choice",
+      Response.json(
+        { error: { code: "invalid_request", message: "choice must be one of claude|codex|credits (got gemini)" } },
+        { status: 400 },
+      ),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "That choice isn't valid." },
+    });
+  });
+
+  it.each([
+    ["PUT", "/computer/agent/claude"],
+    ["POST", "/computer/agent/claude/resume"],
+    ["PUT", "/computer/agent/choice"],
+  ])("reads a 404 on %s %s as the feature not being there yet", async (method, path) => {
+    const { response } = await call(
+      method,
+      path,
+      Response.json({ error: "route not found" }, { status: 404 }),
+    );
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(
+      "Connecting a subscription isn't available yet. Try again shortly.",
+    );
+  });
+
+  it("keeps the missing-computer copy for a 404 off the agent routes", async () => {
+    const { response } = await call(
+      "GET",
+      "/computer/sessions",
+      Response.json({ error: "route not found" }, { status: 404 }),
+    );
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(
+      "This organization does not have a computer yet.",
+    );
+  });
+
   it("keeps the computer off the API-key mount", async () => {
     const { response, fetchMock } = await call(
       "GET",
