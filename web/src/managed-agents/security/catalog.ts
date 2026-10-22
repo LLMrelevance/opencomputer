@@ -78,6 +78,126 @@ export type SwarmPayload = {
   readonly model: string
 }
 
+// A single unit of swarm work: one repository checked against one CVE. The
+// launch fans the payload's repository × CVE matrix into one cell per pair, and
+// starts one bound, labelled session for each so they run in parallel and each
+// writes its own findings document.
+export type SwarmCell = {
+  readonly repository: string
+  readonly cveId: string
+}
+
+// Expand the payload into the matrix of cells. Fan-out needs explicit
+// repositories and CVEs — the "all connected repositories" / "full feed"
+// shorthands only make sense for the single-session controller, so a caller
+// that means to fan out must resolve those to concrete lists first.
+export function swarmCells(payload: SwarmPayload): SwarmCell[] {
+  const cells: SwarmCell[] = []
+  for (const repository of payload.repositories) {
+    for (const cveId of payload.cveIds) {
+      cells.push({ repository, cveId })
+    }
+  }
+  return cells
+}
+
+// Reduce a free-form identifier to the characters a memory document id and a
+// label value share safely: lower-case alphanumerics and dashes. Keeps the
+// id/label stable and collision-resistant without depending on slash handling.
+function slug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+// The per-cell findings document id, unique within the run. Each worker binds
+// this document read-write and saves the one finding it proves; the reducer
+// reads them all back as a collection.
+export function cellDocumentId(runId: string, cell: SwarmCell): string {
+  return `${runId}__${slug(cell.repository)}__${slug(cell.cveId)}`
+}
+
+// Labels every cell session carries, so the grid can list a run's sessions with
+// `label.swarmRun=<runId>` and map each back to its cell.
+export const SWARM_RUN_LABEL = 'swarmRun'
+export const SWARM_CELL_LABEL = 'swarmCell'
+
+export function cellLabels(
+  runId: string,
+  cell: SwarmCell,
+): Record<string, string> {
+  return {
+    [SWARM_RUN_LABEL]: runId,
+    [SWARM_CELL_LABEL]: slug(`${cell.repository}--${cell.cveId}`),
+  }
+}
+
+// One cell's first-run input: a single repository checked against a single CVE.
+// The worker agent already collapses to a 1×1 matrix when the payload names one
+// of each, so this is the launch prompt narrowed to the cell.
+export function composeCellPrompt(payload: SwarmPayload, cell: SwarmCell): string {
+  const lines = [
+    'Launch a CVE swarm cell against my own assets.',
+    '',
+    `Declaration: ${SCAN_DECLARATION}`,
+    payload.target
+      ? `Target endpoint (passive scan only): ${payload.target}`
+      : null,
+    `Repository: ${cell.repository}`,
+    `CVE: ${cell.cveId}`,
+    `Model: ${payload.model}`,
+    '',
+    payload.target
+      ? 'Run scan_surface on the target once to fingerprint it passively, then prove whether this CVE is reachable in this repository by reading the clone, then save the one finding with memory_save.'
+      : 'Prove whether this CVE is reachable in this repository by reading the clone, then save the one finding with memory_save.',
+    'If the verdict is EXPOSED, open_fix_pull_request (dependency-only, single pin). Honor PUBLISH_ENABLED — dry run unless it is enabled.',
+  ].filter((line): line is string => line !== null)
+  return lines.join('\n')
+}
+
+export type CveDisposition = 'exposed' | 'not-exposed' | 'needs-review'
+
+export type CellFinding = {
+  readonly disposition: CveDisposition
+  readonly reasoning?: string
+  readonly pullRequest?: string
+}
+
+// Read the one finding a cell worker saved to its findings document. The worker
+// writes { summary, findings: [...] }; a 1×1 cell has a single finding, which
+// is the cell's verdict. Returns null while the document is still the empty
+// placeholder (the worker has not saved yet) or if the text is not the expected
+// shape — the grid treats both as "no verdict yet".
+export function parseCellFinding(text: string): CellFinding | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const findings = (parsed as { findings?: unknown }).findings
+  if (!Array.isArray(findings) || findings.length === 0) return null
+  const first: unknown = (findings as unknown[])[0]
+  if (!first || typeof first !== 'object') return null
+  const disposition = (first as { disposition?: unknown }).disposition
+  if (
+    disposition !== 'exposed' &&
+    disposition !== 'not-exposed' &&
+    disposition !== 'needs-review'
+  ) {
+    return null
+  }
+  const reasoning = (first as { reasoning?: unknown }).reasoning
+  const pullRequest = (first as { pullRequest?: unknown }).pullRequest
+  return {
+    disposition,
+    ...(typeof reasoning === 'string' ? { reasoning } : {}),
+    ...(typeof pullRequest === 'string' && pullRequest ? { pullRequest } : {}),
+  }
+}
+
 // Compose the controller's first-run input from the payload. This is exactly
 // what the swarm agent receives as its opening instruction when the session
 // starts — the scan → prove → report pipeline, with fixes gated by the

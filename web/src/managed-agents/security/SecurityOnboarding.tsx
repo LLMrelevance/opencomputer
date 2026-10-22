@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
 import {
   FolderGit2,
   Loader2,
   Radar,
+  RotateCcw,
   Rocket,
   ShieldCheck,
   X,
@@ -31,20 +31,28 @@ import {
   getManagedTemplateInstallation,
   inspectManagedTemplate,
   putAgentRuntimeVariable,
+  startManagedAgentSession,
 } from '../api'
+import { installedTemplateAgentId } from '../template-continuation'
 import {
-  installedTemplateAgentId,
-  templatePlaygroundPath,
-} from '../template-continuation'
-import {
+  cellDocumentId,
+  cellLabels,
+  composeCellPrompt,
   composeLaunchPrompt,
   DEFAULT_SWARM_MODEL,
   SCAN_DECLARATION,
   SECURITY_FINDINGS_RESOURCE,
   SECURITY_SWARM_TEMPLATE_REPOSITORY,
   SEED_CVES,
+  swarmCells,
+  type SwarmCell,
   type SwarmPayload,
 } from './catalog'
+import { SwarmGrid } from './SwarmGrid'
+
+// Each cell is one microVM session, so cap the matrix to keep an accidental
+// 20×20 launch from spinning up hundreds of sandboxes at once.
+const MAX_SWARM_CELLS = 24
 
 const STEPS = ['Connect GitHub', 'Deploy swarm', 'Launch swarm'] as const
 
@@ -64,8 +72,10 @@ async function waitForInstallation(id: string) {
   return installation
 }
 
+type SwarmRun = { runId: string; cells: SwarmCell[] }
+
 export default function SecurityOnboarding() {
-  const navigate = useNavigate()
+  const [run, setRun] = useState<SwarmRun | null>(null)
 
   // Step 1 — GitHub connection. An active install means the boundary is set.
   const connections = useQuery({
@@ -157,39 +167,51 @@ export default function SecurityOnboarding() {
     onError: (error) => notifyError("Couldn't deploy the CVE Swarm.", error),
   })
 
-  // Launch binds a per-run findings document to the session it starts. The
-  // document must exist before the session, so a binding to a missing document
-  // fails admission; we PUT it first, then navigate with the binding in state
-  // for the playground to create the session with.
+  // Launch fans the payload's repository × CVE matrix out into one bound,
+  // labelled session per cell. Each cell gets its own findings document, created
+  // first (a binding to a missing document fails admission), then a session
+  // bound read-write to it with labels that tie it back to the run. The sessions
+  // run in parallel; the grid below polls them by `swarmRun` label.
   const launch = useMutation({
-    mutationFn: async (payload: SwarmPayload) => {
+    mutationFn: async (payload: SwarmPayload): Promise<SwarmRun> => {
       if (!deployed) throw new Error('Deploy the swarm before launching.')
+      const cells = swarmCells(payload)
+      if (cells.length === 0) {
+        throw new Error('Add at least one repository and one CVE to swarm.')
+      }
+      if (cells.length > MAX_SWARM_CELLS) {
+        throw new Error(
+          `That is ${cells.length} cells (repos × CVEs). Trim to ${MAX_SWARM_CELLS} or fewer — each cell is its own sandbox.`,
+        )
+      }
       const runId = `run-${crypto.randomUUID()}`
-      await createManagedMemoryDocument({
-        projectId: deployed.projectId,
-        resource: SECURITY_FINDINGS_RESOURCE,
-        environment: 'default',
-        id: runId,
-        title: `CVE swarm ${runId}`,
-        text: '{}',
-      })
-      return { prompt: composeLaunchPrompt(payload), runId }
-    },
-    onSuccess: ({ prompt, runId }) => {
-      if (!deployed) return
-      void navigate(templatePlaygroundPath(deployed), {
-        state: {
-          templateFirstRunPrompt: prompt,
-          templateFirstRunMemory: {
-            [SECURITY_FINDINGS_RESOURCE]: {
-              scope: 'document',
-              id: runId,
-              access: 'read-write',
+      const agentId = `${deployed.projectAgentId}@default`
+      await Promise.all(
+        cells.map(async (cell) => {
+          const id = cellDocumentId(runId, cell)
+          await createManagedMemoryDocument({
+            projectId: deployed.projectId,
+            resource: SECURITY_FINDINGS_RESOURCE,
+            environment: 'default',
+            id,
+            title: `${cell.repository} · ${cell.cveId}`,
+            text: '{}',
+          })
+          await startManagedAgentSession(agentId, composeCellPrompt(payload, cell), {
+            memory: {
+              [SECURITY_FINDINGS_RESOURCE]: {
+                scope: 'document',
+                id,
+                access: 'read-write',
+              },
             },
-          },
-        },
-      })
+            labels: cellLabels(runId, cell),
+          })
+        }),
+      )
+      return { runId, cells }
     },
+    onSuccess: (started) => setRun(started),
     onError: (error) => notifyError("Couldn't start the swarm.", error),
   })
 
@@ -287,14 +309,32 @@ export default function SecurityOnboarding() {
           index={2}
           current={step}
           icon={Radar}
-          title="Launch swarm from payload"
+          title={run ? 'Swarm running' : 'Launch swarm from payload'}
           done={false}
         >
-          <PayloadBuilder
-            canLaunch={!!deployed}
-            launching={launch.isPending}
-            onLaunch={(payload) => launch.mutate(payload)}
-          />
+          {run && deployed ? (
+            <div className="space-y-4">
+              <SwarmGrid
+                projectId={deployed.projectId}
+                runId={run.runId}
+                cells={run.cells}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRun(null)}
+              >
+                <RotateCcw />
+                New swarm
+              </Button>
+            </div>
+          ) : (
+            <PayloadBuilder
+              canLaunch={!!deployed}
+              launching={launch.isPending}
+              onLaunch={(payload) => launch.mutate(payload)}
+            />
+          )}
         </StepCard>
       </div>
     </div>
@@ -423,7 +463,12 @@ function PayloadBuilder({
   // of "this web application" — so a launch needs a real https(s) URL. An empty
   // or malformed target blocks the button.
   const targetValid = /^https?:\/\/.+/i.test(payload.target)
-  const ready = declaration && cveIds.length > 0 && targetValid
+  // Fan-out needs explicit repositories: one session per repository × CVE cell.
+  const ready =
+    declaration &&
+    cveIds.length > 0 &&
+    repositories.length > 0 &&
+    targetValid
 
   function addRepo() {
     const value = repoInput.trim().replace(/^https?:\/\/github\.com\//i, '')
@@ -454,7 +499,7 @@ function PayloadBuilder({
 
       <Field
         label="Repositories"
-        hint="Repos from your GitHub install to swarm. Leave empty to scan every connected repository."
+        hint="Repos from your GitHub install to swarm. Each repository is checked against each CVE as its own parallel cell."
       >
         <div className="flex gap-2">
           <Input
@@ -573,6 +618,12 @@ function PayloadBuilder({
         {!canLaunch ? (
           <span className="text-muted-foreground text-xs">
             Deploy the swarm above to launch.
+          </span>
+        ) : ready ? (
+          <span className="text-muted-foreground text-xs">
+            {repositories.length} × {cveIds.length} ={' '}
+            {repositories.length * cveIds.length} parallel cell
+            {repositories.length * cveIds.length === 1 ? '' : 's'}
           </span>
         ) : null}
       </div>

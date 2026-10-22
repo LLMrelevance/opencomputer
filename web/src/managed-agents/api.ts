@@ -1963,12 +1963,22 @@ export async function getManagedAgentDeployments(agentId: string) {
  * continue with the same filters.
  */
 export function getManagedAgentSessionsPage(
-  options: { agentId?: string; projectId?: string; cursor?: string } = {},
+  options: {
+    agentId?: string
+    projectId?: string
+    cursor?: string
+    // Each entry filters to sessions carrying that label, sent as
+    // `label.<key>=<value>` (the API allows up to three).
+    labels?: Record<string, string>
+  } = {},
 ) {
   const query = new URLSearchParams({ limit: '100' })
   if (options.agentId) query.set('agent', options.agentId)
   if (options.projectId) query.set('project', options.projectId)
   if (options.cursor) query.set('cursor', options.cursor)
+  for (const [key, value] of Object.entries(options.labels ?? {})) {
+    query.set(`label.${key}`, value)
+  }
   return apiFetch(
     `/managed-agents/sessions?${query.toString()}`,
     undefined,
@@ -2640,6 +2650,50 @@ export async function runManagedAgent(
   } finally {
     await suspendManagedAgentIfIdle(sessionId)
   }
+}
+
+/**
+ * Creates a session and queues its first turn without waiting for the run to
+ * finish. This is the fan-out primitive: a swarm launch calls it once per cell
+ * (one repository × one CVE), each with its own findings-document binding and
+ * labels that tie the session back to the run and cell, then returns the
+ * session ids for the grid to poll. Unlike `runManagedAgent` it never blocks on
+ * completion or suspends — the turn is admitted in `queue` mode and runs on the
+ * runtime's own schedule.
+ */
+export async function startManagedAgentSession(
+  agentId: string,
+  input: string,
+  options: {
+    memory?: Record<string, ManagedSessionMemoryBindingInput>
+    labels?: Record<string, string>
+    signal?: AbortSignal
+  } = {},
+) {
+  const hasMemory = options.memory && Object.keys(options.memory).length > 0
+  const hasLabels = options.labels && Object.keys(options.labels).length > 0
+  const created = await apiFetch(
+    '/managed-agents/sessions',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        agentId,
+        source: 'api',
+        ...(hasMemory ? { memory: options.memory } : {}),
+        ...(hasLabels ? { labels: options.labels } : {}),
+      }),
+      signal: options.signal,
+    },
+    sessionCreateSchema,
+  )
+  const sessionId = created.session.id
+  const turn = await admitManagedAgentInput(
+    sessionId,
+    input,
+    'queue',
+    options.signal,
+  )
+  return { sessionId, turnId: turn.turnId }
 }
 
 export async function continueManagedAgentSession(
