@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { notifyError } from '@/lib/errors'
 import {
   addManagedGitHubConnection,
+  attachManagedGitHub,
   createManagedTemplateInstallation,
   finalizeManagedTemplateInstallation,
   getManagedGitHubConnections,
@@ -124,6 +125,23 @@ export default function SecurityOnboarding() {
       if (ready.state !== 'ready') {
         throw new Error(ready.error?.message ?? 'Template installation failed.')
       }
+      // Attach the GitHub install to the new project so the swarm's sandbox is
+      // injected with GH_TOKEN. Without this the agent can't clone or open PRs,
+      // and git/gh calls hang the run. Managed template projects run in the
+      // `default` environment. The install is the authorization boundary, so
+      // the project is unusable until it's bound.
+      const github = await getManagedGitHubConnections()
+      const connection = github.connections.find((c) => c.state === 'active')
+      if (!connection) {
+        throw new Error(
+          'Connect the GitHub App before deploying — the swarm needs it to read your repositories.',
+        )
+      }
+      await attachManagedGitHub({
+        projectId: ready.projectId,
+        environment: 'default',
+        connectionId: connection.id,
+      })
       return {
         projectId: ready.projectId,
         projectAgentId: installedTemplateAgentId({
@@ -365,8 +383,10 @@ function PayloadBuilder({
     [target, declaration, repositories, cveIds],
   )
 
-  const targetValid =
-    payload.target === '' || /^https?:\/\/.+/i.test(payload.target)
+  // The target is the asset under test, and the declaration attests ownership
+  // of "this web application" — so a launch needs a real https(s) URL. An empty
+  // or malformed target blocks the button.
+  const targetValid = /^https?:\/\/.+/i.test(payload.target)
   const ready = declaration && cveIds.length > 0 && targetValid
 
   function addRepo() {
@@ -380,16 +400,16 @@ function PayloadBuilder({
     <div className="space-y-5">
       <Field
         label="Endpoint to scan"
-        hint="A public URL you operate. Passive only — plain GETs on public paths and banner headers. No payloads, no auth probing. Leave blank to skip the live scan."
+        hint="A public URL you operate — required. Passive only: plain GETs on public paths and banner headers. No payloads, no auth probing."
       >
         <Input
           type="url"
           placeholder="https://app.your-domain.com"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          aria-invalid={!targetValid}
+          aria-invalid={target !== '' && !targetValid}
         />
-        {!targetValid ? (
+        {target !== '' && !targetValid ? (
           <span className="text-destructive text-xs">
             Enter a full http(s) URL.
           </span>
