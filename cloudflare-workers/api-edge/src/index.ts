@@ -390,6 +390,29 @@ interface Caller {
   // Set only for act-as-org provisioning tokens (sessions-api). Least-privilege:
   // the dispatch gates these to sandbox + secret-store routes (provisionScopeGate).
   scope?: "sandbox-provision";
+  // Set only for the organization's computer (work 080): its one-hour keys are
+  // created_by COMPUTER_PRINCIPAL, a reserved id no person has. sessionKey is
+  // the Slack thread the key was minted for, when the gateway named one.
+  principal?: "computer";
+  sessionKey?: string;
+}
+
+const COMPUTER_PRINCIPAL = "computer";
+// The shape of blue's sessionKey(team, channel, thread); blue checks the
+// session is live before it asks for a key.
+const SESSION_KEY_RE = /^[A-Za-z0-9._-]{1,40}:[A-Za-z0-9._-]{1,40}:[A-Za-z0-9._-]{1,40}$/;
+
+// One mapping from a key row to a Caller, for every reader (auth, refresh,
+// warm-org), so the cached shapes cannot drift apart.
+function callerFromRow(row: AuthRow): Caller {
+  const computer = row.created_by === COMPUTER_PRINCIPAL;
+  return {
+    orgID: row.org_id,
+    userID: row.created_by,
+    ...(row.role ? { role: row.role } : {}),
+    ...(computer ? { principal: "computer" as const } : {}),
+    ...(computer && row.session_key ? { sessionKey: row.session_key } : {}),
+  };
 }
 
 interface SandboxCreateResult {
@@ -585,7 +608,7 @@ function bumpLastUsed(env: Env, hash: string, entry: AuthEntry, nowMs: number): 
     .catch(() => {});
 }
 
-const AUTH_KEY_SQL = `SELECT k.org_id, k.created_by, k.expires_at,
+const AUTH_KEY_SQL = `SELECT k.org_id, k.created_by, k.expires_at, k.session_key,
           CASE WHEN m.role IN ('owner', 'admin') THEN 'admin' ELSE m.role END AS role
      FROM api_keys k
      LEFT JOIN org_memberships m
@@ -600,6 +623,7 @@ type AuthRow = {
   created_by: string | null;
   expires_at: number | null;
   role: string | null;
+  session_key?: string | null;
 };
 
 // In-flight auth refreshes, keyed by hash — same single-flight shape as
@@ -627,11 +651,7 @@ function refreshAuth(env: Env, hash: string): Promise<void> {
         return;
       }
       const at = Date.now();
-      const caller: Caller = {
-        orgID: row.org_id,
-        userID: row.created_by,
-        ...(row.role ? { role: row.role } : {}),
-      };
+      const caller = callerFromRow(row);
       if (authCache.size >= CACHE_MAX) authCache.clear();
       authCache.set(hash, {
         caller,
@@ -744,11 +764,7 @@ async function authenticate(req: Request, env: Env, ctx?: ExecutionContext, prob
   if (!row) return null; // never cache negatives — a freshly-created key must work at once
   if (row.expires_at && row.expires_at < nowSec) return null;
 
-  const caller: Caller = {
-    orgID: row.org_id,
-    userID: row.created_by,
-    ...(row.role ? { role: row.role } : {}),
-  };
+  const caller = callerFromRow(row);
   if (authCache.size >= CACHE_MAX) authCache.clear();
   const entry: AuthEntry = { caller, expiresAt: row.expires_at, cachedAtMs: nowMs, lastBumpMs: 0 };
   authCache.set(hash, entry);
@@ -5362,7 +5378,7 @@ export default {
       // what a real miss would have written. Drift here would be invisible: the
       // cache would hit and serve a subtly different caller.
       const rows = await env.OPENCOMPUTER_DB.prepare(
-        `SELECT k.key_hash, k.org_id, k.created_by, k.expires_at,
+        `SELECT k.key_hash, k.org_id, k.created_by, k.expires_at, k.session_key,
                 CASE WHEN m.role IN ('owner', 'admin') THEN 'admin' ELSE m.role END AS role
            FROM api_keys k
            LEFT JOIN org_memberships m
@@ -5374,16 +5390,13 @@ export default {
         created_by: string | null;
         expires_at: number | null;
         role: string | null;
+        session_key: string | null;
       }>();
 
       const at = Date.now();
       let warmed = 0;
       for (const row of rows.results ?? []) {
-        const caller: Caller = {
-          orgID: row.org_id,
-          userID: row.created_by,
-          ...(row.role ? { role: row.role } : {}),
-        };
+        const caller = callerFromRow(row);
         await coloPut("auth", row.key_hash, { caller, expiresAt: row.expires_at, cachedAtMs: at }, AUTH_STALE_MAX_MS / 1000);
         warmed++;
       }
@@ -5439,7 +5452,9 @@ export default {
     // /internal/computer-keys — a one-hour org key for an organization's computer
     // (work 067): managed agents mints one when a session runs `opencomputer`,
     // instead of a long-lived key living on the VM. HMAC-auth'd with the scoped
-    // OC_MANAGED_CRED_HMAC_SECRET over `${ts}.${body}`. Body: { org_id }.
+    // OC_MANAGED_CRED_HMAC_SECRET over `${ts}.${body}`. Body: { org_id,
+    // session_key? }: the Slack thread the key is for (work 080), recorded on
+    // the key and forwarded as the assertion's session_key claim.
     if (path === "/internal/computer-keys" && req.method === "POST") {
       const ts = req.headers.get("X-Timestamp") ?? "";
       const sig = req.headers.get("X-Signature") ?? "";
@@ -5449,15 +5464,20 @@ export default {
         : false;
       if (!ok) return json({ error: "signature mismatch" }, 401);
       if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return json({ error: "timestamp out of window" }, 401);
-      const parsed = JSON.parse(body) as { org_id?: string };
+      const parsed = JSON.parse(body) as { org_id?: string; session_key?: unknown };
       if (!parsed.org_id) return json({ error: "org_id required" }, 400);
+      const sessionKey = parsed.session_key;
+      if (sessionKey !== undefined && (typeof sessionKey !== "string" || !SESSION_KEY_RE.test(sessionKey))) {
+        return json({ error: "session_key must be team:channel:thread" }, 400);
+      }
       const org = await env.OPENCOMPUTER_DB.prepare(`SELECT id FROM orgs WHERE id = ?1`).bind(parsed.org_id).first();
       if (!org) return json({ error: "org not found" }, 404);
       const created = await createAPIKey(env, {
         orgID: parsed.org_id,
-        userID: "computer",
+        userID: COMPUTER_PRINCIPAL,
         name: "Computer session",
         expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        ...(sessionKey ? { sessionKey } : {}),
       });
       return json({ key: created.key, expiresAt: created.expiresAt });
     }

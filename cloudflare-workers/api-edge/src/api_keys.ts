@@ -25,7 +25,7 @@ export async function hashAPIKey(key: string): Promise<string> {
  */
 export async function createAPIKey(
   env: APIKeyEnv,
-  input: { orgID: string; userID: string; name: string; expiresAt?: number },
+  input: { orgID: string; userID: string; name: string; expiresAt?: number; sessionKey?: string },
 ): Promise<CreatedAPIKey> {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -36,10 +36,10 @@ export async function createAPIKey(
   const now = Math.floor(Date.now() / 1000);
 
   await env.OPENCOMPUTER_DB.prepare(
-    `INSERT INTO api_keys (id, org_id, created_by, key_hash, key_prefix, name, scopes, created_at, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'sandbox:*', ?7, ?8)`,
+    `INSERT INTO api_keys (id, org_id, created_by, key_hash, key_prefix, name, scopes, created_at, expires_at, session_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'sandbox:*', ?7, ?8, ?9)`,
   )
-    .bind(id, input.orgID, input.userID, hash, prefix, input.name, now, input.expiresAt ?? null)
+    .bind(id, input.orgID, input.userID, hash, prefix, input.name, now, input.expiresAt ?? null, input.sessionKey ?? null)
     .run();
 
   return {
