@@ -168,11 +168,13 @@ export type SetupStep = (typeof SETUP_STEPS)[number]
 /**
  * The setup step a person is on, or null once set up. The coding agent comes
  * first (work 081), then Slack brings the computer to life, GitHub gives it
- * the code, and the first mention in Slack finishes setup. Choosing the agent
- * only blocks before Slack, and only when the backend reports it: existing
- * organizations (all installed) and an older backend never see it, and
- * nobody is sent back to it. Sessions not read yet (or unreadable) never hold
- * the page on setup.
+ * the code, and the first mention in Slack finishes setup. Step 1 is done
+ * once the person has connected a subscription or chosen free credits;
+ * choosing Codex records interest and keeps the step open, on reload too,
+ * since nothing runs Codex yet. It only blocks before Slack, and only when
+ * the backend reports it: existing organizations (all installed) and an
+ * older backend never see it, and nobody is sent back to it. Sessions not
+ * read yet (or unreadable) never hold the page on setup.
  */
 export function setupStep(
   status: ComputerStatus,
@@ -181,8 +183,8 @@ export function setupStep(
   if (
     status.agent &&
     !status.slack.installed &&
-    status.agent.choice === null &&
-    !status.agent.subscription
+    !status.agent.subscription &&
+    status.agent.choice !== 'credits'
   ) {
     return 'agent'
   }
@@ -195,26 +197,28 @@ export function setupStep(
   return null
 }
 
-/**
- * Whether step 1, once shown, stays open: until the person connects a
- * subscription or picks free credits. Choosing Codex records interest but
- * runs nothing yet, so it does not finish the step while the person is on it.
- */
-export function agentStepHolds(status: ComputerStatus): boolean {
-  const { agent } = status
-  return Boolean(
-    agent &&
-    !status.slack.installed &&
-    !agent.subscription &&
-    agent.choice !== 'credits',
-  )
-}
-
 /** The done row of step 1: what runs the person's threads. */
 export function agentSummary(agent: ComputerAgent): string {
   return agent.subscription
     ? 'Claude Code · your subscription'
     : `${agent.managedModel} · free credits`
+}
+
+/**
+ * "Runs threads from @maya in Acme." on the Your agent card: the Slack user
+ * the person's seat is bound to (work 081, the install link is bearer). Only
+ * once Slack is installed, and only when the backend named the user: a
+ * missing name, an id for a name, or no team reads as nothing rather than
+ * "@U0123 in ".
+ */
+export function linkedSlackUserLine(
+  agent: ComputerAgent,
+  slackInstalled: boolean,
+): string | null {
+  const user = agent.linkedSlackUser
+  if (!slackInstalled || !user) return null
+  if (!user.name || user.name === user.id || !user.teamName) return null
+  return `Runs threads from @${user.name} in ${user.teamName}.`
 }
 
 /** The lead of the last step, true to where the computer is. */

@@ -13,12 +13,12 @@ import {
   LIVE_SESSION_POLL_MS,
   SESSION_POLL_MS,
   SLOW_POLL_MS,
-  agentStepHolds,
   agentSummary,
   computerIsOnboarded,
   computerPollInterval,
   computerPresentation,
   firstTaskLead,
+  linkedSlackUserLine,
   setupStep,
   slackLinks,
   relativeTime,
@@ -275,18 +275,37 @@ describe('choosing the coding agent (work 081)', () => {
     ).toBeUndefined()
   })
 
-  it('holds the step for Codex while the person is on it', () => {
+  it('keeps Codex on the step, on a later visit too', () => {
+    // Codex records interest and runs nothing yet: the step ends only with
+    // a subscription or free credits, so a reload lands on it again.
     const codex = { ...fresh, choice: 'codex' as const }
-    // A later visit moves on: Codex runs nothing yet.
-    expect(setupStep(status({ agent: codex }), undefined)).toBe('slack')
-    expect(agentStepHolds(status({ agent: codex }))).toBe(true)
-    expect(agentStepHolds(status({ agent: fresh }))).toBe(true)
+    expect(setupStep(status({ agent: codex }), undefined)).toBe('agent')
+    expect(setupStep(status({ slack, agent: codex }), [])).toBe('github')
     expect(
-      agentStepHolds(status({ agent: { ...fresh, choice: 'credits' } })),
-    ).toBe(false)
-    expect(agentStepHolds(status({ agent: connected }))).toBe(false)
-    expect(agentStepHolds(status({ slack, agent: codex }))).toBe(false)
-    expect(agentStepHolds(status())).toBe(false)
+      setupStep(
+        status({ agent: { ...connected, choice: 'codex' } }),
+        undefined,
+      ),
+    ).toBe('slack')
+  })
+
+  it('names the linked Slack user only once Slack is in and the name is one', () => {
+    const user = { id: 'U1', name: 'maya', teamName: 'Acme' }
+    const linked = { ...connected, linked: true, linkedSlackUser: user }
+    expect(linkedSlackUserLine(linked, true)).toBe(
+      'Runs threads from @maya in Acme.',
+    )
+    expect(linkedSlackUserLine(linked, false)).toBeNull()
+    expect(linkedSlackUserLine(connected, true)).toBeNull()
+    for (const bad of [
+      { ...user, name: '' },
+      { ...user, name: 'U1' },
+      { ...user, teamName: '' },
+    ]) {
+      expect(
+        linkedSlackUserLine({ ...linked, linkedSlackUser: bad }, true),
+      ).toBeNull()
+    }
   })
 
   it('names what runs the threads', () => {

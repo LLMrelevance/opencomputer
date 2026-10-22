@@ -1327,17 +1327,14 @@ function previewAgent(): PreviewAgent | null {
     setAt: new Date(BASE).toISOString(),
   })
   const base = { managedModel: 'Claude Opus 5.5' }
+  // The seat binds to a Slack user through the install: before it, nobody
+  // is linked and no Slack user is named.
+  const link = setup ? { linked: false } : { linked: true, linkedSlackUser }
   previewAgentState =
     param === 'none'
       ? null
       : param === 'credits'
-        ? {
-            ...base,
-            choice: 'credits',
-            linked: true,
-            linkedSlackUser,
-            subscription: null,
-          }
+        ? { ...base, ...link, choice: 'credits', subscription: null }
         : param === 'unlinked'
           ? { ...base, choice: 'credits', linked: false, subscription: null }
           : param === 'unchecked' ||
@@ -1346,18 +1343,16 @@ function previewAgent(): PreviewAgent | null {
               param === 'invalid'
             ? {
                 ...base,
+                ...link,
                 choice: 'claude',
-                linked: !setup,
-                ...(setup ? {} : { linkedSlackUser }),
                 subscription: subscription(param),
               }
             : setup
               ? { ...base, choice: null, linked: false, subscription: null }
               : {
                   ...base,
+                  ...link,
                   choice: 'claude',
-                  linked: true,
-                  linkedSlackUser,
                   subscription: subscription('ok'),
                 }
   return previewAgentState

@@ -75,7 +75,6 @@ import {
 import {
   EXAMPLE_ASKS,
   SETUP_STEPS,
-  agentStepHolds,
   agentSummary,
   SLACK_RETURN_PARAMS,
   alreadyLinkedCopy,
@@ -179,17 +178,7 @@ function ComputerPageContent() {
   // Someone who waited here for the first task sees it land: setup gives way
   // to the work with that task on top, live, and a way into its thread.
   // Without the wait, only a first task still under way earns the panel.
-  const reportedStep = status.data
-    ? setupStep(status.data, sessions.data)
-    : null
-  // Step 1, once shown, stays until the person connects a subscription or
-  // picks free credits: picking Codex records interest without moving on.
-  const [agentStepShown, setAgentStepShown] = useState(false)
-  if (reportedStep === 'agent' && !agentStepShown) setAgentStepShown(true)
-  const step =
-    agentStepShown && status.data && agentStepHolds(status.data)
-      ? 'agent'
-      : reportedStep
+  const step = status.data ? setupStep(status.data, sessions.data) : null
   const [waitedForFirstTask, setWaitedForFirstTask] = useState(false)
   const [firstTaskDismissed, setFirstTaskDismissed] = useState(false)
   if (step === 'hello' && !waitedForFirstTask) setWaitedForFirstTask(true)
@@ -827,6 +816,9 @@ function Setup({
     agent?.choice === 'codex' ? 'codex' : 'claude',
   )
   const done: Record<SetupStep, boolean> = {
+    // An installed organization that never chose and has no subscription
+    // reads "free credits": routing decides from the subscription row alone,
+    // so that is what runs its threads.
     agent: Boolean(agent) && step !== 'agent',
     slack: status.slack.installed,
     github: status.github.connected,
@@ -914,12 +906,7 @@ function Setup({
                 title="Choose your coding agent"
                 state={progress('agent')}
                 summary={agentSummary(agent)}
-                doneAction={
-                  <AgentChangeAction
-                    agent={agent}
-                    slackInstalled={status.slack.installed}
-                  />
-                }
+                doneAction={<AgentChangeAction agent={agent} />}
               >
                 <AgentSetup
                   agent={agent}

@@ -173,10 +173,29 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('Claude Code on its own machine')
     const input = field()
     expect(input.getAttribute('autocomplete')).toBe('off')
-    expect(capture).toHaveBeenCalledWith(
-      'computer.setup.agent_shown',
-      expect.anything(),
-    )
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_shown')
+
+    // Once sent, the token is nowhere the page could show or keep it: not
+    // the field, not the mutation's state, not react-query's cache (which
+    // would hold a mutation's variables for minutes).
+    computerApi.connectClaudeSubscription.mockResolvedValue({
+      agent: { ...fresh, choice: 'claude', subscription: subscription('ok') },
+      verified: true,
+      via: 'pool',
+    })
+    paste(TOKEN)
+    submit()
+    expect(field().value).toBe('')
+    await settle(() => text().includes('Step 2 of 4'), 'Slack step')
+    expect(computerApi.connectClaudeSubscription).toHaveBeenCalledWith(TOKEN)
+    const mutations = client.getMutationCache().getAll()
+    expect(mutations.length).toBeGreaterThan(0)
+    for (const mutation of mutations) {
+      expect(JSON.stringify(mutation.state)).not.toContain(TOKEN)
+      expect(mutation.state.variables).toBeUndefined()
+    }
+    expect(JSON.stringify(capture.mock.calls)).not.toContain(TOKEN)
+    expect(container.innerHTML).not.toContain(TOKEN)
   })
 
   it('refuses a token of the wrong shape on paste, before sending it', async () => {
@@ -185,6 +204,9 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain("That's not a setup token. It starts with")
     submit()
     expect(computerApi.connectClaudeSubscription).not.toHaveBeenCalled()
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_failed', {
+      code: 'computer_agent_token_format',
+    })
   })
 
   it('says a rejected token did not work, and empties the field', async () => {
@@ -196,14 +218,35 @@ describe('choosing the coding agent', () => {
     submit()
     expect(field().value).toBe('')
     await settle(() => text().includes("That token didn't work"), 'rejected')
-    expect(computerApi.connectClaudeSubscription).toHaveBeenCalledWith(
-      TOKEN,
-      expect.anything(),
-    )
+    expect(computerApi.connectClaudeSubscription).toHaveBeenCalledWith(TOKEN)
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_failed', {
       code: 'computer_agent_token_rejected',
-      org_id: undefined,
     })
+    expect(capture).not.toHaveBeenCalledWith(
+      'computer.setup.agent_chosen',
+      expect.anything(),
+    )
+  })
+
+  it('re-reads the page when the server could not be reached', async () => {
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    const reads = computerApi.getComputer.mock.calls.length
+    computerApi.connectClaudeSubscription.mockRejectedValueOnce(
+      new TypeError('Failed to fetch'),
+    )
+    paste(TOKEN)
+    submit()
+    await settle(() => text().includes("Couldn't reach the server"), 'neutral')
+    expect(text()).not.toContain('Failed to fetch')
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_failed', {
+      code: 'unknown',
+    })
+    // The status is read again: the write may have landed.
+    await settle(
+      () => computerApi.getComputer.mock.calls.length > reads,
+      're-read',
+    )
+    expect(text()).toContain('Step 1 of 4')
   })
 
   it("shows the edge's copy when someone else connected one", async () => {
@@ -237,10 +280,12 @@ describe('choosing the coding agent', () => {
     expect(notify.notifySuccess).toHaveBeenCalledWith(
       'Claude Code is connected.',
     )
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
+      choice: 'claude',
+    })
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_connected', {
       verified: true,
       via: 'pool',
-      org_id: undefined,
     })
   })
 
@@ -290,10 +335,7 @@ describe('choosing the coding agent', () => {
       () => computerApi.setAgentChoice.mock.calls.length === 1,
       'codex choice',
     )
-    expect(computerApi.setAgentChoice).toHaveBeenCalledWith(
-      'codex',
-      expect.anything(),
-    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
@@ -301,6 +343,19 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('Codex on its own machine')
     expect(text()).toContain('Step 1 of 4')
     expect(button('Use free credits')).toBeDefined()
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
+      choice: 'codex',
+    })
+  })
+
+  it('lands on the step again with Codex chosen, Codex selected', async () => {
+    await show(
+      { ...empty, agent: { ...fresh, choice: 'codex' } },
+      'Choose your coding agent',
+    )
+    expect(text()).toContain('Step 1 of 4')
+    expect(text()).toContain("Codex is coming. We'll let you know.")
+    expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
   })
 
   it('starts on free credits', async () => {
@@ -311,11 +366,48 @@ describe('choosing the coding agent', () => {
     })
     act(() => button('Use free credits')!.click())
     await settle(() => text().includes('Step 2 of 4'), 'Slack step')
-    expect(computerApi.setAgentChoice).toHaveBeenCalledWith(
-      'credits',
-      expect.anything(),
-    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('credits')
+    expect(computerApi.disconnectClaudeSubscription).not.toHaveBeenCalled()
     expect(text()).toContain('Claude Opus 5.5 · free credits')
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
+      choice: 'credits',
+    })
+  })
+
+  it('offers all three ways in the Change dialog, and switches to credits', async () => {
+    await show(
+      {
+        ...empty,
+        agent: { ...fresh, choice: 'claude', subscription: subscription('ok') },
+      },
+      'Add OpenComputer to Slack',
+    )
+    expect(text()).toContain('Claude Code · your subscription')
+    act(() => button('Change')!.click())
+    await settle(() => text().includes('Your coding agent'), 'dialog')
+    expect(text()).toContain('Now on Claude Code · your subscription.')
+    expect(document.body.querySelector('[role="radiogroup"]')).not.toBeNull()
+    expect(text()).toContain('Codex')
+    expect(button('Replace token')).toBeDefined()
+    expect(text()).toContain('Switch to free credits.')
+    expect(text()).toContain('Disconnects Claude Code')
+    // Free credits behind a subscription: disconnect, then record the choice.
+    computerApi.disconnectClaudeSubscription.mockResolvedValue(undefined)
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...fresh,
+      choice: 'credits',
+    })
+    act(() => button('Use free credits')!.click())
+    await settle(
+      () => computerApi.setAgentChoice.mock.calls.length === 1,
+      'credits choice',
+    )
+    expect(computerApi.disconnectClaudeSubscription).toHaveBeenCalledTimes(1)
+    await settle(() => !text().includes('Your coding agent'), 'dialog closed')
+    expect(text()).toContain('Claude Opus 5.5 · free credits')
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
+      choice: 'credits',
+    })
   })
 
   it('shows the health of a token that stopped working, with Resume', async () => {
@@ -334,6 +426,7 @@ describe('choosing the coding agent', () => {
     )
     expect(text()).toContain('This token stopped working.')
     expect(text()).toContain('Runs threads from @maya in Acme.')
+    expect(text()).not.toContain('@U1')
     expect(button('Replace')).toBeDefined()
     expect(button('Disconnect')).toBeDefined()
     computerApi.resumeClaudeSubscription.mockResolvedValue({
