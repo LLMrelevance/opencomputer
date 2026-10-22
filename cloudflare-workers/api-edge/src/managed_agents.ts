@@ -1,13 +1,7 @@
 import { getAutumnCustomer } from "./autumn_webhook";
 import { FREE_CREDITS_PAYWALL } from "./billing_onramp";
-import {
-  COMPUTER_ERROR_MESSAGES,
-  computerFallbackMessage,
-  computerEnabledFor,
-  isComputerRoute,
-  isComputerRouteSuffix,
-  publicComputerBody,
-} from "./computer";
+import { computerFamily } from "./computer";
+import type { RouteFamily } from "./route_family";
 
 export interface ManagedAgentsEnv {
   /** Computer rollout (work 052): see computerEnabledFor. */
@@ -296,14 +290,16 @@ async function publicErrorResponse(
         Object.hasOwn(LINEAR_ROUTE_ERROR_MESSAGES, backendCode)
       ? LINEAR_ROUTE_ERROR_MESSAGES[backendCode]
       : undefined;
-  const computerMessage =
-    suffix !== undefined && isComputerRouteSuffix(suffix)
-      ? Object.hasOwn(COMPUTER_ERROR_MESSAGES, backendCode)
-        ? COMPUTER_ERROR_MESSAGES[backendCode]
-        : computerFallbackMessage(upstream.status)
+  const familyMessage =
+    suffix !== undefined
+      ? routeFamilyFor(suffix)?.errorMessage(
+          backendCode,
+          upstream.status,
+          suffix,
+        )
       : undefined;
-  if (computerMessage) {
-    message = computerMessage;
+  if (familyMessage) {
+    message = familyMessage;
   } else if (slackSetupMessage) {
     message = slackSetupMessage;
   } else if (deploymentSourceMessage) {
@@ -2719,9 +2715,18 @@ export function isGrantRoute(method: string, suffix: string): boolean {
   );
 }
 
+// The route families the proxy dispatches to as a unit (see route_family.ts).
+// Only the organization's computer so far (work 052); the other surfaces keep
+// their branches below until each is ported.
+const ROUTE_FAMILIES: ReadonlyArray<RouteFamily> = [computerFamily];
+
+function routeFamilyFor(suffix: string): RouteFamily | undefined {
+  return ROUTE_FAMILIES.find((family) => family.owns(suffix));
+}
+
 function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
-  // The organization's computer: only the contract's routes (work 052).
-  if (isComputerRouteSuffix(suffix)) return isComputerRoute(method, suffix);
+  const family = routeFamilyFor(suffix);
+  if (family) return family.allows(method, suffix);
   if (method === "GET" && suffix === "/account/runtime-profile") return true;
   if (method === "POST" && suffix === "/template-inspections") return true;
   if (method === "POST" && suffix === "/template-installations") return true;
@@ -3589,11 +3594,12 @@ export async function proxyManagedAgents(
       { status: 403 },
     );
   }
-  // The computer is a dashboard surface in v1; API keys do not reach it.
+  const family = routeFamilyFor(suffix);
   if (
-    isComputerRouteSuffix(suffix) &&
-    (publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX ||
-      !computerEnabledFor(env, caller.orgID))
+    family &&
+    ((family.dashboardOnly &&
+      publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX) ||
+      family.enabledFor?.(env, caller.orgID) === false)
   ) {
     return Response.json({ error: "route not found" }, { status: 404 });
   }
@@ -3790,19 +3796,7 @@ export async function proxyManagedAgents(
     }
     if (!upstream.ok) return publicErrorResponse(upstream, suffix);
     if (upstream.status === 204) return new Response(null, { status: 204 });
-    if (isComputerRouteSuffix(suffix)) {
-      // Unlinking Slack has no response body in the contract.
-      if (method === "DELETE") {
-        return new Response(null, {
-          status: 204,
-          headers: { "cache-control": "no-store" },
-        });
-      }
-      return Response.json(
-        publicComputerBody(method, suffix, await upstream.json()),
-        { status: upstream.status, headers: { "cache-control": "no-store" } },
-      );
-    }
+    if (family) return await family.shapeSuccess(method, suffix, upstream);
     if (
       /^\/projects\/[^/]+\/source-archive$/.test(suffix) ||
       WORKSPACE_ARTIFACT_CONTENT_ROUTE.test(suffix)
