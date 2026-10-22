@@ -60,6 +60,12 @@ const FORMAT_ERROR = (
   </>
 )
 
+const CUT_OFF_ERROR = <>That token looks cut off. Copy all of it again.</>
+
+// The terminal wraps the long token, so a copy can carry the line break and
+// indentation. A setup token has no whitespace of its own.
+const cleanToken = (value: string) => value.replace(/\s+/g, '')
+
 const SLACK_INSTRUCTION = (
   <>
     Connect from Slack: <Cmd>!claude connect</Cmd>
@@ -345,10 +351,14 @@ function ClaudeConnect({
     }
   }, [pending])
 
-  const trimmed = token.trim()
+  const cleaned = cleanToken(token)
   const badFormat =
-    formatChecked && trimmed !== '' && !SETUP_TOKEN.test(trimmed)
-  const error = badFormat ? FORMAT_ERROR : failure
+    formatChecked && cleaned !== '' && !SETUP_TOKEN.test(cleaned)
+  const error = badFormat
+    ? cleaned.startsWith('sk-ant-oat01-')
+      ? CUT_OFF_ERROR
+      : FORMAT_ERROR
+    : failure
 
   return (
     <form
@@ -357,11 +367,11 @@ function ClaudeConnect({
         event.preventDefault()
         setFormatChecked(true)
         if (pending) return
-        if (!SETUP_TOKEN.test(trimmed)) {
-          if (trimmed !== '') trackAgentFailed('computer_agent_token_format')
+        if (!SETUP_TOKEN.test(cleaned)) {
+          if (cleaned !== '') trackAgentFailed('computer_agent_token_format')
           return
         }
-        sending.current = trimmed
+        sending.current = cleaned
         setToken('')
         setFormatChecked(false)
         setFailure(null)

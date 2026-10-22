@@ -209,6 +209,22 @@ describe('choosing the coding agent', () => {
     })
   })
 
+  it('joins a token the terminal wrapped, and says when one is cut off', async () => {
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    paste('sk-ant-oat01-short')
+    expect(text()).toContain('That token looks cut off.')
+    computerApi.connectClaudeSubscription.mockResolvedValue({
+      agent: { ...fresh, choice: 'claude', subscription: subscription('ok') },
+      verified: true,
+      via: 'pool',
+    })
+    paste(`  ${TOKEN.slice(0, 25)}\n    ${TOKEN.slice(25)}  `)
+    expect(text()).not.toContain('cut off')
+    submit()
+    await settle(() => text().includes('Step 2 of 4'), 'Slack step')
+    expect(computerApi.connectClaudeSubscription).toHaveBeenCalledWith(TOKEN)
+  })
+
   it('says a rejected token did not work, and empties the field', async () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
     computerApi.connectClaudeSubscription.mockRejectedValue(
