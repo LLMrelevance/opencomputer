@@ -1227,7 +1227,9 @@ function ProviderRow({
               </Button>
             ) : null}
             {subscription ? (
-              <DropdownMenu>
+              // Let pointer dismissal keep focus where the user clicked;
+              // Radix still restores the trigger for keyboard dismissal.
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     size="icon-sm"
