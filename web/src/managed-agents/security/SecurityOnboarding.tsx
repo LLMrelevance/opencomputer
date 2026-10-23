@@ -31,6 +31,7 @@ import {
   getManagedTemplateInstallation,
   inspectManagedTemplate,
   putAgentRuntimeVariable,
+  replaceManagedMemoryDocument,
   startManagedAgentSession,
 } from '../api'
 import { installedTemplateAgentId } from '../template-continuation'
@@ -47,6 +48,7 @@ import {
   serializeRunManifest,
   swarmCells,
   type LaunchedCell,
+  type SwarmCell,
   type SwarmPayload,
 } from './catalog'
 
@@ -57,6 +59,101 @@ const MAX_SWARM_CELLS = 24
 const STEPS = ['Connect GitHub', 'Deploy swarm', 'Launch swarm'] as const
 
 type DeployResult = { projectId: string; projectAgentId: string }
+
+// Boot every cell's sandbox in the background, after the launch has already
+// written the manifest and navigated. Each cell: create its findings document
+// (a session can't bind to a missing one), start its session, then flip the
+// cell to `started` with its id — or `failed`. The manifest is rewritten as each
+// cell resolves, so the run page lights them up incrementally. We are the only
+// writer of this document, so we just carry the latest etag forward; writes are
+// coalesced so a burst of resolutions collapses into one trailing write.
+async function launchCellsInBackground(args: {
+  projectId: string
+  runId: string
+  agentId: string
+  payload: SwarmPayload
+  cells: SwarmCell[]
+  manifestEtag: string
+}) {
+  const { projectId, runId, agentId, payload, cells } = args
+  const launched: LaunchedCell[] = cells.map((cell) => ({
+    cell,
+    sessionId: '',
+    launch: 'starting',
+  }))
+  const docTarget = {
+    projectId,
+    resource: SECURITY_FINDINGS_RESOURCE,
+    environment: 'default' as const,
+    id: runManifestDocumentId(runId),
+  }
+
+  let etag = args.manifestEtag
+  let writing = false
+  let dirty = false
+  const flush = async () => {
+    if (writing) {
+      dirty = true
+      return
+    }
+    writing = true
+    try {
+      do {
+        dirty = false
+        const res = await replaceManagedMemoryDocument({
+          ...docTarget,
+          etag,
+          text: serializeRunManifest({
+            runId,
+            model: payload.model,
+            target: payload.target,
+            cells: launched,
+          }),
+        })
+        etag = res.etag
+      } while (dirty)
+    } catch {
+      // Best-effort: a dropped manifest write only delays a cell lighting up on
+      // the run page; its agent work is already running.
+    } finally {
+      writing = false
+    }
+  }
+
+  await Promise.all(
+    cells.map(async (cell, i) => {
+      try {
+        const id = cellDocumentId(runId, cell)
+        await createManagedMemoryDocument({
+          projectId,
+          resource: SECURITY_FINDINGS_RESOURCE,
+          environment: 'default',
+          id,
+          title: `${cell.repository} · ${cell.cveId}`,
+          text: '{}',
+        })
+        const { sessionId } = await startManagedAgentSession(
+          agentId,
+          composeCellPrompt(payload, cell),
+          {
+            memory: {
+              [SECURITY_FINDINGS_RESOURCE]: {
+                scope: 'document',
+                id,
+                access: 'read-write',
+              },
+            },
+          },
+        )
+        launched[i] = { cell, sessionId, launch: 'started' }
+      } catch {
+        launched[i] = { cell, sessionId: '', launch: 'failed' }
+      }
+      await flush()
+    }),
+  )
+  await flush()
+}
 
 async function waitForInstallation(id: string) {
   const deadline = Date.now() + 10 * 60_000
@@ -166,15 +263,23 @@ export default function SecurityOnboarding() {
   })
 
   // Launch fans the payload's repository × CVE matrix out into one bound session
-  // per cell. Each cell gets its own findings document, created first (a binding
-  // to a missing document fails admission), then a session bound read-write to
-  // it. The session ids are recorded in a run manifest document so the swarm
-  // page can rebuild the grid after we navigate to it — the ids don't survive in
-  // React state across the route change.
+  // per cell. The slow part is booting each cell's sandbox, so we don't block the
+  // UI on it: we write the run manifest immediately with every cell `starting`,
+  // navigate to the run page, then boot the sandboxes in the background (see
+  // launchCellsInBackground), flipping each cell to `started` with its session id
+  // as it comes up. The manifest is the source of truth across the route change —
+  // the ids don't survive in React state.
   const launch = useMutation({
     mutationFn: async (
       payload: SwarmPayload,
-    ): Promise<{ projectId: string; runId: string }> => {
+    ): Promise<{
+      projectId: string
+      runId: string
+      agentId: string
+      payload: SwarmPayload
+      cells: SwarmCell[]
+      manifestEtag: string
+    }> => {
       if (!deployed) throw new Error('Deploy the swarm before launching.')
       const cells = swarmCells(payload)
       if (cells.length === 0) {
@@ -187,36 +292,14 @@ export default function SecurityOnboarding() {
       }
       const runId = `run-${crypto.randomUUID()}`
       const agentId = `${deployed.projectAgentId}@default`
-      const launched = await Promise.all(
-        cells.map(async (cell): Promise<LaunchedCell> => {
-          const id = cellDocumentId(runId, cell)
-          await createManagedMemoryDocument({
-            projectId: deployed.projectId,
-            resource: SECURITY_FINDINGS_RESOURCE,
-            environment: 'default',
-            id,
-            title: `${cell.repository} · ${cell.cveId}`,
-            text: '{}',
-          })
-          const { sessionId } = await startManagedAgentSession(
-            agentId,
-            composeCellPrompt(payload, cell),
-            {
-              memory: {
-                [SECURITY_FINDINGS_RESOURCE]: {
-                  scope: 'document',
-                  id,
-                  access: 'read-write',
-                },
-              },
-            },
-          )
-          return { cell, sessionId }
-        }),
-      )
-      // Persist the run so the swarm page is reachable by URL and survives a
-      // reload. agentWrites stays disabled — only cell findings are agent-owned.
-      await createManagedMemoryDocument({
+      const starting: LaunchedCell[] = cells.map((cell) => ({
+        cell,
+        sessionId: '',
+        launch: 'starting',
+      }))
+      // One fast write makes the run reachable by URL; agentWrites stays disabled
+      // — only cell findings are agent-owned.
+      const created = await createManagedMemoryDocument({
         projectId: deployed.projectId,
         resource: SECURITY_FINDINGS_RESOURCE,
         environment: 'default',
@@ -226,16 +309,34 @@ export default function SecurityOnboarding() {
           runId,
           model: payload.model,
           target: payload.target,
-          cells: launched,
+          cells: starting,
         }),
         agentWrites: 'disabled',
       })
-      return { projectId: deployed.projectId, runId }
+      return {
+        projectId: deployed.projectId,
+        runId,
+        agentId,
+        payload,
+        cells,
+        manifestEtag: created.etag,
+      }
     },
-    onSuccess: ({ projectId, runId }) =>
-      navigate(
+    onSuccess: ({ projectId, runId, agentId, payload, cells, manifestEtag }) => {
+      void navigate(
         `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(runId)}`,
-      ),
+      )
+      // Fire-and-forget: this outlives the unmount on navigation, booting the
+      // sandboxes and filling the manifest as they come up.
+      void launchCellsInBackground({
+        projectId,
+        runId,
+        agentId,
+        payload,
+        cells,
+        manifestEtag,
+      })
+    },
     onError: (error) => notifyError("Couldn't start the swarm.", error),
   })
 

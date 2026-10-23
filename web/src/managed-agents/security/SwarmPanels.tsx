@@ -10,6 +10,7 @@ import { cellPhase, type CellState, type SwarmCounts } from './useSwarmRun'
 // A cell's status word + color, shared by the feed and the dispatch list.
 function cellStatus(state: CellState): { label: string; color: string } {
   const phase = cellPhase(state)
+  if (phase === 'starting') return { label: 'starting', color: PALETTE.ink }
   if (phase === 'running') return { label: 'running', color: PALETTE.orange }
   if (phase === 'queued') return { label: 'queued', color: PALETTE.grey }
   if (phase === 'failed') return { label: 'failed', color: PALETTE.red }

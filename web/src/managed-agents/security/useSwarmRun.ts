@@ -13,6 +13,7 @@ import {
   SECURITY_FINDINGS_RESOURCE,
   serializeRunReport,
   type CellFinding,
+  type CellLaunchStatus,
   type LaunchedCell,
   type ReportCell,
   type ReportDisposition,
@@ -32,12 +33,13 @@ export type SessionProgress = {
 export type CellState = {
   cell: SwarmCell
   sessionId: string
+  launch: CellLaunchStatus
   progress?: SessionProgress
   finding: CellFinding | null
   phase: CellPhase
 }
 
-export type CellPhase = 'done' | 'failed' | 'running' | 'queued'
+export type CellPhase = 'done' | 'failed' | 'running' | 'queued' | 'starting'
 
 export type SwarmCounts = {
   exposed: number
@@ -62,12 +64,17 @@ function turnCompleted(progress: SessionProgress | undefined): boolean {
   return progress?.lastTurnStatus === 'completed'
 }
 
-// A cell's session is terminal when it will do no more work: it failed, or its
-// turn completed (whether or not it left a finding).
+// A cell's session is terminal when it will do no more work: its launch failed,
+// its session failed, or its turn completed (whether or not it left a finding).
+// A cell still `starting` (its sandbox is booting, no session id yet) is never
+// terminal — the run keeps polling the manifest until it comes up.
 function cellTerminal(
   progress: SessionProgress | undefined,
   finding: CellFinding | null,
+  launch: CellLaunchStatus,
 ): boolean {
+  if (launch === 'failed') return true
+  if (launch === 'starting') return false
   return finding != null || sessionFailed(progress) || turnCompleted(progress)
 }
 
@@ -78,8 +85,11 @@ function computeCellPhase(
   progress: SessionProgress | undefined,
   finding: CellFinding | null,
   confirmed: boolean,
+  launch: CellLaunchStatus,
 ): CellPhase {
   if (finding) return 'done'
+  if (launch === 'failed') return 'failed'
+  if (launch === 'starting') return 'starting'
   if (sessionFailed(progress)) return 'failed'
   if (turnCompleted(progress)) return confirmed ? 'failed' : 'running'
   const status = progress?.status
@@ -124,6 +134,7 @@ export function statesFromReport(report: SwarmRunReport): {
   const states: CellState[] = report.cells.map((c) => ({
     cell: { repository: c.repository, cveId: c.cveId },
     sessionId: c.sessionId ?? '',
+    launch: c.disposition === 'failed' ? 'failed' : 'started',
     finding:
       c.disposition === 'failed'
         ? null
@@ -165,8 +176,10 @@ export function useSwarmRun({
   const sessions = useQuery({
     queryKey: ['swarm-sessions', projectId, runId],
     queryFn: async () => {
+      // A cell still booting has no session id yet; poll only the started ones.
+      const started = cells.filter((c) => c.sessionId)
       const entries = await Promise.all(
-        cells.map(async ({ sessionId }) => {
+        started.map(async ({ sessionId }) => {
           const session = await getManagedAgentSession(sessionId)
           const turns = session.turns
           const lastTurnStatus =
@@ -184,16 +197,20 @@ export function useSwarmRun({
     queryFn: async () => {
       const entries = await Promise.all(
         cells.map(async ({ cell }) => {
-          const read = await getManagedMemoryDocument({
-            projectId,
-            resource: SECURITY_FINDINGS_RESOURCE,
-            environment: 'default',
-            id: cellDocumentId(runId, cell),
-          })
-          return [
-            cellDocumentId(runId, cell),
-            parseCellFinding(read.document.text),
-          ] as const
+          const id = cellDocumentId(runId, cell)
+          try {
+            const read = await getManagedMemoryDocument({
+              projectId,
+              resource: SECURITY_FINDINGS_RESOURCE,
+              environment: 'default',
+              id,
+            })
+            return [id, parseCellFinding(read.document.text)] as const
+          } catch {
+            // A cell still booting hasn't had its findings document created yet;
+            // treat it as having no finding rather than failing the whole poll.
+            return [id, null] as const
+          }
         }),
       )
       return Object.fromEntries(entries)
@@ -206,10 +223,11 @@ export function useSwarmRun({
     [sessions.data],
   )
 
-  const base = cells.map(({ cell, sessionId }) => ({
+  const base = cells.map(({ cell, sessionId, launch }) => ({
     cell,
     sessionId,
-    progress: progressBySession[sessionId],
+    launch,
+    progress: sessionId ? progressBySession[sessionId] : undefined,
     finding: findings.data?.[cellDocumentId(runId, cell)] ?? null,
   }))
 
@@ -221,13 +239,14 @@ export function useSwarmRun({
   // before its turn completed. Both timestamps are plain query values, read in
   // render; the stop flags are the only refs, written in effects.
   const allTerminal =
-    base.length > 0 && base.every((s) => cellTerminal(s.progress, s.finding))
+    base.length > 0 &&
+    base.every((s) => cellTerminal(s.progress, s.finding, s.launch))
   const confirmed =
     allTerminal && findings.dataUpdatedAt >= sessions.dataUpdatedAt
 
   const states: CellState[] = base.map((s) => ({
     ...s,
-    phase: computeCellPhase(s.progress, s.finding, confirmed),
+    phase: computeCellPhase(s.progress, s.finding, confirmed, s.launch),
   }))
 
   const counts = tallyCounts(states)

@@ -16,7 +16,7 @@ function cellColor(state: CellState): CellColor {
   const phase = cellPhase(state)
   if (phase === 'failed') return 'grey'
   if (phase === 'running') return 'orange'
-  if (phase === 'queued') return 'grey'
+  if (phase === 'queued' || phase === 'starting') return 'grey'
   const d = state.finding?.disposition
   if (d === 'exposed') return 'red'
   if (d === 'needs-review') return 'amber'

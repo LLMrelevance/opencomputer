@@ -5,6 +5,7 @@ import {
   composeCellPrompt,
   latestManifestId,
   listManifestDocs,
+  manifestSettling,
   parseCellFinding,
   parseRunManifest,
   runManifestDocumentId,
@@ -109,8 +110,16 @@ describe('run manifest', () => {
     model: 'GLM-5.3',
     target: 'https://app.example.com',
     cells: [
-      { cell: { repository: 'acme/web', cveId: 'CVE-2026-1' }, sessionId: 's1' },
-      { cell: { repository: 'acme/api', cveId: 'CVE-2026-1' }, sessionId: 's2' },
+      {
+        cell: { repository: 'acme/web', cveId: 'CVE-2026-1' },
+        sessionId: 's1',
+        launch: 'started',
+      },
+      {
+        cell: { repository: 'acme/api', cveId: 'CVE-2026-1' },
+        sessionId: 's2',
+        launch: 'started',
+      },
     ],
   }
 
@@ -123,6 +132,40 @@ describe('run manifest', () => {
 
   it('round-trips through serialize and parse', () => {
     expect(parseRunManifest(serializeRunManifest(manifest))).toEqual(manifest)
+  })
+
+  it('defaults launch for a pre-incremental manifest: started with an id, else starting', () => {
+    const parsed = parseRunManifest(
+      JSON.stringify({
+        runId: 'run-old',
+        cells: [
+          { cell: { repository: 'a/b', cveId: 'CVE-1' }, sessionId: 's1' },
+          { cell: { repository: 'a/c', cveId: 'CVE-1' }, sessionId: '' },
+        ],
+      }),
+    )
+    expect(parsed?.cells.map((c) => c.launch)).toEqual(['started', 'starting'])
+  })
+
+  it('is settling while any cell is still starting, and not once all have an outcome', () => {
+    const starting: SwarmRunManifest = {
+      ...manifest,
+      cells: [
+        { ...manifest.cells[0], sessionId: '', launch: 'starting' },
+        manifest.cells[1],
+      ],
+    }
+    expect(manifestSettling(starting)).toBe(true)
+    expect(manifestSettling(manifest)).toBe(false)
+    expect(
+      manifestSettling({
+        ...manifest,
+        cells: [
+          { ...manifest.cells[0], sessionId: '', launch: 'failed' },
+          manifest.cells[1],
+        ],
+      }),
+    ).toBe(false)
   })
 
   it('rejects malformed or empty manifests', () => {

@@ -263,13 +263,15 @@ function CellTile({
         </p>
       ) : null}
       <div className="mt-2 flex items-center gap-3">
-        <Link
-          to={`/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(state.sessionId)}`}
-          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs hover:underline"
-        >
-          <ArrowUpRight className="size-3" />
-          Open session
-        </Link>
+        {state.sessionId ? (
+          <Link
+            to={`/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(state.sessionId)}`}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs hover:underline"
+          >
+            <ArrowUpRight className="size-3" />
+            Open session
+          </Link>
+        ) : null}
         {state.finding?.pullRequest ? (
           <a
             href={state.finding.pullRequest}
@@ -315,10 +317,12 @@ function CellBadge({
       </span>
     )
   }
+  const label =
+    phase === 'running' ? 'Running' : phase === 'starting' ? 'Starting…' : 'Queued'
   return (
     <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs">
       <Loader2 className="size-3 animate-spin" />
-      {phase === 'running' ? 'Running' : 'Queued'}
+      {label}
     </span>
   )
 }

@@ -11,6 +11,7 @@ import {
 } from '../api'
 import {
   latestManifestId,
+  manifestSettling,
   parseRunManifest,
   parseRunReport,
   runManifestDocumentId,
@@ -58,6 +59,11 @@ export default function ProjectSwarm() {
       })
       return parseRunManifest(read.document.text)
     },
+    // While cells are still booting the manifest is rewritten as each session id
+    // lands; poll it so those ids reach the live view, then stop once every cell
+    // has started (or failed to).
+    refetchInterval: (query) =>
+      query.state.data && manifestSettling(query.state.data) ? 2_500 : false,
   })
 
   return (
