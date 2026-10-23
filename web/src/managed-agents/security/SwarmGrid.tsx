@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 import {
   ArrowUpRight,
   ExternalLink,
@@ -11,64 +9,12 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  createManagedMemoryDocument,
-  getManagedAgentSession,
-  getManagedMemoryDocument,
-} from '../api'
-import {
-  buildRunReport,
   cellDocumentId,
-  parseCellFinding,
-  runReportDocumentId,
-  SECURITY_FINDINGS_RESOURCE,
-  serializeRunReport,
-  type CellFinding,
   type CveDisposition,
-  type LaunchedCell,
   type ReportCell,
-  type ReportDisposition,
-  type SwarmCell,
   type SwarmRunReport,
 } from './catalog'
-
-// A cell is settled when its worker has either saved a verdict or its session
-// has stopped without one. We poll both the run's sessions (for liveness) and
-// each cell's findings document (for the verdict) until every cell settles.
-//
-// A cell can fail two ways: the whole session stops (status failed/cancelled),
-// or — the common one — the session stays `idle` while its last turn is
-// `failed` (a single-turn cell whose final generation errored). So we read the
-// last turn's status, not just the session's.
-type SessionProgress = {
-  status: string
-  lastTurnStatus?: string
-}
-
-type CellState = {
-  cell: SwarmCell
-  sessionId: string
-  progress?: SessionProgress
-  finding: CellFinding | null
-}
-
-function sessionFailed(progress: SessionProgress | undefined): boolean {
-  if (!progress) return false
-  if (progress.status === 'failed' || progress.status === 'cancelled')
-    return true
-  const turn = progress.lastTurnStatus
-  return turn === 'failed' || turn === 'errored' || turn === 'cancelled'
-}
-
-// A cell is settled — we will never poll it again — when its verdict is saved
-// or it failed, i.e. its phase is 'done' or 'failed'. The grid tracks that via
-// `counts.pending === 0`.
-function cellPhase(state: CellState): 'done' | 'failed' | 'running' | 'queued' {
-  if (state.finding) return 'done'
-  if (sessionFailed(state.progress)) return 'failed'
-  const status = state.progress?.status
-  if (status === 'running' || status === 'idle') return 'running'
-  return 'queued'
-}
+import { cellPhase, type CellState, type SwarmCounts } from './useSwarmRun'
 
 const DISPOSITION_META: Record<
   CveDisposition,
@@ -91,153 +37,36 @@ const DISPOSITION_META: Record<
   },
 }
 
+// The grid view of a run: one tile per cell plus the rolled-up report once every
+// cell has settled. The parent runs the swarm poll (useSwarmRun) and hands the
+// computed states down, so switching between the grid and the map view does not
+// restart polling.
 export function SwarmGrid({
   projectId,
   runId,
-  cells,
-  target = '',
-  model = '',
+  states,
+  counts,
+  settled,
+  report,
 }: {
   projectId: string
   runId: string
-  cells: readonly LaunchedCell[]
-  target?: string
-  model?: string
+  states: CellState[]
+  counts: SwarmCounts
+  settled: boolean
+  report: SwarmRunReport | null
 }) {
-  // Both polls stop the moment every cell has settled (verdict saved, or
-  // failed). We recompute that each render and park it in a ref the two
-  // refetchInterval closures read, so neither needs the other's query data.
-  const allSettledRef = useRef(false)
-
-  // The run's live sessions, fetched by the ids the launch returned so each tile
-  // can show whether its worker is queued, running, stopped, or failed.
-  const sessions = useQuery({
-    queryKey: ['swarm-sessions', projectId, runId],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        cells.map(async ({ sessionId }) => {
-          const session = await getManagedAgentSession(sessionId)
-          const turns = session.turns
-          const lastTurnStatus =
-            turns.length > 0 ? turns[turns.length - 1].status : undefined
-          return [sessionId, { status: session.status, lastTurnStatus }] as const
-        }),
-      )
-      return Object.fromEntries(entries)
-    },
-    refetchInterval: () => (allSettledRef.current ? false : 3_000),
-  })
-
-  // Each cell's findings document. These are created up front by the launch, so
-  // they always exist; the worker replaces the empty placeholder when it saves.
-  const findings = useQuery({
-    queryKey: ['swarm-findings', projectId, runId],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        cells.map(async ({ cell }) => {
-          const read = await getManagedMemoryDocument({
-            projectId,
-            resource: SECURITY_FINDINGS_RESOURCE,
-            environment: 'default',
-            id: cellDocumentId(runId, cell),
-          })
-          return [
-            cellDocumentId(runId, cell),
-            parseCellFinding(read.document.text),
-          ] as const
-        }),
-      )
-      return Object.fromEntries(entries)
-    },
-    refetchInterval: () => (allSettledRef.current ? false : 4_000),
-  })
-
-  const progressBySession = useMemo(
-    () => sessions.data ?? {},
-    [sessions.data],
-  )
-
-  const states: CellState[] = cells.map(({ cell, sessionId }) => ({
-    cell,
-    sessionId,
-    progress: progressBySession[sessionId],
-    finding: findings.data?.[cellDocumentId(runId, cell)] ?? null,
-  }))
-
-  const counts = states.reduce(
-    (acc, state) => {
-      const phase = cellPhase(state)
-      if (phase === 'done' && state.finding)
-        acc[state.finding.disposition] += 1
-      else if (phase === 'failed') acc.failed += 1
-      else acc.pending += 1
-      return acc
-    },
-    { exposed: 0, 'not-exposed': 0, 'needs-review': 0, failed: 0, pending: 0 },
-  )
-  const settled = counts.pending === 0
-
-  // Park the settled flag in the ref the two refetchInterval closures read, so
-  // both polls stop once the run is done. Written in an effect (not during
-  // render) so the ref update is a proper side effect.
-  useEffect(() => {
-    allSettledRef.current = settled
-  }, [settled])
-
-  // Once every cell has settled, roll the verdicts into the run report. This is
-  // the swarm's artifact; we both show it and persist it (below) so a scheduled
-  // run leaves something behind.
-  const report: SwarmRunReport | null = settled
-    ? buildRunReport(
-        { runId, target, model, generatedAt: new Date().toISOString() },
-        states.map((s): ReportCell => {
-          const disposition: ReportDisposition = s.finding
-            ? s.finding.disposition
-            : 'failed'
-          return {
-            repository: s.cell.repository,
-            cveId: s.cell.cveId,
-            disposition,
-            ...(s.finding?.reasoning ? { reasoning: s.finding.reasoning } : {}),
-            ...(s.finding?.pullRequest
-              ? { pullRequest: s.finding.pullRequest }
-              : {}),
-          }
-        }),
-      )
-    : null
-
-  // Persist the report exactly once, when the run first settles. create-once
-  // (If-None-Match:*) means a reload that re-settles the same run is a no-op —
-  // the first write wins and any later conflict is ignored.
-  const reportWrittenRef = useRef(false)
-  useEffect(() => {
-    if (!report || reportWrittenRef.current) return
-    reportWrittenRef.current = true
-    void createManagedMemoryDocument({
-      projectId,
-      resource: SECURITY_FINDINGS_RESOURCE,
-      environment: 'default',
-      id: runReportDocumentId(runId),
-      title: `Swarm report ${runId}`,
-      text: serializeRunReport(report),
-      agentWrites: 'disabled',
-    }).catch(() => {
-      // Already written by an earlier view of this run — leave it be.
-    })
-  }, [report, projectId, runId])
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {settled ? (
           <span className="text-muted-foreground">
-            {cells.length} cell{cells.length === 1 ? '' : 's'} complete
+            {states.length} cell{states.length === 1 ? '' : 's'} complete
           </span>
         ) : (
           <span className="text-muted-foreground inline-flex items-center gap-1.5">
             <Loader2 className="size-3.5 animate-spin" />
-            {counts.pending} of {cells.length} still running
+            {counts.pending} of {states.length} still running
           </span>
         )}
         <SummaryPill label="Exposed" count={counts.exposed} tone="exposed" />
@@ -275,7 +104,7 @@ export function SwarmGrid({
 // artifact — the actionable verdicts rolled up and ranked. Tier 1 computes it
 // from the cell findings the grid already holds; a later reducer agent can
 // replace this with a written narrative over the same persisted document.
-function RunReportCard({ report }: { report: SwarmRunReport }) {
+export function RunReportCard({ report }: { report: SwarmRunReport }) {
   const actionable = report.cells.filter(
     (c) => c.disposition !== 'not-exposed',
   )

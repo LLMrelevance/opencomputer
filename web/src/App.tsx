@@ -46,6 +46,9 @@ const ManagedSecurityOnboarding = lazy(
 const ManagedProjectSwarm = lazy(
   () => import('./managed-agents/security/ProjectSwarm'),
 )
+const ManagedProjectSwarms = lazy(
+  () => import('./managed-agents/security/ProjectSwarms'),
+)
 const ModelAccessCallback = lazy(
   () => import('./managed-agents/ModelAccessCallback'),
 )
@@ -123,6 +126,14 @@ export default function App() {
             />
             <Route
               path="projects/:projectId/swarm"
+              element={<Navigate to="../swarms" replace />}
+            />
+            <Route
+              path="projects/:projectId/swarms"
+              element={<ManagedProjectSwarms />}
+            />
+            <Route
+              path="projects/:projectId/swarms/:runId"
               element={<ManagedProjectSwarm />}
             />
             <Route
