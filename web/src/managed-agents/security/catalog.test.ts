@@ -70,6 +70,9 @@ describe('swarm fan-out', () => {
     expect(prompt).toContain('/workspace')
     // Probing is pinned to the attested host, named explicitly.
     expect(prompt).toContain('Stay on https://app.example.com')
+    // The cell is told the preinstalled browser exists, not left to discover it.
+    expect(prompt).toContain('headless Chromium is preinstalled')
+    expect(prompt).toContain('playwright')
   })
 
   it('drops target-only discovery steps when no target is given', () => {
