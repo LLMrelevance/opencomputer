@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -33,7 +33,8 @@ export function takeModelConnectArgs(
   const tokenStdin = take.flag("--token-stdin");
   if (tokenStdin && provider !== "claude")
     throw new Error("--token-stdin is only for `model connect claude`");
-  if (code !== undefined && !/^occ_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(code))
+  // The server is the authority on codes; this only catches a mangled paste.
+  if (code !== undefined && !/^occ_[\x21-\x7e]+$/.test(code))
     throw new CLIError(
       "connect_code_invalid",
       "That is not a connect code (it starts with occ_).",
@@ -231,10 +232,14 @@ export function runClaudeSetupToken(
     // its PTY closes and the TUI behind it is hung up.
     let interrupted: NodeJS.Signals | undefined;
     let escalation: NodeJS.Timeout | undefined;
+    let forceKilled = false;
     const forward = (signal: NodeJS.Signals): void => {
       interrupted ??= signal;
       child.kill("SIGTERM");
-      escalation ??= setTimeout(() => child.kill("SIGKILL"), 2_000);
+      escalation ??= setTimeout(() => {
+        forceKilled = true;
+        child.kill("SIGKILL");
+      }, 2_000);
       escalation.unref();
     };
     const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -260,6 +265,9 @@ export function runClaudeSetupToken(
         ? claudeTokenFromTerminalOutput(captured, process.stdout.rows)
         : undefined;
       captured = "";
+      // A SIGKILLed `script` cannot restore the terminal mode it changed.
+      if (forceKilled && spec.pty && process.stdin.isTTY)
+        spawnSync("stty", ["sane"], { stdio: "inherit" });
       if (interrupted) {
         reject(
           new CLIError(

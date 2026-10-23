@@ -325,9 +325,10 @@ async function connectComputerSubscription(
   client: OpenComputerClient,
   globals: GlobalOptions,
 ): Promise<void> {
-  // Progress and the provider's own UI go to stderr under --json so stdout
-  // carries only the JSON answer.
-  const display = globals.json ? process.stderr : process.stdout;
+  // Progress and the provider's own UI go to stderr under --json (stdout
+  // carries only the JSON answer) or when stdout is not the terminal.
+  const display =
+    globals.json || !process.stdout.isTTY ? process.stderr : process.stdout;
   let body: ComputerConnectRequest;
   if (provider === "codex") {
     display.write(
@@ -358,6 +359,12 @@ async function connectComputerSubscription(
 }
 
 async function claudeTokenFromStdin(): Promise<string> {
+  if (process.stdin.isTTY)
+    throw new CLIError(
+      "value_stdin_required",
+      "--token-stdin needs the token piped in.",
+      'Use `printf %s "$TOKEN" | npx -y @opencomputer/cli model connect claude --code <code> --token-stdin`, or drop --token-stdin to run `claude setup-token`.',
+    );
   const token = (await readStdinValue(true)).trim();
   if (!isClaudeSetupToken(token))
     throw new CLIError(
@@ -393,6 +400,8 @@ async function claudeTokenFromSetupToken(
       "Run the command again; the connect code still works until it is used or expires.",
     );
   // Windows (no PTY recorder), or output this CLI could not read: ask.
+  if (result.pty)
+    display.write("\nCould not read the token from `claude setup-token`'s output.\n");
   const pasted = (
     await readTemplateSecretValue(
       "Paste the token `claude setup-token` printed (input hidden): ",
