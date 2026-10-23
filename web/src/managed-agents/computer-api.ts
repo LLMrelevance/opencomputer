@@ -141,6 +141,7 @@ export type ComputerAgent = z.infer<typeof computerAgentSchema>
 export type AgentChoice = z.infer<typeof agentChoiceSchema>
 export type SubscriptionProvider = z.infer<typeof subscriptionProviderSchema>
 export type ComputerConnectCode = z.infer<typeof computerConnectCodeSchema>
+export type ConnectCodePurpose = 'connect' | 'link'
 export type AgentSubscriptionHealth = z.infer<
   typeof agentSubscriptionHealthSchema
 >
@@ -233,11 +234,17 @@ export async function setAgentChoice(choice: AgentChoice) {
   ).agent
 }
 
-/** Mints this person's connect code for the CLI (work 082). */
-export function createConnectCode() {
+/**
+ * Mints this person's code: `connect` for the CLI (work 082), `link` for
+ * `!link` in Slack, which links them to the Slack user who sends it (083).
+ */
+export function createConnectCode(purpose: ConnectCodePurpose = 'connect') {
   return apiFetch(
     '/managed-agents/computer/agent/connect-code',
-    { method: 'POST', body: '{}' },
+    {
+      method: 'POST',
+      body: JSON.stringify(purpose === 'link' ? { purpose } : {}),
+    },
     computerConnectCodeSchema,
   )
 }

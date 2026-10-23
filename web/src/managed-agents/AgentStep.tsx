@@ -52,6 +52,7 @@ import {
   type AgentChoice,
   type ComputerAgent,
   type ComputerConnectCode,
+  type ConnectCodePurpose,
   type ComputerStatus,
   type SubscriptionProvider,
 } from './computer-api'
@@ -365,8 +366,9 @@ const computerQueryHash = hashKey(computerQueryKey)
 // A stored code is reused only with this long left to run it.
 const CODE_REUSE_MIN_MS = 60_000
 
-function connectCodeStorageKey(scope: string) {
-  return `opencomputer.computer.connect-code:${scope}`
+function connectCodeStorageKey(scope: string, purpose: ConnectCodePurpose) {
+  const base = `opencomputer.computer.connect-code:${scope}`
+  return purpose === 'link' ? `${base}:link` : base
 }
 
 /**
@@ -411,10 +413,15 @@ function storedConnectCode(
  * only until `renewUntil`: after that a tab left open mints nothing, not
  * even when it is focused again.
  */
-function useConnectCode(renewUntil: number) {
+function useConnectCode(
+  renewUntil: number,
+  purpose: ConnectCodePurpose = 'connect',
+  enabled = true,
+) {
   const auth = useContext(AuthContext)
   const key = connectCodeStorageKey(
     `${auth?.user?.orgId ?? ''}:${auth?.user?.id ?? ''}`,
+    purpose,
   )
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -424,7 +431,7 @@ function useConnectCode(renewUntil: number) {
       const stored = storedConnectCode(key, status?.agent?.subscription?.setAt)
       if (stored) return stored
       const mintedAt = Date.now()
-      const minted = await createConnectCode()
+      const minted = await createConnectCode(purpose)
       try {
         window.localStorage.setItem(
           key,
@@ -435,6 +442,7 @@ function useConnectCode(renewUntil: number) {
       }
       return minted
     },
+    enabled,
     retry: false,
     staleTime: (q) => msUntil(q.state.data?.expiresAt),
     refetchInterval: (q) =>
@@ -695,6 +703,116 @@ function CommandConnect({
 }
 
 /**
+ * Linking this person to their Slack user (work 083): `!link <code>` sent to
+ * the app in Slack. The page re-reads the status until it says linked; then
+ * the card becomes the usual connect card, with this Slack user's
+ * subscriptions.
+ */
+function LinkSlack() {
+  const [actedAt, setActedAt] = useState(() => Date.now())
+  // Set with the link, before this unmounts: the forgotten code's query is
+  // still observed until then, and must not mint again.
+  const [linked, setLinked] = useState(false)
+  const {
+    query: code,
+    renew: renewCode,
+    forget,
+  } = useConnectCode(actedAt + CODE_AUTO_RENEW_FOR_MS, 'link', !linked)
+  const renew = () => {
+    setActedAt(Date.now())
+    renewCode()
+  }
+  useQuery({
+    queryKey: computerQueryKey,
+    queryFn: getComputer,
+    refetchInterval: () => {
+      const waited = Date.now() - actedAt
+      if (waited >= WAIT_FOR_MS) return false
+      return waited < WAIT_FAST_FOR_MS ? WAIT_FAST_MS : WAIT_SLOW_MS
+    },
+  })
+  // Announced once, from the cache: the card swaps in the render that
+  // brings the link, and this unmounts.
+  const queryClient = useQueryClient()
+  const announced = useRef(false)
+  useEffect(() => {
+    const check = (next: ComputerStatus | undefined) => {
+      if (announced.current || !next?.agent?.linked) return
+      announced.current = true
+      setLinked(true)
+      forget()
+      notifySuccess('Linked to your Slack account.')
+    }
+    check(queryClient.getQueryData<ComputerStatus>(computerQueryKey))
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (
+        event.type === 'updated' &&
+        event.query.queryHash === computerQueryHash
+      )
+        check(event.query.state.data as ComputerStatus | undefined)
+    })
+  }, [queryClient, forget])
+
+  const codeValue = code.data?.code
+  const lead = <>Link your Slack account: send this to the app in Slack.</>
+  return (
+    <div className="space-y-3">
+      {code.isError && !code.data ? (
+        <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+          <p role="alert" className="text-destructive">
+            {connectErrorCopy(code.error)}
+          </p>
+          <Button size="sm" variant="outline" onClick={renew}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+          {codeValue ? (
+            <CopyCommand
+              value={`!link ${codeValue}`}
+              lead={lead}
+              onCopy={() => setActedAt(Date.now())}
+            />
+          ) : (
+            <>
+              <p>{lead}</p>
+              <div
+                className="bg-panel-2 text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]"
+                aria-busy
+              >
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                Getting your code…
+              </div>
+            </>
+          )}
+          <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="flex items-center gap-1.5" aria-live="polite">
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+              Waiting for it in Slack…
+            </span>
+            <span>Works once, for 10 minutes.</span>
+            <Button
+              variant="link"
+              size="xs"
+              className="text-muted-foreground h-auto px-0 text-xs underline"
+              disabled={code.isFetching}
+              onClick={renew}
+            >
+              Get a new code
+            </Button>
+          </div>
+        </div>
+      )}
+      <p>
+        Or connect from Slack: <Cmd>!claude connect</Cmd> or{' '}
+        <Cmd>!codex connect</Cmd>
+      </p>
+    </div>
+  )
+}
+
+/**
  * The paste form. The token lives in the field only until it is sent, and
  * then in a ref only until the server answers: the field is a password
  * field, never autocompleted, and emptied on submit; the ref is emptied and
@@ -922,13 +1040,13 @@ export function AgentManage({
   const linkedLine = linked ? <p>{linked}</p> : null
 
   if (!subscription) {
-    // After Slack, a person not linked to a Slack user connects there: the
-    // token belongs to whoever asks in Slack.
+    // After Slack, subscriptions belong to Slack users: a person not linked
+    // to one links first (work 083), or connects from Slack.
     if (slackInstalled && !agent.linked) {
       return (
-        <div className="text-muted-foreground space-y-2 text-sm">
+        <div className="text-muted-foreground space-y-4 text-sm">
           <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-          <p>{SLACK_INSTRUCTION}</p>
+          <LinkSlack />
         </div>
       )
     }

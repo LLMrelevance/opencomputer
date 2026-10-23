@@ -1297,6 +1297,7 @@ let previewBootSince: number | null = null
 // that sends no agent block). The paste form answers by the token: one
 // containing "rejected" is refused, "taken" is someone else's, "unchecked"
 // is saved without a check; any other well-formed one is verified.
+// Unlinked with Slack installed, the card mints a link code (work 083).
 // `?agent=codex` is a connected ChatGPT plan. The one-command connect (work
 // 082) mints a placeholder code; with `?connect=auto` the preview plays the
 // person running it: about six seconds later the card's subscription (Codex
@@ -1400,15 +1401,32 @@ function previewAgent(): PreviewAgent | null {
 function previewAgentRequest(path: string, method: string, body: unknown) {
   const agent = previewAgent()
   if (!agent) throw new ApiError('Not found', 404, 'not_found')
-  const { token, choice } = (
+  const { token, choice, purpose } = (
     typeof body === 'string' ? JSON.parse(body) : {}
-  ) as { token?: string; choice?: PreviewAgent['choice'] }
+  ) as { token?: string; choice?: PreviewAgent['choice']; purpose?: string }
   if (path.endsWith('/choice')) {
     agent.choice = choice ?? null
     return { agent: structuredClone(agent) }
   }
   if (path.endsWith('/connect-code')) {
     const connect = new URLSearchParams(window.location.search).get('connect')
+    // A link code (work 083): with `?connect=auto` the preview plays the
+    // person sending `!link` in Slack.
+    if (purpose === 'link') {
+      if (connect === 'auto')
+        setTimeout(() => {
+          agent.linked = true
+          agent.linkedSlackUser = {
+            id: 'U0PREVIEW',
+            name: 'maya',
+            teamName: 'Acme',
+          }
+        }, 6_000)
+      return {
+        code: 'oc_PREVIEW00000000',
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }
+    }
     if (connect === 'unavailable' && agent.choice === 'codex')
       throw new ApiError(
         "Codex isn't available on this computer yet",

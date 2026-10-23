@@ -895,13 +895,33 @@ describe('choosing the coding agent', () => {
     expect(button('Resume')).toBeUndefined()
   })
 
-  it('sends someone not linked to Slack there to connect', async () => {
+  it('links someone not linked to Slack with a code', async () => {
     await show(
       { ...onboarded, agent: { ...fresh, choice: 'credits' } },
       'Your agent',
     )
-    expect(text()).toContain('Connect from Slack: !claude connect')
+    await settle(() => text().includes(`!link ${CODE}`), 'link command')
+    expect(computerApi.createConnectCode).toHaveBeenCalledWith('link')
+    expect(text()).toContain('Or connect from Slack: !claude connect')
     expect(container.querySelector('input[type="password"]')).toBeNull()
+
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      agent: {
+        ...fresh,
+        choice: 'credits',
+        linked: true,
+        linkedSlackUser: { id: 'U1', name: 'maya', teamName: 'Acme' },
+      },
+    })
+    refocus()
+    await settle(() => text().includes('Connect Claude Code'), 'connect card')
+    expect(notify.notifySuccess).toHaveBeenCalledWith(
+      'Linked to your Slack account.',
+    )
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    // A used code is never offered again.
+    expect(Object.keys(window.localStorage)).toEqual([])
   })
 
   it('is not there for an older backend', async () => {
