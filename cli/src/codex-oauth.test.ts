@@ -37,3 +37,24 @@ test("Codex OAuth callback closes its listener before resolving", async () => {
     rebound.close((error) => (error ? reject(error) : resolve())),
   );
 });
+
+test("Codex OAuth callback says what holds port 1455 when it is in use", async () => {
+  const holder = http.createServer();
+  await new Promise<void>((resolve) => holder.listen(0, "127.0.0.1", resolve));
+  const port = (holder.address() as AddressInfo).port;
+  try {
+    await assert.rejects(
+      exchangeCodeOnCallback("https://auth.openai.com/oauth/authorize", "state", port, () => {
+        assert.fail("the browser must not open when the port cannot be bound");
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as NodeJS.ErrnoException).code === "EADDRINUSE" &&
+        error.message === `Port ${String(port)} is in use: another Codex sign-in is holding it; close it and retry.`,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      holder.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});

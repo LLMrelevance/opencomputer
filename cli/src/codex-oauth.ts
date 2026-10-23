@@ -39,7 +39,13 @@ function base64url(bytes: Uint8Array): string {
     .replace(/=+$/, "");
 }
 
-export async function codexLogin(): Promise<{
+/**
+ * Browser sign-in to ChatGPT. `originator` is the client the token is issued
+ * for; it must match the Originator header the token is later used with (the
+ * computer's Codex harness sends `codex_cli_rs`, the serverless-agents proxy
+ * `opencode`).
+ */
+export async function codexLogin(originator = "opencode"): Promise<{
   credential: RelayedCodexCredential;
   accountHint: string;
   /** The OpenID id_token; a computer's Codex auth.json needs it (work 082). */
@@ -65,7 +71,7 @@ export async function codexLogin(): Promise<{
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("id_token_add_organizations", "true");
   authorizeUrl.searchParams.set("codex_cli_simplified_flow", "true");
-  authorizeUrl.searchParams.set("originator", "opencode");
+  authorizeUrl.searchParams.set("originator", originator);
 
   const authCode = await exchangeCodeOnCallback(
     authorizeUrl.toString(),
@@ -152,7 +158,9 @@ export function exchangeCodeOnCallback(
       finish(200, "Authorized. You can close this window.", { code });
     });
 
-    server.on("error", (error) => {
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE")
+        error.message = `Port ${String(port)} is in use: another Codex sign-in is holding it; close it and retry.`;
       reject(error);
     });
 

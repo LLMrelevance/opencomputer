@@ -13,6 +13,7 @@ import {
   codexAuthJson,
   connectError,
   findExecutable,
+  isClaudeSetupToken,
   normalizeConnectCode,
   runClaudeSetupToken,
   sendComputerConnect,
@@ -57,10 +58,14 @@ test("model connect parses --code and --token-stdin", () => {
   assert.deepEqual(rest, ["--project", "demo"]);
 });
 
-test("connect codes are trimmed and accepted in any case", () => {
+test("connect codes are trimmed, accepted in any case, and read I/L as 1 and O as 0", () => {
   assert.equal(normalizeConnectCode("  oc_7kqm2xp94htrwn3f\n"), CODE);
   assert.equal(normalizeConnectCode("OC_7KQM2XP94HTRWN3F"), CODE);
   assert.deepEqual(parse("codex", ["--code", " Oc_7kQm2Xp94hTrWn3F "]), { code: CODE, tokenStdin: false });
+  // The same reading as the server's, so a retyped code is sent as it means.
+  assert.equal(normalizeConnectCode("oc_1O0IL2XP94HTRWN3"), "oc_100112XP94HTRWN3");
+  assert.equal(normalizeConnectCode(" oc_iLoO2xp94htrwn3f "), "oc_11002XP94HTRWN3F");
+  assert.deepEqual(parse("claude", ["--code", "oc_7KQM2XP94HTRWN3F\t"]), { code: CODE, tokenStdin: false });
   for (const bad of [
     "oc_7KQM2XP94HTRWN3",
     "oc_7KQM2XP94HTRWN3FF",
@@ -68,6 +73,7 @@ test("connect codes are trimmed and accepted in any case", () => {
     "oc_7KQM 2XP94HTRWN3",
     "occ_YWNjdF8xMjM.Zm9vYmFy",
     "7KQM2XP94HTRWN3F",
+    "oc-7KQM2XP94HTRWN3F",
   ])
     assert.equal(normalizeConnectCode(bad), undefined, bad);
 });
@@ -223,6 +229,16 @@ test("connect errors read well and never carry the credential", async (context) 
     }),
     new Response("not found", { status: 404 }),
     Response.json({ error: { code: "internal", message: "boom" } }, { status: 500 }),
+    // An edge that predates connect codes answers 401 for the missing key.
+    Response.json({ error: { code: "unauthorized", message: "missing or invalid API key" } }, { status: 401 }),
+    Response.json(
+      { error: { code: "connect_in_slack", message: "Connect this plan from Slack: /opencomputer connect." } },
+      { status: 409 },
+    ),
+    Response.json(
+      { error: { code: "computer_harness_unavailable", message: "This computer has no Claude harness." } },
+      { status: 403 },
+    ),
   ];
   context.mock.method(globalThis, "fetch", async () => answers.shift()!);
   const client = new OpenComputerClient({ apiUrl: "https://app.opencomputer.dev" });
@@ -250,7 +266,26 @@ test("connect errors read well and never carry the credential", async (context) 
   assert.equal(problem.code, "connect_rejected");
 
   assert.equal((await attempt()).code, "connect_unavailable");
-  assert.equal((await attempt()).code, "internal");
+  const internal = await attempt();
+  assert.equal(internal.code, "internal");
+  assert.match(internal.hint, /Retry the command/);
+
+  // A 401 that is not the connect-code error keeps the server's words.
+  const oldEdge = await attempt();
+  assert.equal(oldEdge.code, "unauthorized");
+  assert.equal(oldEdge.message, "missing or invalid API key");
+  assert.match(oldEdge.hint, /Retry the command/);
+
+  // 403/409 cannot succeed on a retry: the server's message, no retry hint.
+  for (const [code, message] of [
+    ["connect_in_slack", "Connect this plan from Slack: /opencomputer connect."],
+    ["computer_harness_unavailable", "This computer has no Claude harness."],
+  ]) {
+    const refused = await attempt();
+    assert.equal(refused.code, code);
+    assert.equal(refused.message, message);
+    assert.equal(refused.hint, "");
+  }
 
   for (const failure of [invalid, refused, problem])
     assert.doesNotMatch(JSON.stringify(failure), /sk-ant-oat/);
@@ -312,6 +347,17 @@ test("a token repainted over an earlier frame is read from the screen, not the s
     `${ESC}[2A\r${ESC}[21G${TOKEN.slice(20)}\r\n${ESC}[2K\r\n`;
   assert.equal(claudeTokenFromTerminalOutput(output), TOKEN);
   assert.doesNotMatch(output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""), new RegExp(TOKEN));
+});
+
+test("a setup token is what the server accepts: oat01 and a 20-400 character body", () => {
+  assert.ok(isClaudeSetupToken(TOKEN));
+  assert.ok(isClaudeSetupToken(`sk-ant-oat01-${"a".repeat(20)}`));
+  assert.ok(isClaudeSetupToken(`sk-ant-oat01-${"a".repeat(400)}`));
+  assert.ok(!isClaudeSetupToken(`sk-ant-oat01-${"a".repeat(19)}`));
+  assert.ok(!isClaudeSetupToken(`sk-ant-oat01-${"a".repeat(401)}`));
+  assert.ok(!isClaudeSetupToken(TOKEN.replace("oat01", "oat02")));
+  assert.ok(!isClaudeSetupToken(`${TOKEN}.`));
+  assert.equal(claudeTokenFromScreen([TOKEN.replace("oat01", "oat02")]), undefined);
 });
 
 test("the last token on screen wins and partial tokens are ignored", () => {
@@ -388,6 +434,30 @@ process.stdout.write("\\r\\n \\x1b[2mStore this token securely.\\x1b[22m\\r\\n")
       });
       assert.equal(result.token, TOKEN);
       assert.match(Buffer.concat(shown).toString("utf8"), /Store this token securely/);
+
+      // A long sign-in: the TUI repaints its frame on every spinner tick, so
+      // more than the capture limit is drawn before the token appears. The
+      // tail is what is kept, and the token is in it.
+      const slow = join(directory, "slow-setup-token.mjs");
+      await writeFile(
+        slow,
+        `import { writeSync } from "node:fs";
+if (!process.stdout.isTTY) process.exit(3);
+const t = ${JSON.stringify(TOKEN)};
+const frame = "\\x1b[2K\\r \\x1b[36m⠋\\x1b[39m Waiting for sign-in…".padEnd(1024, " ");
+for (let drawn = 0; drawn < 5 * 1024 * 1024; drawn += frame.length) writeSync(1, frame);
+writeSync(1, "\\x1b[2K\\r\\x1b[2GYour\\x1b[7GOAuth\\x1b[13Gtoken:\\r\\n\\r\\n");
+for (let i = 0; i < t.length; i += 50) writeSync(1, " \\x1b[33m" + t.slice(i, i + 50) + "\\x1b[39m\\r\\n");
+writeSync(1, "\\r\\n \\x1b[2mStore this token securely.\\x1b[22m\\r\\n");
+`,
+      );
+      const long = await runClaudeSetupToken(new PassThrough().resume(), {
+        command: "script",
+        args: ["-q", "-c", `${process.execPath} ${slow}`, "/dev/null"],
+        shell: false,
+        pty: true,
+      });
+      assert.equal(long.token, TOKEN);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

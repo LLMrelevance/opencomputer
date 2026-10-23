@@ -172,7 +172,7 @@ main().catch((error: unknown) => {
     process.stderr.write(`${JSON.stringify({ error: failure })}\n`);
   } else {
     process.stderr.write(
-      `opencomputer: ${failure.message}\nfix: ${failure.hint}\n`,
+      `opencomputer: ${failure.message}\n${failure.hint ? `fix: ${failure.hint}\n` : ""}`,
     );
   }
   process.exitCode = 1;

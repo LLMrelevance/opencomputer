@@ -334,7 +334,8 @@ async function connectComputerSubscription(
     display.write(
       "Opening your browser to sign in to ChatGPT. Use the account that has your plan.\n",
     );
-    const { credential, idToken } = await codexLogin();
+    // The computer's Codex harness uses the token as codex_cli_rs.
+    const { credential, idToken } = await codexLogin("codex_cli_rs");
     body = {
       code,
       provider,

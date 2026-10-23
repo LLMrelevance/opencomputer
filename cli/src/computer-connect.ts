@@ -18,17 +18,25 @@ export type ComputerConnectProvider = "claude" | "codex";
 export const DASHBOARD_CONNECT_HINT =
   "Get a connect command from the dashboard (Computer → Agent).";
 
-/** `oc_` + 16 Crockford base32 characters (no I, L, O, U). */
-const CONNECT_CODE = /^oc_[0-9A-HJKMNP-TV-Z]{16}$/;
+const CONNECT_CODE_PREFIX = "oc_";
+/** 16 Crockford base32 characters (no I, L, O, U). */
+const CONNECT_CODE_BODY = /^[0-9A-HJKMNP-TV-Z]{16}$/;
 
 /**
  * The canonical connect code (`oc_` + upper-case body), accepting surrounding
- * whitespace and any letter case; undefined when it is not a connect code.
+ * whitespace, any letter case, and I/L for 1 and O for 0 (the same reading as
+ * the server's); undefined when it is not a connect code.
  */
 export function normalizeConnectCode(value: string): string | undefined {
   const trimmed = value.trim();
-  const code = `${trimmed.slice(0, 3).toLowerCase()}${trimmed.slice(3).toUpperCase()}`;
-  return CONNECT_CODE.test(code) ? code : undefined;
+  if (trimmed.slice(0, CONNECT_CODE_PREFIX.length).toLowerCase() !== CONNECT_CODE_PREFIX)
+    return undefined;
+  const body = trimmed
+    .slice(CONNECT_CODE_PREFIX.length)
+    .toUpperCase()
+    .replace(/[IL]/g, "1")
+    .replace(/O/g, "0");
+  return CONNECT_CODE_BODY.test(body) ? `${CONNECT_CODE_PREFIX}${body}` : undefined;
 }
 
 export interface ModelConnectArgs {
@@ -91,10 +99,10 @@ export function codexAuthJson(token: {
 // ---------------------------------------------------------------------------
 // Claude: `claude setup-token` and reading its token.
 
-const TOKEN_PREFIX = /sk-ant-oat\d{2}-/;
+const TOKEN_PREFIX = /sk-ant-oat01-/;
 const TOKEN_CHARS = /^[A-Za-z0-9_-]+$/;
-/** A setup token: the prefix and a body far longer than any word wrap leaves. */
-const SETUP_TOKEN = /^sk-ant-oat\d{2}-[A-Za-z0-9_-]{32,}$/;
+/** A setup token, as the server accepts it: the oat01 prefix and a 20–400 character body. */
+const SETUP_TOKEN = /^sk-ant-oat01-[A-Za-z0-9_-]{20,400}$/;
 
 export function isClaudeSetupToken(value: string): boolean {
   return SETUP_TOKEN.test(value);
@@ -113,7 +121,7 @@ export function claudeTokenFromScreen(lines: readonly string[]): string | undefi
     const match = TOKEN_PREFIX.exec(text);
     if (!match) continue;
     const rest = text.slice(match.index);
-    const run = /^sk-ant-oat\d{2}-[A-Za-z0-9_-]*/.exec(rest)![0];
+    const run = /^sk-ant-oat01-[A-Za-z0-9_-]*/.exec(rest)![0];
     let token = run;
     if (run.length === rest.length) {
       for (let next = index + 1; next < lines.length; next++) {
@@ -220,6 +228,12 @@ export interface SetupTokenResult {
   pty: boolean;
 }
 
+/**
+ * How much of the TUI's output is kept: the tail, since the TUI repaints its
+ * whole frame on every spinner tick and a long sign-in draws far more than
+ * this before the token appears. A full repaint re-establishes the screen,
+ * so the screen model needs only the recent stream.
+ */
 const MAX_CAPTURE_CHARS = 4 * 1024 * 1024;
 
 /** Runs `claude setup-token` interactively and reads the token it prints. */
@@ -237,7 +251,7 @@ export function runClaudeSetupToken(
     let captured = "";
     child.stdout?.on("data", (chunk: Buffer) => {
       display.write(chunk);
-      if (captured.length < MAX_CAPTURE_CHARS) captured += decoder.write(chunk);
+      captured = (captured + decoder.write(chunk)).slice(-MAX_CAPTURE_CHARS);
     });
     // Ctrl-C normally reaches the TUI as a keystroke (the PTY is raw); a
     // signal to this process (kill, terminal closed) must not orphan it.
@@ -274,9 +288,13 @@ export function runClaudeSetupToken(
     child.once("close", (exitCode, signal) => {
       cleanup();
       captured += decoder.end();
-      const token = spec.pty
-        ? claudeTokenFromTerminalOutput(captured, process.stdout.rows)
-        : undefined;
+      // `script` sizes the PTY from stdin; stdout may be a pipe (no rows).
+      // Node types stdin as a plain ReadStream; a TTY stdin has rows.
+      const rows =
+        (process.stdin as NodeJS.ReadStream & { rows?: number }).rows ??
+        process.stdout.rows ??
+        24;
+      const token = spec.pty ? claudeTokenFromTerminalOutput(captured, rows) : undefined;
       captured = "";
       // A SIGKILLed `script` cannot restore the terminal mode it changed.
       if (forceKilled && spec.pty && process.stdin.isTTY)
@@ -329,7 +347,7 @@ export function connectError(
   const message = redactSecrets(error.message, secrets);
   const details = { status: error.status, ...(error.code ? { apiCode: error.code } : {}) };
   const plan = provider === "claude" ? "Claude" : "ChatGPT";
-  if (error.code === "computer_connect_code_invalid" || error.status === 401)
+  if (error.code === "computer_connect_code_invalid")
     return new CLIError(
       "connect_code_invalid",
       "That connect code is not valid. Get a new one from the dashboard.",
@@ -352,6 +370,10 @@ export function connectError(
         : `The code is still good: run the command again and sign in with the account that has your ${plan} plan.`,
       details,
     );
+  // 403/409 (no computer, connect in Slack, not a member) cannot succeed on a
+  // retry: the server's message says what to do, so there is no fix line.
+  if (error.status === 403 || error.status === 409)
+    return new CLIError(error.code ?? "connect_refused", message, "", details);
   return new CLIError(
     error.code ?? "connect_failed",
     message,
