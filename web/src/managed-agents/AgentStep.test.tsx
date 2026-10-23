@@ -2,7 +2,11 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  focusManager,
+} from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
@@ -18,6 +22,8 @@ const computerApi = vi.hoisted(() => ({
   disconnectClaudeSubscription: vi.fn(),
   resumeClaudeSubscription: vi.fn(),
   setAgentChoice: vi.fn(),
+  createConnectCode: vi.fn(),
+  disconnectCodexSubscription: vi.fn(),
 }))
 vi.mock('./computer-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./computer-api')>()),
@@ -35,12 +41,17 @@ vi.mock('@/lib/errors', () => notify)
 const { default: ComputerPage } = await import('./Computer')
 
 const TOKEN = `sk-ant-oat01-${'a'.repeat(40)}`
+const CODE = 'oc_7KQM2XP94HTRWN3F'
+const CODE_2 = 'oc_0J5V8D1ZGB6CY4AE'
+const inTenMinutes = () => new Date(Date.now() + 10 * 60_000).toISOString()
 const fresh: ComputerAgent = {
   choice: null,
   linked: false,
   subscription: null,
   managedModel: 'Claude Opus 5.5',
 }
+// The rollout gate: blue names the harnesses this computer can run.
+const withCodex: ComputerAgent = { ...fresh, harnesses: ['claude', 'codex'] }
 const subscription = (
   health: NonNullable<ComputerAgent['subscription']>['health'],
 ) => ({ provider: 'claude' as const, health, setAt: '2026-10-22T10:00:00Z' })
@@ -108,6 +119,11 @@ describe('choosing the coding agent', () => {
     capture.mockReset()
     notify.notifySuccess.mockReset()
     computerApi.getComputerSessions.mockResolvedValue([])
+    computerApi.createConnectCode.mockResolvedValue({
+      code: CODE,
+      expiresAt: inTenMinutes(),
+    })
+    window.localStorage.clear()
   })
 
   afterEach(() => {
@@ -144,6 +160,15 @@ describe('choosing the coding agent', () => {
     await settle(() => text().includes(until), until)
   }
 
+  function openPaste() {
+    act(() => button('Or paste a token')!.click())
+  }
+
+  const command = () =>
+    [...document.body.querySelectorAll('code')]
+      .map((code) => code.textContent ?? '')
+      .find((value) => value.startsWith('npx '))
+
   function paste(value: string) {
     const input = field()
     act(() => {
@@ -171,9 +196,10 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('No subscription? Start with $10 free.')
     expect(text()).toContain('Runs Claude Opus 5.5 on our credits.')
     expect(text()).toContain('Claude Code on its own machine')
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_shown')
+    openPaste()
     const input = field()
     expect(input.getAttribute('autocomplete')).toBe('off')
-    expect(capture).toHaveBeenCalledWith('computer.setup.agent_shown')
 
     // Once sent, the token is nowhere the page could show or keep it: not
     // the field, not the mutation's state, not react-query's cache (which
@@ -200,6 +226,7 @@ describe('choosing the coding agent', () => {
 
   it('refuses a token of the wrong shape on paste, before sending it', async () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    openPaste()
     paste('sk-ant-api03-nope')
     expect(text()).toContain("That's not a setup token. It starts with")
     submit()
@@ -211,6 +238,7 @@ describe('choosing the coding agent', () => {
 
   it('joins a token the terminal wrapped, and says when one is cut off', async () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    openPaste()
     paste('sk-ant-oat01-short')
     expect(text()).toContain('That token looks cut off.')
     computerApi.connectClaudeSubscription.mockResolvedValue({
@@ -230,6 +258,7 @@ describe('choosing the coding agent', () => {
     computerApi.connectClaudeSubscription.mockRejectedValue(
       new ApiError('x', 422, 'computer_agent_token_rejected'),
     )
+    openPaste()
     paste(TOKEN)
     submit()
     expect(field().value).toBe('')
@@ -250,6 +279,7 @@ describe('choosing the coding agent', () => {
     computerApi.connectClaudeSubscription.mockRejectedValueOnce(
       new TypeError('Failed to fetch'),
     )
+    openPaste()
     paste(TOKEN)
     submit()
     await settle(() => text().includes("Couldn't reach the server"), 'neutral')
@@ -274,6 +304,7 @@ describe('choosing the coding agent', () => {
         'computer_agent_already_connected',
       ),
     )
+    openPaste()
     paste(TOKEN)
     submit()
     await settle(
@@ -289,6 +320,7 @@ describe('choosing the coding agent', () => {
       verified: true,
       via: 'pool',
     })
+    openPaste()
     paste(TOKEN)
     submit()
     await settle(() => text().includes('Step 2 of 4'), 'Slack step')
@@ -300,6 +332,7 @@ describe('choosing the coding agent', () => {
       choice: 'claude',
     })
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_connected', {
+      provider: 'claude',
       verified: true,
       via: 'pool',
     })
@@ -316,6 +349,7 @@ describe('choosing the coding agent', () => {
       verified: false,
       via: 'none',
     })
+    openPaste()
     paste(TOKEN)
     submit()
     await settle(() => text().includes('Step 2 of 4'), 'Slack step')
@@ -328,6 +362,7 @@ describe('choosing the coding agent', () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
     computerApi.connectClaudeSubscription.mockReturnValue(new Promise(() => {}))
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    openPaste()
     paste(TOKEN)
     submit()
     await act(async () => {
@@ -340,38 +375,421 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('Still checking…')
   })
 
-  it('keeps Codex on the step and records the interest', async () => {
-    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
-    computerApi.setAgentChoice.mockResolvedValue({ ...fresh, choice: 'codex' })
-    const codex = [...container.querySelectorAll('[role="radio"]')].find(
-      (radio) => radio.textContent?.includes('Codex'),
+  const card = (name: string) =>
+    [...container.querySelectorAll('[role="radio"]')].find((radio) =>
+      radio.textContent?.includes(name),
     ) as HTMLButtonElement
-    act(() => codex.click())
-    await settle(
-      () => computerApi.setAgentChoice.mock.calls.length === 1,
-      'codex choice',
-    )
-    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
+  const codexCard = () => card('Codex')
+  const claudeCard = () => card('Claude')
+
+  // The person comes back to the tab from the terminal or the browser.
+  function refocus() {
+    act(() => {
+      focusManager.setFocused(false)
+      focusManager.setFocused(true)
     })
-    expect(text()).toContain("Codex is coming. We'll let you know.")
-    expect(text()).toContain('Codex on its own machine')
-    expect(text()).toContain('Step 1 of 4')
-    expect(button('Use free credits')).toBeDefined()
-    expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
+  }
+
+  it('shows one command for Claude Code first, the paste form second', async () => {
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    await settle(() => command() !== undefined, 'command')
+    expect(command()).toBe(
+      `npx -y @opencomputer/cli model connect claude --code ${CODE}`,
+    )
+    // One line, scrolled sideways when narrow, never broken mid-word.
+    const row = [...document.body.querySelectorAll('code')].find((c) =>
+      c.textContent?.startsWith('npx '),
+    )!
+    expect(row.className).toContain('whitespace-nowrap')
+    expect(row.className).not.toContain('break-all')
+    expect(text()).toContain(
+      'Run this in a terminal; it opens Claude to sign in.',
+    )
+    expect(text()).toContain('Waiting for you to sign in…')
+    expect(container.querySelector('input[type="password"]')).toBeNull()
+    expect(button('Or paste a token')).toBeDefined()
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+  })
+
+  it('connects Codex with one command and moves on once signed in', async () => {
+    await show({ ...empty, agent: withCodex }, 'Choose your coding agent')
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...withCodex,
       choice: 'codex',
     })
+    act(() => codexCard().click())
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
+    expect(command()).toBe(
+      `npx -y @opencomputer/cli model connect codex --code ${CODE}`,
+    )
+    expect(text()).toContain(
+      'Run this in a terminal; it opens ChatGPT to sign in.',
+    )
+    expect(text()).toContain('Codex on its own machine')
+    expect(button('Or paste a token')).toBeUndefined()
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
+    // One code for both cards: switching does not mint another.
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    await settle(
+      () =>
+        capture.mock.calls.some(
+          ([event, props]) =>
+            event === 'computer.setup.agent_chosen' &&
+            (props as { choice: string }).choice === 'codex',
+        ),
+      'codex chosen',
+    )
+
+    computerApi.getComputer.mockResolvedValue({
+      ...empty,
+      agent: {
+        ...withCodex,
+        choice: 'codex',
+        subscription: {
+          provider: 'codex',
+          health: 'unchecked',
+          setAt: '2026-10-22T10:00:00Z',
+          plan: 'plus',
+        },
+      },
+    })
+    refocus()
+    await settle(() => text().includes('Step 2 of 4'), 'Slack step')
+    expect(text()).toContain('Codex · your ChatGPT plan')
+    expect(notify.notifySuccess).toHaveBeenCalledWith('Codex is connected.')
+    expect(capture).toHaveBeenCalledWith('computer.setup.agent_connected', {
+      provider: 'codex',
+      verified: false,
+      via: 'command',
+    })
+    // A used code is never offered again.
+    expect(window.localStorage.length).toBe(0)
+  })
+
+  it('waits quickly for the sign-in while the tab is in view', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
+    computerApi.getComputer.mockResolvedValue({ ...empty, agent: fresh })
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/computer']}>
+            <Routes>
+              <Route path="computer" element={<ComputerPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toBeDefined()
+    const reads = computerApi.getComputer.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100)
+    })
+    expect(computerApi.getComputer.mock.calls.length).toBeGreaterThan(reads)
+  })
+
+  it('stops renewing and waiting in a tab left open, until asked again', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+      ],
+    })
+    let minted = 0
+    computerApi.createConnectCode.mockImplementation(() =>
+      Promise.resolve({
+        code: `${CODE}${minted++}`,
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }),
+    )
+    computerApi.getComputer.mockResolvedValue({ ...empty, agent: fresh })
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/computer']}>
+            <Routes>
+              <Route path="computer" element={<ComputerPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toBeDefined()
+    // An hour with nobody acting: renewed for half an hour, then left.
+    for (let i = 0; i < 60; i++)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+    expect(computerApi.createConnectCode.mock.calls.length).toBeLessThanOrEqual(
+      4,
+    )
+    expect(text()).toContain('This command expired.')
+    expect(text()).not.toContain('Waiting for you to sign in')
+    const reads = computerApi.getComputer.mock.calls.length
+    const mints = computerApi.createConnectCode.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30 * 60_000)
+    })
+    // Coming back to the tab mints nothing either.
+    refocus()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints)
+    // Only the page's own slow poll (every 30 s) is left.
+    expect(
+      computerApi.getComputer.mock.calls.length - reads,
+    ).toBeLessThanOrEqual(61)
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints)
+    // Asked again: a fresh command, and the wait is back.
+    act(() => button('Get a new command')!.click())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints + 1)
+    expect(text()).toContain('Waiting for you to sign in')
+  })
+
+  it('renews an expired code without saying it expired', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+      ],
+    })
+    let release: (() => void) | undefined
+    let minted = 0
+    computerApi.createConnectCode.mockImplementation(() => {
+      const code = {
+        code: `${CODE}${minted++}`,
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }
+      // The first mint lands at once, the renewal when released.
+      return minted === 1
+        ? Promise.resolve(code)
+        : new Promise((resolve) => {
+            release = () => resolve(code)
+          })
+    })
+    computerApi.getComputer.mockResolvedValue({ ...empty, agent: fresh })
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/computer']}>
+            <Routes>
+              <Route path="computer" element={<ComputerPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toContain(`${CODE}0`)
+    // Past the code's expiry, with the renewal still on its way.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 2_000)
+    })
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(2)
+    expect(text()).not.toContain('This command expired.')
+    expect(text()).toContain('Works once, for 10 minutes.')
+    await act(async () => {
+      release?.()
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toContain(`${CODE}1`)
+    expect(text()).not.toContain('This command expired.')
+  })
+
+  it('keeps the command across a reload, and gives a new one on request', async () => {
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    await settle(() => command() !== undefined, 'command')
+    // A reload: a new page, the same tab.
+    act(() => root.unmount())
+    client.clear()
+    root = createRoot(container)
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    await settle(() => command() !== undefined, 'command again')
+    expect(command()).toContain(CODE)
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+
+    computerApi.createConnectCode.mockResolvedValue({
+      code: CODE_2,
+      expiresAt: inTenMinutes(),
+    })
+    act(() => button('Get a new command')!.click())
+    await settle(() => command()?.includes(CODE_2) === true, 'new command')
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops a stored code a sign-in already used while no tab watched', async () => {
+    window.localStorage.setItem(
+      'opencomputer.computer.connect-code::',
+      JSON.stringify({
+        code: 'oc_SPENT00000000000',
+        expiresAt: inTenMinutes(),
+        mintedAt: Date.parse('2026-10-22T09:59:00Z'),
+      }),
+    )
+    await show(
+      {
+        ...empty,
+        agent: { ...fresh, choice: 'claude', subscription: subscription('ok') },
+      },
+      'Add OpenComputer to Slack',
+    )
+    act(() => button('Change')!.click())
+    await settle(() => command() !== undefined, 'command')
+    expect(command()).toContain(CODE)
+    expect(command()).not.toContain('SPENT')
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+  })
+
+  it('mints a new command once the code expires', async () => {
+    computerApi.createConnectCode
+      .mockResolvedValueOnce({
+        code: CODE,
+        expiresAt: new Date(Date.now() + 1_000).toISOString(),
+      })
+      .mockResolvedValue({ code: CODE_2, expiresAt: inTenMinutes() })
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    await settle(() => command() !== undefined, 'command')
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    await settle(() => command()?.includes(CODE_2) === true, 'renewed')
+  })
+
+  it('says why no command could be had, and tries again', async () => {
+    computerApi.createConnectCode.mockRejectedValueOnce(
+      new ApiError(
+        "Connecting a subscription isn't available yet. Try again shortly.",
+        404,
+        'not_found',
+      ),
+    )
+    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
+    await settle(
+      () => text().includes("Connecting a subscription isn't available yet."),
+      'mint error',
+    )
+    // The paste form still works.
+    expect(button('Or paste a token')).toBeDefined()
+    act(() => button('Try again')!.click())
+    await settle(() => command() !== undefined, 'command')
   })
 
   it('lands on the step again with Codex chosen, Codex selected', async () => {
     await show(
-      { ...empty, agent: { ...fresh, choice: 'codex' } },
+      { ...empty, agent: { ...withCodex, choice: 'codex' } },
       'Choose your coding agent',
     )
     expect(text()).toContain('Step 1 of 4')
-    expect(text()).toContain("Codex is coming. We'll let you know.")
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
     expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
+  })
+
+  describe('where this computer cannot run Codex yet', () => {
+    it.each([
+      ['an older backend that names none', fresh],
+      ['a computer that runs Claude only', { ...fresh, harnesses: ['claude'] }],
+    ])('only records Codex on %s', async (_, agent: ComputerAgent) => {
+      await show({ ...empty, agent }, 'Choose your coding agent')
+      await settle(() => command() !== undefined, 'claude command')
+      computerApi.setAgentChoice.mockResolvedValue({
+        ...agent,
+        choice: 'codex',
+      })
+      act(() => codexCard().click())
+      await settle(
+        () => text().includes("Codex is coming. We'll let you know."),
+        'coming line',
+      )
+      expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
+      expect(command()).toBeUndefined()
+      expect(text()).not.toContain('it opens ChatGPT to sign in')
+      // The Claude command was minted for the first card; Codex mints none.
+      expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    })
+
+    it('lands on the coming line with Codex chosen, and mints nothing', async () => {
+      await show(
+        { ...empty, agent: { ...fresh, choice: 'codex' } },
+        "Codex is coming. We'll let you know.",
+      )
+      expect(command()).toBeUndefined()
+      expect(computerApi.createConnectCode).not.toHaveBeenCalled()
+      expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
+    })
+
+    it('offers only Claude Code on the agent card', async () => {
+      await show(
+        {
+          ...onboarded,
+          agent: { ...fresh, choice: 'credits', linked: true },
+        },
+        'Your agent',
+      )
+      expect(button('Connect Claude Code')).toBeDefined()
+      expect(button('Use Codex instead')).toBeUndefined()
+      expect(button('Connect Codex')).toBeUndefined()
+    })
+  })
+
+  it('drives the cards from the harnesses, Claude included', async () => {
+    await show(
+      { ...empty, agent: { ...fresh, harnesses: ['codex'] } },
+      "Claude Code is coming. We'll let you know.",
+    )
+    expect(computerApi.createConnectCode).not.toHaveBeenCalled()
+    expect(button('Or paste a token')).toBeUndefined()
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...fresh,
+      harnesses: ['codex'],
+      choice: 'codex',
+    })
+    act(() => codexCard().click())
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
+    expect(text()).not.toContain('is coming')
+    // Back to the Claude card: the interest is recorded, as Codex's is.
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...fresh,
+      harnesses: ['codex'],
+      choice: 'claude',
+    })
+    act(() => claudeCard().click())
+    await settle(
+      () => text().includes("Claude Code is coming. We'll let you know."),
+      'coming line',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenLastCalledWith('claude')
+  })
+
+  it('offers Codex on the agent card where this computer can run it', async () => {
+    await show(
+      {
+        ...onboarded,
+        agent: { ...withCodex, choice: 'credits', linked: true },
+      },
+      'Your agent',
+    )
+    expect(button('Connect Claude Code')).toBeDefined()
+    act(() => button('Use Codex instead')!.click())
+    act(() => button('Connect Codex')!.click())
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
   })
 
   it('starts on free credits', async () => {
@@ -404,6 +822,8 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('Now on Claude Code · your subscription.')
     expect(document.body.querySelector('[role="radiogroup"]')).not.toBeNull()
     expect(text()).toContain('Codex')
+    await settle(() => command() !== undefined, 'command')
+    openPaste()
     expect(button('Replace token')).toBeDefined()
     expect(text()).toContain('Switch to free credits.')
     expect(text()).toContain('Disconnects Claude Code')
@@ -420,7 +840,10 @@ describe('choosing the coding agent', () => {
     )
     expect(computerApi.disconnectClaudeSubscription).toHaveBeenCalledTimes(1)
     await settle(() => !text().includes('Your coding agent'), 'dialog closed')
-    expect(text()).toContain('Claude Opus 5.5 · free credits')
+    await settle(
+      () => text().includes('Claude Opus 5.5 · free credits'),
+      'credits row',
+    )
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
       choice: 'credits',
     })

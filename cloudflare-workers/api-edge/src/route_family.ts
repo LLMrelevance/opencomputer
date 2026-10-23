@@ -28,6 +28,14 @@ export interface RouteFamily {
     suffix: string,
     upstream: Response,
   ): Promise<Response>;
-  /** Fixed copy for an upstream refusal; no backend detail passes through. */
-  errorMessage(code: string, status: number, suffix: string): string;
+  /**
+   * Copy for an upstream refusal: fixed copy, unless the family vouches for
+   * a code whose backend message is written for people (`backendMessage`).
+   */
+  errorMessage(
+    code: string,
+    status: number,
+    suffix: string,
+    backendMessage: string,
+  ): string;
 }

@@ -59,6 +59,15 @@ namespace_id = "2026072402"
   limit = 180
   period = 60
 
+# Public CLI connect (work 082): per IP, ahead of blue.
+[[ratelimits]]
+name = "COMPUTER_CONNECT_RATE_LIMIT"
+namespace_id = "2026102301"
+
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
 [[durable_objects.bindings]]
 name = "CREDIT_ACCOUNT"
 class_name = "CreditAccount"

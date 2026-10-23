@@ -1297,15 +1297,26 @@ let previewBootSince: number | null = null
 // that sends no agent block). The paste form answers by the token: one
 // containing "rejected" is refused, "taken" is someone else's, "unchecked"
 // is saved without a check; any other well-formed one is verified.
+// `?agent=codex` is a connected ChatGPT plan. The one-command connect (work
+// 082) mints a placeholder code; with `?connect=auto` the preview plays the
+// person running it: about six seconds later the card's subscription (Codex
+// when Codex is chosen, else Claude) is connected. `?harnesses=claude,codex`
+// names the harnesses the computer can run (`?agent=codex` implies both);
+// without it the agent names none, as an older backend: Claude only. With
+// `?connect=unavailable` setup starts on the Codex card and its mint is
+// refused the way blue refuses a harness it cannot run (409, in its own
+// words).
 type PreviewAgent = {
+  harnesses?: string[]
   choice: 'claude' | 'codex' | 'credits' | null
   linked: boolean
   linkedSlackUser?: { id: string; name: string; teamName: string }
   subscription: null | {
-    provider: 'claude'
+    provider: 'claude' | 'codex'
     health: 'ok' | 'unchecked' | 'paused' | 'limited' | 'invalid'
     limitedUntil?: string
     setAt: string
+    plan?: string
   }
   managedModel: string
 }
@@ -1313,7 +1324,9 @@ let previewAgentState: PreviewAgent | null | undefined
 
 function previewAgent(): PreviewAgent | null {
   if (previewAgentState !== undefined) return previewAgentState
-  const param = new URLSearchParams(window.location.search).get('agent')
+  const search = new URLSearchParams(window.location.search)
+  const param = search.get('agent')
+  const connect = search.get('connect')
   const setup = previewComputerMode() === 'setup'
   const linkedSlackUser = { id: 'U0PREVIEW', name: 'maya', teamName: 'Acme' }
   const subscription = (
@@ -1326,7 +1339,16 @@ function previewAgent(): PreviewAgent | null {
       : {}),
     setAt: new Date(BASE).toISOString(),
   })
-  const base = { managedModel: 'Claude Opus 5.5' }
+  const harnesses =
+    new URLSearchParams(window.location.search)
+      .get('harnesses')
+      ?.split(',')
+      .map((name) => name.trim())
+      .filter(Boolean) ?? (param === 'codex' ? ['claude', 'codex'] : undefined)
+  const base = {
+    managedModel: 'Claude Opus 5.5',
+    ...(harnesses ? { harnesses } : {}),
+  }
   // The seat binds to a Slack user through the install: before it, nobody
   // is linked and no Slack user is named.
   const link = setup ? { linked: false } : { linked: true, linkedSlackUser }
@@ -1337,24 +1359,41 @@ function previewAgent(): PreviewAgent | null {
         ? { ...base, ...link, choice: 'credits', subscription: null }
         : param === 'unlinked'
           ? { ...base, choice: 'credits', linked: false, subscription: null }
-          : param === 'unchecked' ||
-              param === 'paused' ||
-              param === 'limited' ||
-              param === 'invalid'
+          : param === 'codex'
             ? {
                 ...base,
                 ...link,
-                choice: 'claude',
-                subscription: subscription(param),
+                choice: 'codex',
+                subscription: {
+                  provider: 'codex',
+                  health: 'ok',
+                  setAt: new Date(BASE).toISOString(),
+                  plan: 'plus',
+                },
               }
-            : setup
-              ? { ...base, choice: null, linked: false, subscription: null }
-              : {
+            : param === 'unchecked' ||
+                param === 'paused' ||
+                param === 'limited' ||
+                param === 'invalid'
+              ? {
                   ...base,
                   ...link,
                   choice: 'claude',
-                  subscription: subscription('ok'),
+                  subscription: subscription(param),
                 }
+              : setup
+                ? {
+                    ...base,
+                    choice: connect === 'unavailable' ? 'codex' : null,
+                    linked: false,
+                    subscription: null,
+                  }
+                : {
+                    ...base,
+                    ...link,
+                    choice: 'claude',
+                    subscription: subscription('ok'),
+                  }
   return previewAgentState
 }
 
@@ -1368,12 +1407,38 @@ function previewAgentRequest(path: string, method: string, body: unknown) {
     agent.choice = choice ?? null
     return { agent: structuredClone(agent) }
   }
+  if (path.endsWith('/connect-code')) {
+    const connect = new URLSearchParams(window.location.search).get('connect')
+    if (connect === 'unavailable' && agent.choice === 'codex')
+      throw new ApiError(
+        "Codex isn't available on this computer yet",
+        409,
+        'computer_harness_unavailable',
+      )
+    if (connect === 'auto')
+      setTimeout(() => {
+        const codex = agent.choice === 'codex'
+        agent.choice = codex ? 'codex' : 'claude'
+        agent.subscription = {
+          provider: codex ? 'codex' : 'claude',
+          health: 'ok',
+          setAt: new Date().toISOString(),
+          ...(codex ? { plan: 'plus' } : {}),
+        }
+      }, 6_000)
+    return {
+      // A placeholder in the real shape; it connects nothing.
+      code: 'oc_PREVIEW00000000',
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    }
+  }
   if (path.endsWith('/resume')) {
     if (agent.subscription) agent.subscription.health = 'ok'
     return { agent: structuredClone(agent) }
   }
   if (method === 'DELETE') {
-    agent.subscription = null
+    const provider = path.endsWith('/codex') ? 'codex' : 'claude'
+    if (agent.subscription?.provider === provider) agent.subscription = null
     return undefined
   }
   if (token?.includes('rejected')) {

@@ -41,6 +41,13 @@ export const COMPUTER_ERROR_MESSAGES: Record<string, string> = {
   computer_agent_disabled: "Your workspace admin turned this off.",
   computer_agent_not_member:
     "You're not a member of this organization's Slack workspace.",
+  // One-command connect (work 082).
+  computer_agent_codex_auth:
+    "That's not a ChatGPT login. Paste the auth.json that codex login wrote.",
+  computer_connect_code_invalid:
+    "That connect code is not valid. Get a new one from the dashboard.",
+  computer_harness_unavailable:
+    "That agent isn't available on this computer yet.",
   invalid_request: "That choice isn't valid.",
 };
 
@@ -94,6 +101,9 @@ function publicComputer(value: unknown): Record<string, unknown> | null {
 }
 
 const AGENT_CHOICES = new Set(["claude", "codex", "credits"]);
+const SUBSCRIPTION_PROVIDERS = new Set(["claude", "codex"]);
+// A ChatGPT plan name from the token's claims ("plus", "pro", "team"...).
+const SUBSCRIPTION_PLAN = /^[A-Za-z0-9_-]{1,32}$/;
 const SUBSCRIPTION_HEALTH = new Set([
   "ok",
   "unchecked",
@@ -123,7 +133,8 @@ function publicSubscription(
   const subscription = record(value);
   if (
     !subscription ||
-    subscription.provider !== "claude" ||
+    typeof subscription.provider !== "string" ||
+    !SUBSCRIPTION_PROVIDERS.has(subscription.provider) ||
     typeof subscription.health !== "string" ||
     !SUBSCRIPTION_HEALTH.has(subscription.health) ||
     typeof subscription.setAt !== "string"
@@ -131,12 +142,17 @@ function publicSubscription(
     return undefined;
   }
   return {
-    provider: "claude",
+    provider: subscription.provider,
     health: subscription.health,
     ...(typeof subscription.limitedUntil === "string"
       ? { limitedUntil: subscription.limitedUntil }
       : {}),
     setAt: subscription.setAt,
+    ...(subscription.provider === "codex" &&
+    typeof subscription.plan === "string" &&
+    SUBSCRIPTION_PLAN.test(subscription.plan)
+      ? { plan: subscription.plan }
+      : {}),
   };
 }
 
@@ -145,6 +161,18 @@ function publicSubscription(
  * backend sends none or one that breaks the contract: the dashboard then
  * skips the agent step rather than guessing.
  */
+const HARNESS = /^[a-z][a-z0-9-]{0,31}$/;
+const MAX_HARNESSES = 16;
+
+/** Known-safe harness names, once each, in blue's order. */
+function publicHarnesses(values: unknown[]): string[] {
+  const names = values.filter(
+    (value): value is string =>
+      typeof value === "string" && HARNESS.test(value),
+  );
+  return [...new Set(names)].slice(0, MAX_HARNESSES);
+}
+
 export function publicComputerAgent(
   value: unknown,
 ): Record<string, unknown> | null {
@@ -169,6 +197,12 @@ export function publicComputerAgent(
     ...(linkedSlackUser ? { linkedSlackUser } : {}),
     subscription,
     managedModel: agent.managedModel,
+    // The harnesses this computer can run (work 082): the rollout gate and
+    // kill switch. Absent from an older blue, so absent here too, and the
+    // web keeps today's Claude-only cards.
+    ...(Array.isArray(agent.harnesses)
+      ? { harnesses: publicHarnesses(agent.harnesses) }
+      : {}),
   };
 }
 
@@ -270,6 +304,17 @@ function publicAgentOnly(body: Record<string, unknown>) {
   return { agent: requiredAgent(body.agent) };
 }
 
+function publicConnectCode(body: Record<string, unknown>) {
+  if (
+    typeof body.code !== "string" ||
+    !body.code ||
+    typeof body.expiresAt !== "string"
+  ) {
+    throw new Error("Invalid computer connect code response");
+  }
+  return { code: body.code, expiresAt: body.expiresAt };
+}
+
 /**
  * The contract's routes. `shape` rebuilds the success body from the
  * backend's; `null` means the route answers with no content (unlinking
@@ -306,6 +351,15 @@ const COMPUTER_ROUTES: ReadonlyArray<{
     shape: publicAgentOnly,
   },
   { method: "PUT", suffix: "/computer/agent/choice", shape: publicAgentOnly },
+  // One-command connect (work 082): the dashboard mints a code the CLI redeems
+  // on the public connect route; Codex's auth.json can also come in directly.
+  {
+    method: "POST",
+    suffix: "/computer/agent/connect-code",
+    shape: publicConnectCode,
+  },
+  { method: "PUT", suffix: "/computer/agent/codex", shape: publicAgentOnly },
+  { method: "DELETE", suffix: "/computer/agent/codex", shape: null },
 ];
 
 function computerRoute(method: string, suffix: string) {
@@ -313,6 +367,15 @@ function computerRoute(method: string, suffix: string) {
     (route) => route.method === method && route.suffix === suffix,
   );
 }
+
+/**
+ * Codes whose backend message is written for people and names the agent
+ * ("Codex isn't available on this computer yet."): it passes through when
+ * it reads as one plain line (no control, format or other invisible
+ * characters, no markup), else the fixed copy above stands in.
+ */
+const BACKEND_WORDED_CODES = new Set(["computer_harness_unavailable"]);
+const PERSON_READABLE = /^[^\p{C}<>]{1,200}$/u;
 
 export const computerFamily: RouteFamily = {
   owns: (suffix) => COMPUTER_ROUTE.test(suffix),
@@ -331,10 +394,12 @@ export const computerFamily: RouteFamily = {
       headers,
     });
   },
-  errorMessage: (code, status, suffix) =>
-    Object.hasOwn(COMPUTER_ERROR_MESSAGES, code)
-      ? COMPUTER_ERROR_MESSAGES[code]
-      : computerFallbackMessage(status, suffix),
+  errorMessage: (code, status, suffix, backendMessage) =>
+    BACKEND_WORDED_CODES.has(code) && PERSON_READABLE.test(backendMessage)
+      ? backendMessage
+      : Object.hasOwn(COMPUTER_ERROR_MESSAGES, code)
+        ? COMPUTER_ERROR_MESSAGES[code]
+        : computerFallbackMessage(status, suffix),
 };
 
 /**

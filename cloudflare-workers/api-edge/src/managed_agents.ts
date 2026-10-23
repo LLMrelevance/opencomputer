@@ -12,6 +12,9 @@ export interface ManagedAgentsEnv {
   OPENCOMPUTER_DB?: D1Database;
   AUTUMN_SECRET_KEY?: string;
   AUTUMN_BASE_URL?: string;
+  /** Per-IP cap on the public CLI connect route (work 082). */
+  COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
+  WORKER_ENV?: string;
 }
 
 export interface ManagedAgentsCaller {
@@ -296,6 +299,7 @@ async function publicErrorResponse(
           backendCode,
           upstream.status,
           suffix,
+          backendMessage,
         )
       : undefined;
   if (familyMessage) {
@@ -3228,6 +3232,221 @@ export async function handleComputerSlackWebhook(
       },
     );
   }
+}
+
+// Work 082: the backend bounds the body the same way (CODEX_BODY_MAX_BYTES:
+// twice the 64 KiB auth.json cap, plus room for the code and provider).
+// Blue verifies the subscription with its provider before answering.
+const COMPUTER_AGENT_CONNECT_TIMEOUT_MS = 30_000;
+const COMPUTER_AGENT_CONNECT_RETRY_SEC = 60;
+export const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
+// `oc_` + 16 Crockford base32 characters (short enough to keep the command
+// on one line); anything else is refused here so garbage never reaches the
+// backend. People retype codes: the edge only trims and takes either case,
+// blue (the authority) normalizes the rest (I/L to 1, O to 0, upper case).
+const CONNECT_CODE = /^oc_[0-9A-Za-z]{16}$/;
+
+function connectProblem(status: number, code: string, message: string) {
+  return Response.json(
+    { error: { code, message } },
+    { status, headers: { "cache-control": "no-store" } },
+  );
+}
+
+/** Reads at most `max` bytes; null when the body is longer. */
+async function boundedBody(
+  request: Request,
+  max: number,
+): Promise<Uint8Array | null> {
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * The CLI's one-command connect (work 082): `opencomputer model connect
+ * claude|codex --code <code>` posts `{code, provider, token|authJson}` here
+ * with no OpenComputer credentials; the dashboard-minted code is the only
+ * auth. It goes to one fixed backend route with only a JSON content type
+ * (no cookies or other headers), the body byte for byte, and the backend's
+ * answer comes back as is. The edge only bounds the size and refuses a body
+ * whose code cannot be one, so this is no open proxy and no oracle.
+ */
+export async function handleComputerAgentConnect(
+  request: Request,
+  env: ManagedAgentsEnv,
+): Promise<Response> {
+  const startedAt = Date.now();
+  // In prod the rate limit is meant to be bound; say so when it is not.
+  const rateLimitUnbound =
+    env.WORKER_ENV === "prod" && !env.COMPUTER_CONNECT_RATE_LIMIT;
+  const finish = (
+    response: Response,
+    result: string,
+    details: Record<string, string> = {},
+  ): Response => {
+    // One line per attempt: the funnel from command run to connected, and
+    // what the edge refused before blue saw it.
+    console.log(
+      JSON.stringify({
+        event: "computer_agent_connect",
+        result,
+        http_status: response.status,
+        duration_ms: Date.now() - startedAt,
+        ...(rateLimitUnbound ? { rate_limit: "unbound" } : {}),
+        ...details,
+      }),
+    );
+    return response;
+  };
+  if (request.method !== "POST") {
+    const response = connectProblem(
+      405,
+      "method_not_allowed",
+      "Send the connect request with POST.",
+    );
+    response.headers.set("allow", "POST");
+    return finish(response, "method");
+  }
+  // Codes carry 80 bits, so this caps load on blue rather than guessing.
+  // Without the binding (tests, a misconfigured env) the route stays open:
+  // blue still refuses anything but a live code.
+  if (env.COMPUTER_CONNECT_RATE_LIMIT) {
+    const ip = request.headers.get("CF-Connecting-IP")?.trim();
+    const key = ip && ip.length <= 64 ? ip : "unknown";
+    const allowed = await env.COMPUTER_CONNECT_RATE_LIMIT.limit({ key }).then(
+      (r) => r.success,
+      () => true,
+    );
+    if (!allowed) {
+      const response = connectProblem(
+        429,
+        "rate_limited",
+        "Too many connect attempts. Wait a minute and try again.",
+      );
+      response.headers.set(
+        "retry-after",
+        String(COMPUTER_AGENT_CONNECT_RETRY_SEC),
+      );
+      return finish(response, "rate_limited");
+    }
+  }
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
+    return finish(
+      connectProblem(
+        415,
+        "invalid_request",
+        "Send the connect request as application/json.",
+      ),
+      "content_type",
+    );
+  }
+  const bytes = await boundedBody(request, COMPUTER_AGENT_CONNECT_MAX_BYTES);
+  if (!bytes) {
+    return finish(
+      connectProblem(413, "invalid_request", "The request is too large."),
+      "too_large",
+    );
+  }
+  let parsed: { code?: unknown } | null;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes)) as {
+      code?: unknown;
+    } | null;
+  } catch {
+    return finish(
+      connectProblem(400, "invalid_request", "The request is not JSON."),
+      "not_json",
+    );
+  }
+  const code = typeof parsed?.code === "string" ? parsed.code.trim() : null;
+  if (code === null || !CONNECT_CODE.test(code)) {
+    return finish(
+      connectProblem(
+        401,
+        "computer_connect_code_invalid",
+        "That connect code is not valid. Get a new one from the dashboard.",
+      ),
+      "malformed_code",
+    );
+  }
+  // The body goes on byte for byte, unless the code needed trimming.
+  const body =
+    code === parsed?.code
+      ? bytes
+      : new TextEncoder().encode(JSON.stringify({ ...parsed, code }));
+  const base = (
+    env.MANAGED_AGENTS_API_URL ?? DEFAULT_MANAGED_AGENTS_API_URL
+  ).replace(/\/+$/, "");
+  const target = new URL(`${base}/v1/computer/agent/connect`);
+  if (target.protocol !== "https:" && target.hostname !== "localhost") {
+    return finish(
+      connectProblem(
+        503,
+        "computer_not_configured",
+        "Connecting a subscription isn't available yet. Try again shortly.",
+      ),
+      "not_configured",
+    );
+  }
+  try {
+    const upstream = await fetch(target, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(COMPUTER_AGENT_CONNECT_TIMEOUT_MS),
+    });
+    // A redirect is not followed and has no body the CLI could read: it
+    // means blue is not where it should be, which is the same as down.
+    if (upstream.status >= 300 && upstream.status < 400) {
+      return finish(connectUnavailable(), "upstream_redirect", {
+        upstream_status: String(upstream.status),
+      });
+    }
+    const headers = new Headers({ "cache-control": "no-store" });
+    const upstreamType = upstream.headers.get("content-type");
+    if (upstreamType) headers.set("content-type", upstreamType);
+    return finish(
+      new Response(upstream.body, { status: upstream.status, headers }),
+      upstream.ok ? "connected" : "refused_upstream",
+    );
+  } catch (error) {
+    // The name tells a timeout (TimeoutError) from a connection failure;
+    // the message could carry the body, so it stays out.
+    return finish(connectUnavailable(), "upstream_unavailable", {
+      error_name: error instanceof Error ? error.name : "NonError",
+    });
+  }
+}
+
+function connectUnavailable() {
+  return connectProblem(
+    502,
+    "computer_unavailable",
+    "Connecting a subscription isn't available right now. Try again shortly.",
+  );
 }
 
 function channelConnectionPage(

@@ -94,6 +94,7 @@ import {
   handleManagedLinearCallback,
   handleComputerSlackCallback,
   handleComputerSlackWebhook,
+  handleComputerAgentConnect,
   handleManagedAgentChannelConnection,
   proxyManagedAgents,
 } from "./managed_agents";
@@ -107,6 +108,8 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv {
   // several times after a single start request.
   CLI_AUTH_START_RATE_LIMIT: RateLimit;
   CLI_AUTH_EXCHANGE_RATE_LIMIT: RateLimit;
+  // Public CLI connect (work 082), per caller IP ahead of blue.
+  COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
   // Dedicated HMAC secret for the Sessions API's minimal Agent Hook exposure
   // alert. It is intentionally not shared with other internal routes.
   OC_SECURITY_NOTIFICATION_SECRET?: string;
@@ -5703,6 +5706,13 @@ export default {
       req.method === "POST"
     ) {
       return handleComputerSlackWebhook(req, env, "interactivity");
+    }
+    // The CLI's one-command subscription connect (work 082): the
+    // dashboard-minted code in the body is the only credential, so it stays
+    // above the API-key check. Every method lands here (non-POST is a 405)
+    // so the path never falls through to the API-key mount.
+    if (path === "/api/managed-agents/computer/agent/connect") {
+      return handleComputerAgentConnect(req, env);
     }
     if (path.startsWith("/api/agent-webhooks/")) {
       return handleAgentWebhookInvocation(req, env);

@@ -1,9 +1,22 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import {
+  hashKey,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { ApiError } from '@/api/errors'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyRow } from '@/components/copy-row'
+import { CopyCommand, CopyRow } from '@/components/copy-row'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -13,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { AuthContext } from '@/hooks/useAuth'
 import { BASE_GRANT_CENTS } from '@/lib/billing-onramp'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { cn } from '@/lib/utils'
@@ -23,25 +37,53 @@ import {
   trackAgentStepShown,
 } from './computer-analytics'
 import {
+  computerConnectCodeQueryKey,
   computerQueryKey,
   connectClaudeSubscription,
+  connectCommand,
+  createConnectCode,
   disconnectClaudeSubscription,
+  disconnectCodexSubscription,
+  getComputer,
+  isHarnessAvailable,
   resumeClaudeSubscription,
   setAgentChoice,
+  subscriptionProviderSchema,
   type AgentChoice,
   type ComputerAgent,
+  type ComputerConnectCode,
   type ComputerStatus,
+  type SubscriptionProvider,
 } from './computer-api'
 import { agentSummary, linkedSlackUserLine } from './computer-state'
 
 /**
  * Setup step 1 and the Your agent card (serverless-agents-ws work 081): the
- * person brings their own Claude subscription, or starts on free credits.
- * Copy is the doc's Copy table, kept short.
+ * person brings their own Claude subscription or ChatGPT plan, or starts on
+ * free credits. Since work 082 a subscription connects with one command
+ * (`npx -y @opencomputer/cli model connect … --code …`) that signs in in the
+ * browser and hands the login to the computer; a Claude setup token can
+ * still be pasted. Copy is the doc's Copy table, kept short.
  */
 
-/** The card picked in step 1; Codex records interest until it runs. */
-export type AgentCardChoice = 'claude' | 'codex'
+/** The card picked in step 1. */
+export type AgentCardChoice = SubscriptionProvider
+
+const PROVIDER_NAME: Record<SubscriptionProvider, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+}
+
+// Where each command signs the person in.
+const SIGN_IN_AT: Record<SubscriptionProvider, string> = {
+  claude: 'Claude',
+  codex: 'ChatGPT',
+}
+
+const disconnectSubscription = (provider: SubscriptionProvider) =>
+  provider === 'codex'
+    ? disconnectCodexSubscription()
+    : disconnectClaudeSubscription()
 
 // `claude setup-token` prints a long-lived OAuth token with this prefix.
 const SETUP_TOKEN = /^sk-ant-oat01-[A-Za-z0-9_-]{20,400}$/
@@ -132,8 +174,9 @@ function useAgentCache() {
 }
 
 /**
- * The three ways to go: the two cards, the selected card's panel (the paste
- * form, or Codex's coming line) and free credits. Step 1 of setup, and the
+ * The three ways to go: the two cards, the selected card's panel (its
+ * command and, for Claude, the paste form; or the coming line of a harness
+ * this computer cannot run yet) and free credits. Step 1 of setup, and the
  * Change dialog of its done row, where `onDone` closes the dialog once the
  * server has the change. Free credits replace a connected subscription:
  * routing decides from the subscription row, so it is disconnected first.
@@ -157,7 +200,7 @@ export function AgentSetup({
   const choose = useMutation({
     mutationFn: async (choice: AgentChoice) => {
       if (choice === 'credits' && agent.subscription)
-        await disconnectClaudeSubscription()
+        await disconnectSubscription(agent.subscription.provider)
       return setAgentChoice(choice)
     },
     onSuccess: async (next, choice) => {
@@ -181,8 +224,14 @@ export function AgentSetup({
   const pick = (choice: AgentCardChoice) => {
     if (choice === selected) return
     onSelect(choice)
-    // Codex is the interest list until it runs on the computer.
-    if (choice === 'codex' && agent.choice !== 'codex') choose.mutate('codex')
+    // Codex is recorded on selection, so the step reopens on it after a
+    // reload; so is any card this computer cannot run yet, as the interest
+    // is all that card does.
+    if (
+      (choice === 'codex' || !isHarnessAvailable(agent, choice)) &&
+      agent.choice !== choice
+    )
+      choose.mutate(choice)
   }
   const onCredits = !agent.subscription && agent.choice === 'credits'
 
@@ -209,15 +258,20 @@ export function AgentSetup({
           mark={<span className="bg-foreground text-background">◎</span>}
         />
       </div>
-      {selected === 'claude' ? (
-        <ClaudeConnect
-          replacing={Boolean(agent.subscription)}
+      {!isHarnessAvailable(agent, selected) ? (
+        // Not rolled out to this computer (or switched off): the card only
+        // records the interest, no code is minted.
+        <p className="bg-muted/60 text-foreground rounded-lg px-4 py-3">
+          {PROVIDER_NAME[selected]} is coming. We&apos;ll let you know.
+        </p>
+      ) : (
+        <SubscriptionConnect
+          // A new card is a new command: its own sign-in and wait.
+          key={selected}
+          provider={selected}
+          replacing={agent.subscription?.provider === selected}
           onDone={onDone}
         />
-      ) : (
-        <p className="bg-muted/60 text-foreground rounded-lg px-4 py-3">
-          Codex is coming. We&apos;ll let you know.
-        </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed px-4 py-3">
         <div>
@@ -227,7 +281,9 @@ export function AgentSetup({
               : `No subscription? Start with $${FREE_DOLLARS} free.`}
           </p>
           <p>
-            {agent.subscription ? 'Disconnects Claude Code; runs' : 'Runs'}{' '}
+            {agent.subscription
+              ? `Disconnects ${PROVIDER_NAME[agent.subscription.provider]}; runs`
+              : 'Runs'}{' '}
             {agent.managedModel} on our credits.
           </p>
         </div>
@@ -293,6 +349,351 @@ function AgentOption({
   )
 }
 
+// The command's code works for ten minutes. Re-read the status quickly for a
+// while after the person last acted (the command shown, copied or renewed:
+// they may sign in in a window beside this one), then slower, then not at
+// all: a person who comes back from the terminal or the browser refocuses
+// the tab, which re-reads it. An expired code is replaced on its own for
+// half an hour after they last acted; after that the command reads expired
+// until they ask for another, so a tab left open mints and polls nothing.
+const WAIT_FAST_MS = 3_000
+const WAIT_SLOW_MS = 10_000
+const WAIT_FAST_FOR_MS = 2 * 60_000
+const WAIT_FOR_MS = 10 * 60_000
+const CODE_AUTO_RENEW_FOR_MS = 30 * 60_000
+const computerQueryHash = hashKey(computerQueryKey)
+// A stored code is reused only with this long left to run it.
+const CODE_REUSE_MIN_MS = 60_000
+
+function connectCodeStorageKey(scope: string) {
+  return `opencomputer.computer.connect-code:${scope}`
+}
+
+/**
+ * The stored code, unless it is nearly expired or was likely spent: a
+ * subscription set after it was minted (the command ran while no tab was
+ * watching, so none forgot it) means it was used.
+ */
+function storedConnectCode(
+  key: string,
+  subscriptionSetAt: string | undefined,
+): ComputerConnectCode | null {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return null
+    const stored = JSON.parse(raw) as Partial<
+      ComputerConnectCode & { mintedAt: number }
+    >
+    if (
+      typeof stored.code !== 'string' ||
+      typeof stored.expiresAt !== 'string' ||
+      new Date(stored.expiresAt).getTime() - Date.now() < CODE_REUSE_MIN_MS
+    )
+      return null
+    if (
+      subscriptionSetAt &&
+      new Date(subscriptionSetAt).getTime() >= (stored.mintedAt ?? 0)
+    )
+      return null
+    return { code: stored.code, expiresAt: stored.expiresAt }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * This person's connect code, one for both cards (the command names the
+ * provider). Minting replaces the last code, so neither a reload nor a
+ * second tab may mint a new one under a command the person is already
+ * running: the code is kept in local storage until it is nearly expired.
+ * A code is re-minted once it expires, only while the tab is visible
+ * (react-query skips background intervals and catches up on focus) and
+ * only until `renewUntil`: after that a tab left open mints nothing, not
+ * even when it is focused again.
+ */
+function useConnectCode(renewUntil: number) {
+  const auth = useContext(AuthContext)
+  const key = connectCodeStorageKey(
+    `${auth?.user?.orgId ?? ''}:${auth?.user?.id ?? ''}`,
+  )
+  const queryClient = useQueryClient()
+  const query = useQuery({
+    queryKey: [...computerConnectCodeQueryKey, key],
+    queryFn: async () => {
+      const status = queryClient.getQueryData<ComputerStatus>(computerQueryKey)
+      const stored = storedConnectCode(key, status?.agent?.subscription?.setAt)
+      if (stored) return stored
+      const mintedAt = Date.now()
+      const minted = await createConnectCode()
+      try {
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({ ...minted, mintedAt }),
+        )
+      } catch {
+        // Storage off: a reload mints a new code, nothing worse.
+      }
+      return minted
+    },
+    retry: false,
+    staleTime: (q) => msUntil(q.state.data?.expiresAt),
+    refetchInterval: (q) =>
+      q.state.data && Date.now() < renewUntil
+        ? Math.max(1_000, msUntil(q.state.data.expiresAt))
+        : false,
+    refetchOnWindowFocus: () => Date.now() < renewUntil,
+  })
+  const renew = useCallback(() => {
+    forgetStoredCode(key)
+    void queryClient.invalidateQueries({
+      queryKey: [...computerConnectCodeQueryKey, key],
+      exact: true,
+    })
+  }, [key, queryClient])
+  const forget = useCallback(() => {
+    forgetStoredCode(key)
+    queryClient.removeQueries({
+      queryKey: [...computerConnectCodeQueryKey, key],
+      exact: true,
+    })
+  }, [key, queryClient])
+  // `renew`: the person asked for another command. `forget`: the code was
+  // used; never show it again.
+  return { query, renew, forget }
+}
+
+function forgetStoredCode(key: string) {
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    // Nothing stored.
+  }
+}
+
+function msUntil(iso: string | undefined): number {
+  if (!iso) return 0
+  const left = new Date(iso).getTime() - Date.now()
+  return Number.isNaN(left) ? 0 : Math.max(0, left)
+}
+
+/**
+ * Connecting a subscription: the one command first, and for Claude the
+ * paste-a-token form as the other way. `mintOnShow` false waits for a click
+ * before minting a code (the Your agent card, which people mostly only look
+ * at); setup mints on selection.
+ */
+function SubscriptionConnect({
+  provider,
+  replacing = false,
+  mintOnShow = true,
+  onDone,
+  onCancel,
+}: {
+  provider: SubscriptionProvider
+  replacing?: boolean
+  mintOnShow?: boolean
+  onDone?: () => void
+  onCancel?: () => void
+}) {
+  const [pasting, setPasting] = useState(false)
+  const [started, setStarted] = useState(mintOnShow)
+  // One way at a time, so a connect is announced (and counted) once.
+  const canPaste = provider === 'claude'
+  return (
+    <div className="space-y-4">
+      {canPaste && pasting ? (
+        <ClaudeConnect replacing={replacing} onDone={onDone} />
+      ) : started ? (
+        <CommandConnect
+          provider={provider}
+          replacing={replacing}
+          onDone={onDone}
+        />
+      ) : (
+        <Button onClick={() => setStarted(true)}>
+          {replacing ? 'Reconnect' : 'Connect'} {PROVIDER_NAME[provider]}
+        </Button>
+      )}
+      {canPaste || onCancel ? (
+        <div className="flex flex-wrap items-center gap-4">
+          {canPaste ? (
+            <Button
+              variant="link"
+              size="sm"
+              className="text-muted-foreground h-auto px-0"
+              onClick={() => {
+                setPasting(!pasting)
+                setStarted(true)
+              }}
+            >
+              {pasting ? 'Use the command instead' : 'Or paste a token'}
+            </Button>
+          ) : null}
+          {onCancel ? (
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The one command, and the wait for it: the page re-reads the status until
+ * the subscription of this provider shows up (a new one when replacing, told
+ * apart by when it was set), then says so and moves on as the paste form
+ * does.
+ */
+function CommandConnect({
+  provider,
+  replacing,
+  onDone,
+}: {
+  provider: SubscriptionProvider
+  replacing: boolean
+  onDone?: () => void
+}) {
+  // The last sign of the person acting: the command shown, copied or
+  // renewed. Waiting and renewing are paced from it.
+  const [actedAt, setActedAt] = useState(() => Date.now())
+  const {
+    query: code,
+    renew: renewCode,
+    forget,
+  } = useConnectCode(actedAt + CODE_AUTO_RENEW_FOR_MS)
+  const renew = () => {
+    setActedAt(Date.now())
+    renewCode()
+  }
+  const queryClient = useQueryClient()
+  // What was there when the command was shown: only a change counts.
+  const [before] = useState(
+    () =>
+      queryClient.getQueryData<ComputerStatus>(computerQueryKey)?.agent
+        ?.subscription?.setAt ?? null,
+  )
+  const status = useQuery({
+    queryKey: computerQueryKey,
+    queryFn: getComputer,
+    refetchInterval: () => {
+      const waited = Date.now() - actedAt
+      if (waited >= WAIT_FOR_MS) return false
+      return waited < WAIT_FAST_FOR_MS ? WAIT_FAST_MS : WAIT_SLOW_MS
+    },
+  })
+  const subscription = status.data?.agent?.subscription ?? null
+  const connected =
+    subscription?.provider === provider && subscription.setAt !== before
+  const codeValue = code.data?.code
+  // The code this command shows ran out (no auto-renew any more): say so
+  // rather than keep a dead command and a spinner up.
+  const [expiredCode, setExpiredCode] = useState<string | null>(null)
+  const expiresAt = code.data?.expiresAt
+  useEffect(() => {
+    if (!codeValue) return
+    const timer = window.setTimeout(
+      () => setExpiredCode(codeValue),
+      msUntil(expiresAt),
+    )
+    return () => window.clearTimeout(timer)
+  }, [codeValue, expiresAt])
+  // Not while a renewal is in flight: the new code is about to replace it.
+  const expired =
+    Boolean(codeValue) && expiredCode === codeValue && !code.isFetching
+  // Announced from the cache, as the status lands: in setup the step moves
+  // on (and this unmounts) in the very render that brings the subscription.
+  const announced = useRef(false)
+  useEffect(() => {
+    const check = (next: ComputerStatus | undefined) => {
+      const found = next?.agent?.subscription
+      if (announced.current || found?.provider !== provider) return
+      if (found.setAt === before) return
+      announced.current = true
+      forget()
+      trackAgentChosen(provider)
+      trackAgentConnected({
+        provider,
+        verified: found.health === 'ok',
+        via: 'command',
+      })
+      notifySuccess(`${PROVIDER_NAME[provider]} is connected.`)
+      onDone?.()
+    }
+    check(queryClient.getQueryData<ComputerStatus>(computerQueryKey))
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (
+        event.type === 'updated' &&
+        event.query.queryHash === computerQueryHash
+      )
+        check(event.query.state.data as ComputerStatus | undefined)
+    })
+  }, [queryClient, provider, before, forget, onDone])
+
+  if (code.isError && !code.data) {
+    return (
+      <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+        <p role="alert" className="text-destructive">
+          {connectErrorCopy(code.error)}
+        </p>
+        <Button size="sm" variant="outline" onClick={renew}>
+          Try again
+        </Button>
+      </div>
+    )
+  }
+  const lead = (
+    <>Run this in a terminal; it opens {SIGN_IN_AT[provider]} to sign in.</>
+  )
+  return (
+    <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+      {codeValue ? (
+        <CopyCommand
+          value={connectCommand(provider, codeValue)}
+          lead={lead}
+          onCopy={() => setActedAt(Date.now())}
+        />
+      ) : (
+        <>
+          <p>{lead}</p>
+          <div
+            className="bg-panel-2 text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]"
+            aria-busy
+          >
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            Getting your command…
+          </div>
+        </>
+      )}
+      <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        {connected ? (
+          <span>{PROVIDER_NAME[provider]} is connected.</span>
+        ) : expired ? (
+          <span aria-live="polite">This command expired.</span>
+        ) : (
+          <span className="flex items-center gap-1.5" aria-live="polite">
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+            {replacing
+              ? 'Waiting for the new sign-in…'
+              : 'Waiting for you to sign in…'}
+          </span>
+        )}
+        {!expired && <span>Works once, for 10 minutes.</span>}
+        <Button
+          variant="link"
+          size="xs"
+          className="text-muted-foreground h-auto px-0 text-xs underline"
+          disabled={code.isFetching}
+          onClick={renew}
+        >
+          Get a new command
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * The paste form. The token lives in the field only until it is sent, and
  * then in a ref only until the server answers: the field is a password
@@ -305,13 +706,10 @@ function AgentOption({
 function ClaudeConnect({
   replacing = false,
   onDone,
-  onCancel,
 }: {
   replacing?: boolean
   /** The server has the token. */
   onDone?: () => void
-  /** Shows a Cancel button that calls it. */
-  onCancel?: () => void
 }) {
   const { setAgent, reread } = useAgentCache()
   const fieldId = useId()
@@ -325,7 +723,11 @@ function ClaudeConnect({
     onSuccess: async (result) => {
       await setAgent(result.agent)
       trackAgentChosen('claude')
-      trackAgentConnected({ verified: result.verified, via: result.via })
+      trackAgentConnected({
+        provider: 'claude',
+        verified: result.verified,
+        via: result.via,
+      })
       if (result.verified) notifySuccess('Claude Code is connected.')
       else notifySuccess("Saved. We'll check it when your computer starts.")
       onDone?.()
@@ -436,16 +838,6 @@ function ClaudeConnect({
               ? 'Replace token'
               : 'Connect Claude Code'}
         </Button>
-        {onCancel ? (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onCancel}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
-        ) : null}
       </div>
       <p className="text-xs">Stored sealed. Sessions never see it.</p>
     </form>
@@ -466,6 +858,8 @@ const HEALTH: Record<
 function healthLine(
   subscription: NonNullable<ComputerAgent['subscription']>,
 ): string {
+  if (subscription.provider === 'codex' && subscription.health === 'invalid')
+    return 'This ChatGPT login stopped working. Reconnect it.'
   if (subscription.health !== 'limited') return HEALTH[subscription.health]
   if (!subscription.limitedUntil) return `${HEALTH.limited}.`
   const until = new Date(subscription.limitedUntil)
@@ -493,6 +887,15 @@ export function AgentManage({
   const { setAgent, reread } = useAgentCache()
   const [replacing, setReplacing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  // Which subscription to connect when there is none: only the harnesses
+  // this computer can run (the rollout gate), the chosen one first.
+  const [picked, setPicked] = useState<SubscriptionProvider>(
+    agent.choice === 'codex' ? 'codex' : 'claude',
+  )
+  const available = subscriptionProviderSchema.options.filter((provider) =>
+    isHarnessAvailable(agent, provider),
+  )
+  const connecting = available.includes(picked) ? picked : available[0]
   const resume = useMutation({
     mutationFn: resumeClaudeSubscription,
     onSuccess: async (next) => {
@@ -505,10 +908,10 @@ export function AgentManage({
     },
   })
   const disconnect = useMutation({
-    mutationFn: disconnectClaudeSubscription,
-    onSuccess: () => {
+    mutationFn: disconnectSubscription,
+    onSuccess: (_, provider) => {
       setConfirmDisconnect(false)
-      notifySuccess('Claude Code is disconnected.')
+      notifySuccess(`${PROVIDER_NAME[provider]} is disconnected.`)
       reread()
     },
     onError: (error) => notifyError("Couldn't disconnect.", error),
@@ -529,17 +932,38 @@ export function AgentManage({
         </div>
       )
     }
+    const others = available.filter((provider) => provider !== connecting)
     return (
       <div className="text-muted-foreground space-y-4 text-sm">
         <p className="text-foreground font-medium">{agentSummary(agent)}</p>
         {linkedLine}
-        <ClaudeConnect />
+        {connecting ? (
+          <SubscriptionConnect
+            key={connecting}
+            provider={connecting}
+            mintOnShow={false}
+          />
+        ) : null}
+        {others.map((other) => (
+          <Button
+            key={other}
+            variant="link"
+            size="sm"
+            className="text-muted-foreground h-auto px-0"
+            onClick={() => setPicked(other)}
+          >
+            Use {PROVIDER_NAME[other]} instead
+          </Button>
+        ))}
       </div>
     )
   }
 
+  const name = PROVIDER_NAME[subscription.provider]
+  // Resume is Claude's: a ChatGPT login that stopped working signs in again.
   const canResume =
-    subscription.health === 'paused' || subscription.health === 'invalid'
+    subscription.provider === 'claude' &&
+    (subscription.health === 'paused' || subscription.health === 'invalid')
   return (
     <div className="text-muted-foreground space-y-4 text-sm">
       <div className="space-y-1">
@@ -554,7 +978,8 @@ export function AgentManage({
         {linkedLine}
       </div>
       {replacing ? (
-        <ClaudeConnect
+        <SubscriptionConnect
+          provider={subscription.provider}
           replacing
           onDone={() => setReplacing(false)}
           onCancel={() => setReplacing(false)}
@@ -573,13 +998,17 @@ export function AgentManage({
               Resume
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReplacing(true)}
-          >
-            Replace
-          </Button>
+          {isHarnessAvailable(agent, subscription.provider) ? (
+            // A login whose harness the gate switched off can still be
+            // disconnected, not signed in again.
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setReplacing(true)}
+            >
+              {subscription.provider === 'codex' ? 'Reconnect' : 'Replace'}
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"
@@ -593,12 +1022,12 @@ export function AgentManage({
       <ConfirmDialog
         open={confirmDisconnect}
         onOpenChange={setConfirmDisconnect}
-        title="Disconnect Claude Code?"
+        title={`Disconnect ${name}?`}
         description={`Threads run on free credits (${agent.managedModel}) until you connect it again.`}
         confirmLabel="Disconnect"
         destructive
         pending={disconnect.isPending}
-        onConfirm={() => disconnect.mutate()}
+        onConfirm={() => disconnect.mutate(subscription.provider)}
       />
     </div>
   )

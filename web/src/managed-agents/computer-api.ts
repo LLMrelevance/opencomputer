@@ -39,6 +39,8 @@ export const agentSubscriptionHealthSchema = z.enum([
   'invalid',
 ])
 
+export const subscriptionProviderSchema = z.enum(['claude', 'codex'])
+
 export const computerAgentSchema = z.object({
   choice: agentChoiceSchema.nullable(),
   /** This dashboard user is linked to a Slack user (through the install). */
@@ -48,14 +50,22 @@ export const computerAgentSchema = z.object({
     .optional(),
   subscription: z
     .object({
-      provider: z.literal('claude'),
+      // `codex` is a ChatGPT plan running Codex (work 082).
+      provider: subscriptionProviderSchema,
       health: agentSubscriptionHealthSchema,
       limitedUntil: z.string().optional(),
       setAt: z.string(),
+      /** ChatGPT only: the plan from the login ("plus", "pro"…). */
+      plan: z.string().optional(),
     })
     .nullable(),
   /** The model free credits run, e.g. "Claude Opus 5.5". */
   managedModel: z.string(),
+  /**
+   * The harnesses this computer can run, e.g. ["claude", "codex"] (work 082
+   * rollout gate and kill switch). Absent from an older backend: Claude only.
+   */
+  harnesses: z.array(z.string()).optional(),
 })
 
 export const computerStatusSchema = z.object({
@@ -115,11 +125,22 @@ export const computerAgentResultSchema = z.object({
   agent: computerAgentSchema,
 })
 
+/**
+ * A one-command connect code (work 082): ten minutes, single use, good for
+ * storing one subscription for this person; minting one replaces the last.
+ */
+export const computerConnectCodeSchema = z.object({
+  code: z.string().min(1),
+  expiresAt: z.string(),
+})
+
 export type ComputerState = z.infer<typeof computerStateSchema>
 export type Computer = z.infer<typeof computerSchema>
 export type ComputerStatus = z.infer<typeof computerStatusSchema>
 export type ComputerAgent = z.infer<typeof computerAgentSchema>
 export type AgentChoice = z.infer<typeof agentChoiceSchema>
+export type SubscriptionProvider = z.infer<typeof subscriptionProviderSchema>
+export type ComputerConnectCode = z.infer<typeof computerConnectCodeSchema>
 export type AgentSubscriptionHealth = z.infer<
   typeof agentSubscriptionHealthSchema
 >
@@ -128,6 +149,10 @@ export type ComputerSession = z.infer<typeof computerSessionSchema>
 export type ComputerSessionStatus = z.infer<typeof computerSessionStatusSchema>
 
 export const computerQueryKey = ['managed-computer'] as const
+export const computerConnectCodeQueryKey = [
+  'managed-computer',
+  'connect-code',
+] as const
 export const computerSessionsQueryKey = [
   'managed-computer',
   'sessions',
@@ -206,4 +231,36 @@ export async function setAgentChoice(choice: AgentChoice) {
       computerAgentResultSchema,
     )
   ).agent
+}
+
+/** Mints this person's connect code for the CLI (work 082). */
+export function createConnectCode() {
+  return apiFetch(
+    '/managed-agents/computer/agent/connect-code',
+    { method: 'POST', body: '{}' },
+    computerConnectCodeSchema,
+  )
+}
+
+/** What an older backend that names no harnesses can run: today's Claude. */
+const DEFAULT_HARNESSES: readonly string[] = ['claude']
+
+/**
+ * Whether this computer can run a harness; a card for one it cannot shows
+ * as coming.
+ */
+export function isHarnessAvailable(
+  agent: Pick<ComputerAgent, 'harnesses'>,
+  harness: SubscriptionProvider,
+): boolean {
+  return (agent.harnesses ?? DEFAULT_HARNESSES).includes(harness)
+}
+
+/** The one command a person runs to connect a subscription with a code. */
+export function connectCommand(provider: SubscriptionProvider, code: string) {
+  return `npx -y @opencomputer/cli model connect ${provider} --code ${code}`
+}
+
+export async function disconnectCodexSubscription() {
+  await apiFetch('/managed-agents/computer/agent/codex', { method: 'DELETE' })
 }

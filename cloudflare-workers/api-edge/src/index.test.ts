@@ -640,6 +640,240 @@ describe("/api/managed-agents/computer/slack — public mounts", () => {
   });
 });
 
+describe("/api/managed-agents/computer/agent/connect — public CLI connect", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const url = "https://app.opencomputer.dev/api/managed-agents/computer/agent/connect";
+  const code = "oc_7KQM2XP94HTRWN3F";
+  const target = { ...env, MANAGED_AGENTS_API_URL: "https://managedagents.test" };
+  const stub = (upstream: Response) => {
+    const fetchSpy = vi.fn(
+      async (_target: URL | RequestInfo, _init?: RequestInit) => upstream,
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    return fetchSpy;
+  };
+
+  it("forwards the body untouched without an API key and passes the answer back", async () => {
+    const fetchSpy = stub(
+      Response.json({ provider: "codex", connected: true }, { status: 200 }),
+    );
+    const body = JSON.stringify({
+      code,
+      provider: "codex",
+      authJson: { auth_mode: "chatgpt", tokens: { id_token: "i", access_token: "a", refresh_token: "r" } },
+    });
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          cookie: "oc_session=private",
+          authorization: "Bearer osb_private",
+        },
+        body,
+      }),
+      target,
+      ctx,
+    );
+
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("cache-control")).toBe("no-store");
+    await expect(resp.json()).resolves.toEqual({ provider: "codex", connected: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [forwardedTo, init] = fetchSpy.mock.calls[0];
+    expect(forwardedTo.toString()).toBe("https://managedagents.test/v1/computer/agent/connect");
+    expect(init?.method).toBe("POST");
+    const headers = new Headers(init?.headers);
+    expect([...headers.keys()]).toEqual(["content-type"]);
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe(body);
+  });
+
+  it("passes a backend refusal through as is", async () => {
+    const refusal = {
+      error: {
+        code: "computer_agent_token_format",
+        message: "That's not a setup token. It starts with sk-ant-oat01-.",
+      },
+    };
+    stub(Response.json(refusal, { status: 422 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, provider: "claude", token: "nope" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(422);
+    await expect(resp.json()).resolves.toEqual(refusal);
+  });
+
+  it("trims a pasted code and forwards the trimmed one", async () => {
+    const fetchSpy = stub(Response.json({ connected: true }, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: ` ${code}\n`, provider: "claude", token: "t" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(200);
+    const [, init] = fetchSpy.mock.calls[0];
+    expect(JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))).toEqual({
+      code,
+      provider: "claude",
+      token: "t",
+    });
+  });
+
+  it("accepts a retyped code in lower case", async () => {
+    const fetchSpy = stub(Response.json({ connected: true }, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: code.toLowerCase(), provider: "claude", token: "t" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["GET", undefined, undefined, 405],
+    ["PUT", "application/json", JSON.stringify({ code }), 405],
+    ["POST", "text/plain", JSON.stringify({ code }), 415],
+    ["POST", "application/x-www-form-urlencoded", `code=${code}`, 415],
+    ["POST", "application/json", "{not json", 400],
+    ["POST", "application/json", JSON.stringify({ provider: "claude" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3F0" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3-" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "osb_0123456789abcdefghijkl" }), 401],
+  ])("refuses %s %s %s at the edge", async (method, contentType, body, status) => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method,
+        ...(contentType ? { headers: { "content-type": contentType } } : {}),
+        ...(body !== undefined ? { body } : {}),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(status);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    if (status === 401) {
+      const answer = (await resp.json()) as { error: { code: string } };
+      expect(answer.error.code).toBe("computer_connect_code_invalid");
+    }
+  });
+
+  it("refuses another method as JSON, naming the one allowed", async () => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const resp = await worker.fetch(new Request(url, { method: "GET" }), target, ctx);
+    expect(resp.status).toBe(405);
+    expect(resp.headers.get("allow")).toBe("POST");
+    expect(resp.headers.get("cache-control")).toBe("no-store");
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "method_not_allowed" } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body over the bound without reading it all", async () => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const big = JSON.stringify({ code, provider: "codex", authJson: "x".repeat(200 * 1024) });
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: big,
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(413);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  const attempt = (env: Env) =>
+    worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, provider: "claude", token: "t" }),
+      }),
+      env,
+      ctx,
+    );
+  const logged = (log: ReturnType<typeof vi.spyOn>) =>
+    log.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .find((entry) => entry.event === "computer_agent_connect");
+
+  it("answers 502 when the backend is unreachable, logging the error's name", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.stubGlobal("fetch", vi.fn(async () => { throw timeout; }));
+    const resp = await attempt(target);
+    expect(resp.status).toBe(502);
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "computer_unavailable" } });
+    const entry = logged(log);
+    log.mockRestore();
+    expect(entry).toMatchObject({ result: "upstream_unavailable", error_name: "TimeoutError" });
+    expect(JSON.stringify(entry)).not.toContain("aborted");
+  });
+
+  it("answers 502 when the backend redirects instead of answering", async () => {
+    stub(new Response(null, { status: 302, headers: { location: "https://elsewhere.test/" } }));
+    const resp = await attempt(target);
+    expect(resp.status).toBe(502);
+    expect(resp.headers.get("location")).toBeNull();
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "computer_unavailable" } });
+  });
+
+  it("logs an unbound rate limit in prod only", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    stub(Response.json({ connected: true }, { status: 200 }));
+    await attempt({ ...target, WORKER_ENV: "prod" } as Env);
+    expect(logged(log)).toMatchObject({ result: "connected", rate_limit: "unbound" });
+    log.mockClear();
+    await attempt(target);
+    expect(logged(log)).not.toHaveProperty("rate_limit");
+    log.mockRestore();
+  });
+
+  it("rate-limits per caller IP before reading the body or calling blue", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const limit = vi.fn(async () => ({ success: false }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+        body: JSON.stringify({ code, provider: "claude", token: "t" }),
+      }),
+      { ...target, COMPUTER_CONNECT_RATE_LIMIT: { limit } } as unknown as Env,
+      ctx,
+    );
+    expect(resp.status).toBe(429);
+    expect(resp.headers.get("retry-after")).toBe("60");
+    expect(await resp.json()).toMatchObject({ error: { code: "rate_limited" } });
+    expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("/internal/computer-keys", () => {
   const MANAGED = "managed-secret";
   const sign = async (secret: string, ts: string, body: string): Promise<string> => {
