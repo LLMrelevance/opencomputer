@@ -920,6 +920,8 @@ describe('choosing the coding agent', () => {
       'Linked to your Slack account.',
     )
     expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    expect(capture).toHaveBeenCalledWith('computer.agent.link_shown')
+    expect(capture).toHaveBeenCalledWith('computer.agent.linked')
     // A used code is never offered again.
     expect(Object.keys(window.localStorage)).toEqual([])
   })

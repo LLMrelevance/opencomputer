@@ -35,6 +35,8 @@ import {
   trackAgentConnected,
   trackAgentFailed,
   trackAgentStepShown,
+  trackLinked,
+  trackLinkShown,
 } from './computer-analytics'
 import {
   computerConnectCodeQueryKey,
@@ -713,6 +715,9 @@ function LinkSlack() {
   // Set with the link, before this unmounts: the forgotten code's query is
   // still observed until then, and must not mint again.
   const [linked, setLinked] = useState(false)
+  useEffect(() => {
+    trackLinkShown()
+  }, [])
   const {
     query: code,
     renew: renewCode,
@@ -741,6 +746,7 @@ function LinkSlack() {
       announced.current = true
       setLinked(true)
       forget()
+      trackLinked()
       notifySuccess('Linked to your Slack account.')
     }
     check(queryClient.getQueryData<ComputerStatus>(computerQueryKey))

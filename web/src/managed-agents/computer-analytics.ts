@@ -22,6 +22,18 @@ export function trackAgentStepShown(): void {
   posthog.capture('computer.setup.agent_shown')
 }
 
+/**
+ * The link card (work 083): shown to someone not linked to Slack, and the
+ * link landing while it is open. Linked over shown is the card's funnel.
+ */
+export function trackLinkShown(): void {
+  posthog.capture('computer.agent.link_shown')
+}
+
+export function trackLinked(): void {
+  posthog.capture('computer.agent.linked')
+}
+
 /** Fired once the server has recorded the choice, never on the click. */
 export function trackAgentChosen(choice: AgentChoice): void {
   posthog.capture('computer.setup.agent_chosen', { choice })
