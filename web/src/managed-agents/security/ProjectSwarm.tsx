@@ -52,30 +52,38 @@ export default function ProjectSwarm() {
   })
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <Link
-        to={`/projects/${encodeURIComponent(projectId)}/swarms`}
-        className="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1.5 text-sm"
-      >
-        <ArrowLeft className="size-3.5" /> All swarms
-      </Link>
-      {manifest.isPending ? (
-        <div className="text-muted-foreground inline-flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" /> Loading the run…
+    <div className="bg-background min-h-screen">
+      {/* This view runs outside the app shell, so it carries its own slim bar
+          back to the project's swarms list. */}
+      <header className="bg-background/80 sticky top-0 z-10 border-b backdrop-blur">
+        <div className="mx-auto flex h-12 max-w-6xl items-center px-4">
+          <Link
+            to={`/projects/${encodeURIComponent(projectId)}/swarms`}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
+          >
+            <ArrowLeft className="size-3.5" /> Back to swarms
+          </Link>
         </div>
-      ) : manifest.data ? (
-        <RunView projectId={projectId} manifest={manifest.data} />
-      ) : (
-        <div className="rounded-lg border border-dashed p-10 text-center">
-          <Radar className="text-muted-foreground mx-auto size-6" />
-          <p className="text-muted-foreground mt-3 text-sm">
-            This swarm run could not be found.
-          </p>
-          <Button asChild variant="outline" className="mt-4">
-            <Link to="/security">Launch a swarm</Link>
-          </Button>
-        </div>
-      )}
+      </header>
+      <div className="mx-auto max-w-6xl px-4 py-6">
+        {manifest.isPending ? (
+          <div className="text-muted-foreground inline-flex items-center gap-2 text-sm">
+            <Loader2 className="size-4 animate-spin" /> Loading the run…
+          </div>
+        ) : manifest.data ? (
+          <RunView projectId={projectId} manifest={manifest.data} />
+        ) : (
+          <div className="rounded-lg border border-dashed p-10 text-center">
+            <Radar className="text-muted-foreground mx-auto size-6" />
+            <p className="text-muted-foreground mt-3 text-sm">
+              This swarm run could not be found.
+            </p>
+            <Button asChild variant="outline" className="mt-4">
+              <Link to="/security">Launch a swarm</Link>
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
