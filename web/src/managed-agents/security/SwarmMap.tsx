@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { PALETTE } from './palette'
 import { cellPhase, type CellState, type SwarmCounts } from './useSwarmRun'
 
 // The mission-control view of a run: a coordinator dispatches to a fan of cells,
@@ -6,18 +7,6 @@ import { cellPhase, type CellState, type SwarmCounts } from './useSwarmRun'
 // aggregator that produces the report. It is the same data as the grid, drawn as
 // a live map. Everything animated here (pulses, particles) is cosmetic; every
 // position and color is derived from the actual cell states.
-
-const PALETTE = {
-  bg: '#07080a',
-  ink: '#8b9199',
-  text: '#e8eaed',
-  orange: '#ff7a18',
-  red: '#ff4d4d',
-  amber: '#f5b942',
-  green: '#4ade80',
-  grey: '#5b6066',
-  purple: '#c084fc',
-} as const
 
 type CellColor = keyof typeof PALETTE
 
