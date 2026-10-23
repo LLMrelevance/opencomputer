@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -11,38 +11,62 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
+  createManagedMemoryDocument,
   getManagedAgentSession,
   getManagedMemoryDocument,
 } from '../api'
 import {
+  buildRunReport,
   cellDocumentId,
   parseCellFinding,
+  runReportDocumentId,
   SECURITY_FINDINGS_RESOURCE,
+  serializeRunReport,
   type CellFinding,
   type CveDisposition,
   type LaunchedCell,
+  type ReportCell,
+  type ReportDisposition,
   type SwarmCell,
+  type SwarmRunReport,
 } from './catalog'
 
 // A cell is settled when its worker has either saved a verdict or its session
 // has stopped without one. We poll both the run's sessions (for liveness) and
 // each cell's findings document (for the verdict) until every cell settles.
+//
+// A cell can fail two ways: the whole session stops (status failed/cancelled),
+// or — the common one — the session stays `idle` while its last turn is
+// `failed` (a single-turn cell whose final generation errored). So we read the
+// last turn's status, not just the session's.
+type SessionProgress = {
+  status: string
+  lastTurnStatus?: string
+}
+
 type CellState = {
   cell: SwarmCell
   sessionId: string
-  sessionStatus?: string
+  progress?: SessionProgress
   finding: CellFinding | null
 }
 
-function isSessionSettled(status: string | undefined): boolean {
-  return status === 'ended' || status === 'failed' || status === 'cancelled'
+function sessionFailed(progress: SessionProgress | undefined): boolean {
+  if (!progress) return false
+  if (progress.status === 'failed' || progress.status === 'cancelled')
+    return true
+  const turn = progress.lastTurnStatus
+  return turn === 'failed' || turn === 'errored' || turn === 'cancelled'
 }
 
+// A cell is settled — we will never poll it again — when its verdict is saved
+// or it failed, i.e. its phase is 'done' or 'failed'. The grid tracks that via
+// `counts.pending === 0`.
 function cellPhase(state: CellState): 'done' | 'failed' | 'running' | 'queued' {
   if (state.finding) return 'done'
-  if (isSessionSettled(state.sessionStatus)) return 'failed'
-  if (state.sessionStatus === 'running' || state.sessionStatus === 'idle')
-    return 'running'
+  if (sessionFailed(state.progress)) return 'failed'
+  const status = state.progress?.status
+  if (status === 'running' || status === 'idle') return 'running'
   return 'queued'
 }
 
@@ -71,32 +95,37 @@ export function SwarmGrid({
   projectId,
   runId,
   cells,
+  target = '',
+  model = '',
 }: {
   projectId: string
   runId: string
   cells: readonly LaunchedCell[]
+  target?: string
+  model?: string
 }) {
+  // Both polls stop the moment every cell has settled (verdict saved, or
+  // failed). We recompute that each render and park it in a ref the two
+  // refetchInterval closures read, so neither needs the other's query data.
+  const allSettledRef = useRef(false)
+
   // The run's live sessions, fetched by the ids the launch returned so each tile
-  // can show whether its worker is queued, running, or stopped.
+  // can show whether its worker is queued, running, stopped, or failed.
   const sessions = useQuery({
     queryKey: ['swarm-sessions', projectId, runId],
     queryFn: async () => {
       const entries = await Promise.all(
         cells.map(async ({ sessionId }) => {
           const session = await getManagedAgentSession(sessionId)
-          return [sessionId, session.status] as const
+          const turns = session.turns
+          const lastTurnStatus =
+            turns.length > 0 ? turns[turns.length - 1].status : undefined
+          return [sessionId, { status: session.status, lastTurnStatus }] as const
         }),
       )
       return Object.fromEntries(entries)
     },
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return 3_000
-      const allSettled = cells.every(({ sessionId }) =>
-        isSessionSettled(data[sessionId]),
-      )
-      return allSettled ? false : 3_000
-    },
+    refetchInterval: () => (allSettledRef.current ? false : 3_000),
   })
 
   // Each cell's findings document. These are created up front by the launch, so
@@ -120,17 +149,10 @@ export function SwarmGrid({
       )
       return Object.fromEntries(entries)
     },
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return 4_000
-      const allFound = cells.every(
-        ({ cell }) => data[cellDocumentId(runId, cell)],
-      )
-      return allFound ? false : 4_000
-    },
+    refetchInterval: () => (allSettledRef.current ? false : 4_000),
   })
 
-  const statusBySession = useMemo(
+  const progressBySession = useMemo(
     () => sessions.data ?? {},
     [sessions.data],
   )
@@ -138,7 +160,7 @@ export function SwarmGrid({
   const states: CellState[] = cells.map(({ cell, sessionId }) => ({
     cell,
     sessionId,
-    sessionStatus: statusBySession[sessionId],
+    progress: progressBySession[sessionId],
     finding: findings.data?.[cellDocumentId(runId, cell)] ?? null,
   }))
 
@@ -154,6 +176,56 @@ export function SwarmGrid({
     { exposed: 0, 'not-exposed': 0, 'needs-review': 0, failed: 0, pending: 0 },
   )
   const settled = counts.pending === 0
+
+  // Park the settled flag in the ref the two refetchInterval closures read, so
+  // both polls stop once the run is done. Written in an effect (not during
+  // render) so the ref update is a proper side effect.
+  useEffect(() => {
+    allSettledRef.current = settled
+  }, [settled])
+
+  // Once every cell has settled, roll the verdicts into the run report. This is
+  // the swarm's artifact; we both show it and persist it (below) so a scheduled
+  // run leaves something behind.
+  const report: SwarmRunReport | null = settled
+    ? buildRunReport(
+        { runId, target, model, generatedAt: new Date().toISOString() },
+        states.map((s): ReportCell => {
+          const disposition: ReportDisposition = s.finding
+            ? s.finding.disposition
+            : 'failed'
+          return {
+            repository: s.cell.repository,
+            cveId: s.cell.cveId,
+            disposition,
+            ...(s.finding?.reasoning ? { reasoning: s.finding.reasoning } : {}),
+            ...(s.finding?.pullRequest
+              ? { pullRequest: s.finding.pullRequest }
+              : {}),
+          }
+        }),
+      )
+    : null
+
+  // Persist the report exactly once, when the run first settles. create-once
+  // (If-None-Match:*) means a reload that re-settles the same run is a no-op —
+  // the first write wins and any later conflict is ignored.
+  const reportWrittenRef = useRef(false)
+  useEffect(() => {
+    if (!report || reportWrittenRef.current) return
+    reportWrittenRef.current = true
+    void createManagedMemoryDocument({
+      projectId,
+      resource: SECURITY_FINDINGS_RESOURCE,
+      environment: 'default',
+      id: runReportDocumentId(runId),
+      title: `Swarm report ${runId}`,
+      text: serializeRunReport(report),
+      agentWrites: 'disabled',
+    }).catch(() => {
+      // Already written by an earlier view of this run — leave it be.
+    })
+  }, [report, projectId, runId])
 
   return (
     <div className="space-y-4">
@@ -193,7 +265,91 @@ export function SwarmGrid({
           />
         ))}
       </div>
+
+      {report ? <RunReportCard report={report} /> : null}
     </div>
+  )
+}
+
+// The run's report: shown once every cell has settled. It is the swarm's
+// artifact — the actionable verdicts rolled up and ranked. Tier 1 computes it
+// from the cell findings the grid already holds; a later reducer agent can
+// replace this with a written narrative over the same persisted document.
+function RunReportCard({ report }: { report: SwarmRunReport }) {
+  const actionable = report.cells.filter(
+    (c) => c.disposition !== 'not-exposed',
+  )
+  return (
+    <div className="mt-2 rounded-lg border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+        <div>
+          <h3 className="text-sm font-medium">Run report</h3>
+          <p className="text-muted-foreground mt-0.5 text-xs">
+            {report.counts.total} cells ·{' '}
+            {report.counts.exposed} exposed · {report.counts.needsReview} to
+            review · {report.counts.failed} failed · {report.counts.fixPrs} fix
+            {report.counts.fixPrs === 1 ? ' PR' : ' PRs'}
+          </p>
+        </div>
+        <span className="text-muted-foreground text-xs">
+          {new Date(report.generatedAt).toLocaleString()}
+        </span>
+      </div>
+
+      {actionable.length === 0 ? (
+        <p className="text-muted-foreground px-4 py-6 text-sm">
+          Nothing exposed. Every CVE checked was not reachable in its
+          repository.
+        </p>
+      ) : (
+        <ul className="divide-y">
+          {actionable.map((c) => (
+            <ReportRow key={`${c.repository}__${c.cveId}`} cell={c} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function ReportRow({ cell }: { cell: ReportCell }) {
+  const meta =
+    cell.disposition === 'failed'
+      ? { label: 'Failed', className: 'text-muted-foreground border-border' }
+      : DISPOSITION_META[cell.disposition]
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <span
+        className={cn(
+          'mt-0.5 inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+          meta.className,
+        )}
+      >
+        {meta.label}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-mono text-xs">
+          {cell.repository}{' '}
+          <span className="text-muted-foreground">· {cell.cveId}</span>
+        </div>
+        {cell.reasoning ? (
+          <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-5">
+            {cell.reasoning}
+          </p>
+        ) : null}
+      </div>
+      {cell.pullRequest ? (
+        <a
+          href={cell.pullRequest}
+          target="_blank"
+          rel="noreferrer"
+          className="text-status-running mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs hover:underline"
+        >
+          <ExternalLink className="size-3" />
+          Fix PR
+        </a>
+      ) : null}
+    </li>
   )
 }
 
@@ -299,7 +455,7 @@ function CellBadge({
   if (phase === 'failed') {
     return (
       <span className="text-muted-foreground border-border inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs">
-        Stopped
+        Failed
       </span>
     )
   }
