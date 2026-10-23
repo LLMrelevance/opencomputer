@@ -295,6 +295,9 @@ export type ReportCell = {
   readonly disposition: ReportDisposition
   readonly reasoning?: string
   readonly pullRequest?: string
+  // The cell's session, carried so a persisted report can still link each row
+  // (especially a failed one) back to what the agent did.
+  readonly sessionId?: string
 }
 
 export type SwarmReportCounts = {
@@ -348,6 +351,62 @@ export function buildRunReport(
 
 export function serializeRunReport(report: SwarmRunReport): string {
   return JSON.stringify(report)
+}
+
+const REPORT_DISPOSITIONS: readonly ReportDisposition[] = [
+  'exposed',
+  'not-exposed',
+  'needs-review',
+  'failed',
+]
+
+// Read a persisted report back. Returns null for anything malformed so the
+// caller falls back to recomputing the run live. A valid report lets the run
+// page render without polling every cell's session (which would wake each one).
+export function parseRunReport(text: string): SwarmRunReport | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const obj = parsed as Record<string, unknown>
+  if (typeof obj.runId !== 'string' || !Array.isArray(obj.cells)) return null
+  const cells: ReportCell[] = []
+  for (const entry of obj.cells) {
+    if (!entry || typeof entry !== 'object') return null
+    const e = entry as Record<string, unknown>
+    if (
+      typeof e.repository !== 'string' ||
+      typeof e.cveId !== 'string' ||
+      typeof e.disposition !== 'string' ||
+      !REPORT_DISPOSITIONS.includes(e.disposition as ReportDisposition)
+    ) {
+      return null
+    }
+    cells.push({
+      repository: e.repository,
+      cveId: e.cveId,
+      disposition: e.disposition as ReportDisposition,
+      ...(typeof e.reasoning === 'string' ? { reasoning: e.reasoning } : {}),
+      ...(typeof e.pullRequest === 'string'
+        ? { pullRequest: e.pullRequest }
+        : {}),
+      ...(typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+    })
+  }
+  if (cells.length === 0) return null
+  return buildRunReport(
+    {
+      runId: obj.runId,
+      target: typeof obj.target === 'string' ? obj.target : '',
+      model: typeof obj.model === 'string' ? obj.model : '',
+      generatedAt:
+        typeof obj.generatedAt === 'string' ? obj.generatedAt : '',
+    },
+    cells,
+  )
 }
 
 // Compose the controller's first-run input from the payload. This is exactly
