@@ -49,15 +49,36 @@ describe('swarm fan-out', () => {
     expect(first).not.toBe(second)
   })
 
-  it('narrows the prompt to a single repository and CVE', () => {
+  it('narrows the prompt to a single repository and CVE seed', () => {
     const prompt = composeCellPrompt(payload, {
       repository: 'acme/web',
       cveId: 'CVE-2026-1',
     })
     expect(prompt).toContain('Repository: acme/web')
-    expect(prompt).toContain('CVE: CVE-2026-1')
+    expect(prompt).toContain('CVE seed: CVE-2026-1')
     expect(prompt).toContain('scan_surface')
     expect(prompt).not.toContain('acme/api')
+  })
+
+  it('seeds the cell with live feeds and keeps probing scoped to the target', () => {
+    const prompt = composeCellPrompt(payload, {
+      repository: 'acme/web',
+      cveId: 'CVE-2026-1',
+    })
+    expect(prompt).toContain('cve.now')
+    expect(prompt).toContain('pwn.watch')
+    expect(prompt).toContain('/workspace')
+    // Probing is pinned to the attested host, named explicitly.
+    expect(prompt).toContain('Stay on https://app.example.com')
+  })
+
+  it('drops target-only discovery steps when no target is given', () => {
+    const prompt = composeCellPrompt(
+      { ...payload, target: '' },
+      { repository: 'acme/web', cveId: 'CVE-2026-1' },
+    )
+    expect(prompt).not.toContain('scan_surface')
+    expect(prompt).toContain('reachable in this code')
   })
 })
 
