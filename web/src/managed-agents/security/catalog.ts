@@ -87,12 +87,21 @@ export type SwarmCell = {
   readonly cveId: string
 }
 
-// A cell once its session has been started: the launch pairs each cell with the
-// session id `startManagedAgentSession` returns, so the grid can poll that
-// session's liveness directly instead of discovering it by label.
+// Where a cell is in the launch itself, before any agent work. The launch writes
+// the manifest instantly with every cell `starting`, navigates, then boots the
+// sandboxes in the background and flips each to `started` (with its session id)
+// or `failed` as it resolves. So the run page is reachable in one write instead
+// of blocking on every sandbox.
+export type CellLaunchStatus = 'starting' | 'started' | 'failed'
+
+// A cell in the run manifest: paired with the session id
+// `startManagedAgentSession` returns once it is booted, so the grid can poll that
+// session's liveness directly instead of discovering it by label. `sessionId` is
+// empty until the cell reaches `started`.
 export type LaunchedCell = {
   readonly cell: SwarmCell
   readonly sessionId: string
+  readonly launch: CellLaunchStatus
 }
 
 // Expand the payload into the matrix of cells. Fan-out needs explicit
@@ -174,9 +183,18 @@ export function parseRunManifest(text: string): SwarmRunManifest | null {
     ) {
       return null
     }
+    // Back-compat: a manifest written before incremental launch has no `launch`
+    // field — a cell there with a session id is already `started`.
+    const launch: CellLaunchStatus =
+      e.launch === 'starting' || e.launch === 'started' || e.launch === 'failed'
+        ? e.launch
+        : e.sessionId
+          ? 'started'
+          : 'starting'
     cells.push({
       cell: { repository: cell.repository, cveId: cell.cveId },
       sessionId: e.sessionId,
+      launch,
     })
   }
   if (cells.length === 0) return null
@@ -186,6 +204,13 @@ export function parseRunManifest(text: string): SwarmRunManifest | null {
     target: typeof obj.target === 'string' ? obj.target : '',
     cells,
   }
+}
+
+// True while any cell is still booting its sandbox — the run page keeps polling
+// the manifest until every cell has started or failed, so session ids appear as
+// they come up.
+export function manifestSettling(manifest: SwarmRunManifest): boolean {
+  return manifest.cells.some((c) => c.launch === 'starting')
 }
 
 // From a page of findings-resource documents, the id of the most recently
