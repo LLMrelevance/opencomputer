@@ -60,9 +60,9 @@ export function managedAgentsNav(options: {
       {
         items: [
           // Only CVE Swarm projects declare the findings resource, so the
-          // Swarm grid is offered just for them.
+          // Swarms list is offered just for them.
           ...(options.swarmEnabled
-            ? [{ to: `${projectPath}/swarm`, label: 'Swarm', icon: Radar }]
+            ? [{ to: `${projectPath}/swarms`, label: 'Swarms', icon: Radar }]
             : []),
           {
             to: `${projectPath}/deployments`,

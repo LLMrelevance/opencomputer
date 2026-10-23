@@ -194,10 +194,18 @@ export function parseRunManifest(text: string): SwarmRunManifest | null {
 export function latestManifestId(
   docs: readonly { id: string; updatedAt: string }[],
 ): string | null {
-  const manifests = docs
+  return listManifestDocs(docs)[0]?.id ?? null
+}
+
+// Every run manifest in a page of findings-resource documents, newest first.
+// The Swarms index reads one row per manifest; cell findings and report docs
+// (which share the resource) are filtered out by prefix.
+export function listManifestDocs(
+  docs: readonly { id: string; updatedAt: string }[],
+): { id: string; updatedAt: string }[] {
+  return docs
     .filter((doc) => doc.id.startsWith(SWARM_MANIFEST_PREFIX))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  return manifests[0]?.id ?? null
 }
 
 // One cell's first-run input: a single repository checked against a single CVE.

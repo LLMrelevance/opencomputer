@@ -4,6 +4,7 @@ import {
   cellDocumentId,
   composeCellPrompt,
   latestManifestId,
+  listManifestDocs,
   parseCellFinding,
   parseRunManifest,
   runManifestDocumentId,
@@ -150,6 +151,19 @@ describe('run manifest', () => {
         { id: 'run-x__acme-web__cve-1', updatedAt: '2026-10-22T10:00:00Z' },
       ]),
     ).toBeNull()
+  })
+
+  it('lists every manifest newest first, ignoring findings and report docs', () => {
+    const docs = [
+      { id: 'run-a__acme-web__cve-1', updatedAt: '2026-10-22T13:00:00Z' },
+      { id: 'manifest__run-a', updatedAt: '2026-10-22T09:00:00Z' },
+      { id: 'report__run-a', updatedAt: '2026-10-22T14:00:00Z' },
+      { id: 'manifest__run-b', updatedAt: '2026-10-22T12:00:00Z' },
+    ]
+    expect(listManifestDocs(docs).map((d) => d.id)).toEqual([
+      'manifest__run-b',
+      'manifest__run-a',
+    ])
   })
 })
 
