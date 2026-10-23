@@ -1300,10 +1300,11 @@ let previewBootSince: number | null = null
 // `?agent=codex` is a connected ChatGPT plan. The one-command connect (work
 // 082) mints a placeholder code; with `?connect=auto` the preview plays the
 // person running it: about six seconds later the card's subscription (Codex
-// when Codex is chosen, else Claude) is connected. Codex shows as coming
-// unless `?codex=available` (or `?agent=codex`) says the computer can run it.
+// when Codex is chosen, else Claude) is connected. `?harnesses=claude,codex`
+// names the harnesses the computer can run (`?agent=codex` implies both);
+// without it the agent names none, as an older backend: Claude only.
 type PreviewAgent = {
-  codexAvailable: boolean
+  harnesses?: string[]
   choice: 'claude' | 'codex' | 'credits' | null
   linked: boolean
   linkedSlackUser?: { id: string; name: string; teamName: string }
@@ -1333,11 +1334,15 @@ function previewAgent(): PreviewAgent | null {
       : {}),
     setAt: new Date(BASE).toISOString(),
   })
+  const harnesses =
+    new URLSearchParams(window.location.search)
+      .get('harnesses')
+      ?.split(',')
+      .map((name) => name.trim())
+      .filter(Boolean) ?? (param === 'codex' ? ['claude', 'codex'] : undefined)
   const base = {
     managedModel: 'Claude Opus 5.5',
-    codexAvailable:
-      param === 'codex' ||
-      new URLSearchParams(window.location.search).get('codex') === 'available',
+    ...(harnesses ? { harnesses } : {}),
   }
   // The seat binds to a Slack user through the install: before it, nobody
   // is linked and no Slack user is named.

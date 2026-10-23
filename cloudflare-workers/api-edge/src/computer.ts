@@ -46,7 +46,8 @@ export const COMPUTER_ERROR_MESSAGES: Record<string, string> = {
     "That's not a ChatGPT login. Paste the auth.json that codex login wrote.",
   computer_connect_code_invalid:
     "That connect code is not valid. Get a new one from the dashboard.",
-  computer_codex_unavailable: "Codex isn't available on this computer yet.",
+  computer_harness_unavailable:
+    "That agent isn't available on this computer yet.",
   invalid_request: "That choice isn't valid.",
 };
 
@@ -160,6 +161,18 @@ function publicSubscription(
  * backend sends none or one that breaks the contract: the dashboard then
  * skips the agent step rather than guessing.
  */
+const HARNESS = /^[a-z][a-z0-9-]{0,31}$/;
+const MAX_HARNESSES = 16;
+
+/** Known-safe harness names, once each, in blue's order. */
+function publicHarnesses(values: unknown[]): string[] {
+  const names = values.filter(
+    (value): value is string =>
+      typeof value === "string" && HARNESS.test(value),
+  );
+  return [...new Set(names)].slice(0, MAX_HARNESSES);
+}
+
 export function publicComputerAgent(
   value: unknown,
 ): Record<string, unknown> | null {
@@ -184,9 +197,12 @@ export function publicComputerAgent(
     ...(linkedSlackUser ? { linkedSlackUser } : {}),
     subscription,
     managedModel: agent.managedModel,
-    // Rollout gate and kill switch (work 082): an older blue that does not
-    // send it keeps Codex hidden.
-    codexAvailable: agent.codexAvailable === true,
+    // The harnesses this computer can run (work 082): the rollout gate and
+    // kill switch. Absent from an older blue, so absent here too, and the
+    // web keeps today's Claude-only cards.
+    ...(Array.isArray(agent.harnesses)
+      ? { harnesses: publicHarnesses(agent.harnesses) }
+      : {}),
   };
 }
 
@@ -352,6 +368,14 @@ function computerRoute(method: string, suffix: string) {
   );
 }
 
+/**
+ * Codes whose backend message is written for people and names the agent
+ * ("Codex isn't available on this computer yet."): it passes through when
+ * it reads as one plain line, else the fixed copy above stands in.
+ */
+const BACKEND_WORDED_CODES = new Set(["computer_harness_unavailable"]);
+const PERSON_READABLE = /^[^\p{Cc}<>]{1,200}$/u;
+
 export const computerFamily: RouteFamily = {
   owns: (suffix) => COMPUTER_ROUTE.test(suffix),
   allows: (method, suffix) => computerRoute(method, suffix) !== undefined,
@@ -369,10 +393,12 @@ export const computerFamily: RouteFamily = {
       headers,
     });
   },
-  errorMessage: (code, status, suffix) =>
-    Object.hasOwn(COMPUTER_ERROR_MESSAGES, code)
-      ? COMPUTER_ERROR_MESSAGES[code]
-      : computerFallbackMessage(status, suffix),
+  errorMessage: (code, status, suffix, backendMessage) =>
+    BACKEND_WORDED_CODES.has(code) && PERSON_READABLE.test(backendMessage)
+      ? backendMessage
+      : Object.hasOwn(COMPUTER_ERROR_MESSAGES, code)
+        ? COMPUTER_ERROR_MESSAGES[code]
+        : computerFallbackMessage(status, suffix),
 };
 
 /**

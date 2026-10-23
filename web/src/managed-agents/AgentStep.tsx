@@ -45,8 +45,10 @@ import {
   disconnectClaudeSubscription,
   disconnectCodexSubscription,
   getComputer,
+  isHarnessAvailable,
   resumeClaudeSubscription,
   setAgentChoice,
+  subscriptionProviderSchema,
   type AgentChoice,
   type ComputerAgent,
   type ComputerConnectCode,
@@ -172,8 +174,9 @@ function useAgentCache() {
 }
 
 /**
- * The three ways to go: the two cards, the selected card's panel (the paste
- * form, or Codex's coming line) and free credits. Step 1 of setup, and the
+ * The three ways to go: the two cards, the selected card's panel (its
+ * command and, for Claude, the paste form; or the coming line of a harness
+ * this computer cannot run yet) and free credits. Step 1 of setup, and the
  * Change dialog of its done row, where `onDone` closes the dialog once the
  * server has the change. Free credits replace a connected subscription:
  * routing decides from the subscription row, so it is disconnected first.
@@ -249,11 +252,11 @@ export function AgentSetup({
           mark={<span className="bg-foreground text-background">◎</span>}
         />
       </div>
-      {selected === 'codex' && !agent.codexAvailable ? (
+      {!isHarnessAvailable(agent, selected) ? (
         // Not rolled out to this computer (or switched off): the card only
         // records the interest, no code is minted.
         <p className="bg-muted/60 text-foreground rounded-lg px-4 py-3">
-          Codex is coming. We&apos;ll let you know.
+          {PROVIDER_NAME[selected]} is coming. We&apos;ll let you know.
         </p>
       ) : (
         <SubscriptionConnect
@@ -874,13 +877,15 @@ export function AgentManage({
   const { setAgent, reread } = useAgentCache()
   const [replacing, setReplacing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
-  // Which subscription to connect when there is none.
-  const codex = agent.codexAvailable === true
+  // Which subscription to connect when there is none: only the harnesses
+  // this computer can run (the rollout gate), the chosen one first.
   const [picked, setConnecting] = useState<SubscriptionProvider>(
     agent.choice === 'codex' ? 'codex' : 'claude',
   )
-  // Codex only where this computer can run it (the rollout gate).
-  const connecting: SubscriptionProvider = codex ? picked : 'claude'
+  const available = subscriptionProviderSchema.options.filter((provider) =>
+    isHarnessAvailable(agent, provider),
+  )
+  const connecting = available.includes(picked) ? picked : available[0]
   const resume = useMutation({
     mutationFn: resumeClaudeSubscription,
     onSuccess: async (next) => {
@@ -917,19 +922,21 @@ export function AgentManage({
         </div>
       )
     }
-    const other: SubscriptionProvider =
-      connecting === 'claude' ? 'codex' : 'claude'
+    const others = available.filter((provider) => provider !== connecting)
     return (
       <div className="text-muted-foreground space-y-4 text-sm">
         <p className="text-foreground font-medium">{agentSummary(agent)}</p>
         {linkedLine}
-        <SubscriptionConnect
-          key={connecting}
-          provider={connecting}
-          mintOnShow={false}
-        />
-        {codex ? (
+        {connecting ? (
+          <SubscriptionConnect
+            key={connecting}
+            provider={connecting}
+            mintOnShow={false}
+          />
+        ) : null}
+        {others.map((other) => (
           <Button
+            key={other}
             variant="link"
             size="sm"
             className="text-muted-foreground h-auto px-0"
@@ -937,7 +944,7 @@ export function AgentManage({
           >
             Use {PROVIDER_NAME[other]} instead
           </Button>
-        ) : null}
+        ))}
       </div>
     )
   }
@@ -981,8 +988,8 @@ export function AgentManage({
               Resume
             </Button>
           ) : null}
-          {subscription.provider === 'claude' || codex ? (
-            // A Codex login switched off by the gate can still be
+          {isHarnessAvailable(agent, subscription.provider) ? (
+            // A login whose harness the gate switched off can still be
             // disconnected, not signed in again.
             <Button
               size="sm"

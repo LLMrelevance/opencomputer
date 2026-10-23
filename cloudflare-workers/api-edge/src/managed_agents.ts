@@ -298,6 +298,7 @@ async function publicErrorResponse(
           backendCode,
           upstream.status,
           suffix,
+          backendMessage,
         )
       : undefined;
   if (familyMessage) {

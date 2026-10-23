@@ -62,10 +62,10 @@ export const computerAgentSchema = z.object({
   /** The model free credits run, e.g. "Claude Opus 5.5". */
   managedModel: z.string(),
   /**
-   * This computer can run Codex (work 082 rollout gate and kill switch).
-   * Absent reads as false: Codex stays "coming".
+   * The harnesses this computer can run, e.g. ["claude", "codex"] (work 082
+   * rollout gate and kill switch). Absent from an older backend: Claude only.
    */
-  codexAvailable: z.boolean().optional(),
+  harnesses: z.array(z.string()).optional(),
 })
 
 export const computerStatusSchema = z.object({
@@ -243,6 +243,20 @@ export function createConnectCode() {
 }
 
 /** The one command a person runs to connect a subscription with a code. */
+/** What an older backend that names no harnesses can run: today's Claude. */
+const DEFAULT_HARNESSES: readonly string[] = ['claude']
+
+/**
+ * Whether this computer can run a harness; a card for one it cannot shows
+ * as coming.
+ */
+export function isHarnessAvailable(
+  agent: Pick<ComputerAgent, 'harnesses'>,
+  harness: SubscriptionProvider,
+): boolean {
+  return (agent.harnesses ?? DEFAULT_HARNESSES).includes(harness)
+}
+
 export function connectCommand(provider: SubscriptionProvider, code: string) {
   return `npx -y @opencomputer/cli model connect ${provider} --code ${code}`
 }

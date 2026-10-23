@@ -6693,7 +6693,7 @@ describe("organization computer (work 052)", () => {
       setAt: "2026-10-22T10:00:00.000Z",
     },
     managedModel: "Claude Opus 5.5",
-    codexAvailable: false,
+    harnesses: ["claude", "codex"],
   };
 
   it("passes the agent block of GET /computer field by field", async () => {
@@ -6729,30 +6729,48 @@ describe("organization computer (work 052)", () => {
       "/computer",
       Response.json({ ...computerStatus, agent: minimal }),
     );
-    // An older blue sends no codexAvailable: Codex stays hidden.
+    // An older blue sends no harnesses: none here either, so the web keeps
+    // today's Claude-only cards.
     await expect(response.json()).resolves.toEqual({
       ...computerStatus,
-      agent: { ...minimal, codexAvailable: false },
+      agent: minimal,
     });
   });
 
   it.each([
-    [true, true],
-    [false, false],
-    ["true", false],
-    [1, false],
-  ])("passes codexAvailable %j as %j", async (value, expected) => {
+    ["the names blue sends", ["claude", "codex"], ["claude", "codex"]],
+    ["none", [], []],
+    [
+      "only known-safe names, once each",
+      ["codex", "Codex", "gemini-2", "<b>", "a".repeat(33), 7, null, "codex"],
+      ["codex", "gemini-2"],
+    ],
+    ["at most 16", Array.from({ length: 20 }, (_, i) => `h${i}`), Array.from({ length: 16 }, (_, i) => `h${i}`)],
+  ])("passes harnesses: %s", async (_, value, expected) => {
     const { response } = await call(
       "GET",
       "/computer",
       Response.json({
         ...computerStatus,
-        agent: { ...agent, codexAvailable: value },
+        agent: { ...agent, harnesses: value },
       }),
     );
-    const body = (await response.json()) as { agent: { codexAvailable: unknown } };
-    expect(body.agent.codexAvailable).toBe(expected);
+    const body = (await response.json()) as { agent: { harnesses: unknown } };
+    expect(body.agent.harnesses).toEqual(expected);
   });
+
+  it.each([["a string", "claude,codex"], ["null", null], ["an object", { codex: true }]])(
+    "omits harnesses that are %s",
+    async (_, value) => {
+      const { response } = await call(
+        "GET",
+        "/computer",
+        Response.json({ ...computerStatus, agent: { ...agent, harnesses: value } }),
+      );
+      const body = (await response.json()) as { agent: Record<string, unknown> };
+      expect(body.agent).not.toHaveProperty("harnesses");
+    },
+  );
 
   it.each([
     ["an unknown choice", { ...agent, choice: "gemini" }],
@@ -6996,7 +7014,6 @@ describe("organization computer (work 052)", () => {
     [403, "computer_agent_not_member", "You're not a member of this organization's Slack workspace."],
     [422, "computer_agent_codex_auth", "That's not a ChatGPT login. Paste the auth.json that codex login wrote."],
     [401, "computer_connect_code_invalid", "That connect code is not valid. Get a new one from the dashboard."],
-    [409, "computer_codex_unavailable", "Codex isn't available on this computer yet."],
   ])("maps %s %s to fixed copy", async (status, code, message) => {
     const { response } = await call(
       "PUT",
@@ -7008,6 +7025,27 @@ describe("organization computer (work 052)", () => {
     );
     expect(response.status).toBe(status);
     await expect(response.json()).resolves.toEqual({ error: { code, message } });
+  });
+
+  it.each([
+    ["its own words", "Codex isn't available on this computer yet.", "Codex isn't available on this computer yet."],
+    ["fallback copy for an empty message", "", "That agent isn't available on this computer yet."],
+    ["fallback copy for markup", "<b>Codex</b> is off", "That agent isn't available on this computer yet."],
+    ["fallback copy for several lines", "Codex\nstack trace", "That agent isn't available on this computer yet."],
+    ["fallback copy for a long message", "x".repeat(201), "That agent isn't available on this computer yet."],
+  ])("says an unavailable harness in %s", async (_, upstreamMessage, message) => {
+    const { response } = await call(
+      "POST",
+      "/computer/agent/connect-code",
+      Response.json(
+        { error: { code: "computer_harness_unavailable", message: upstreamMessage } },
+        { status: 409 },
+      ),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "computer_harness_unavailable", message },
+    });
   });
 
   it("tells a bad choice apart from a missing computer", async () => {

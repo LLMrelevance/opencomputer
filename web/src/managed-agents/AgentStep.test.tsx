@@ -50,8 +50,8 @@ const fresh: ComputerAgent = {
   subscription: null,
   managedModel: 'Claude Opus 5.5',
 }
-// The rollout gate: blue says this computer can run Codex.
-const withCodex: ComputerAgent = { ...fresh, codexAvailable: true }
+// The rollout gate: blue names the harnesses this computer can run.
+const withCodex: ComputerAgent = { ...fresh, harnesses: ['claude', 'codex'] }
 const subscription = (
   health: NonNullable<ComputerAgent['subscription']>['health'],
 ) => ({ provider: 'claude' as const, health, setAt: '2026-10-22T10:00:00Z' })
@@ -641,8 +641,8 @@ describe('choosing the coding agent', () => {
 
   describe('where this computer cannot run Codex yet', () => {
     it.each([
-      ['an older backend that does not say', fresh],
-      ['the gate switched off', { ...fresh, codexAvailable: false }],
+      ['an older backend that names none', fresh],
+      ['a computer that runs Claude only', { ...fresh, harnesses: ['claude'] }],
     ])('only records Codex on %s', async (_, agent: ComputerAgent) => {
       await show({ ...empty, agent }, 'Choose your coding agent')
       await settle(() => command() !== undefined, 'claude command')
@@ -684,6 +684,23 @@ describe('choosing the coding agent', () => {
       expect(button('Use Codex instead')).toBeUndefined()
       expect(button('Connect Codex')).toBeUndefined()
     })
+  })
+
+  it('drives the cards from the harnesses, Claude included', async () => {
+    await show(
+      { ...empty, agent: { ...fresh, harnesses: ['codex'] } },
+      "Claude Code is coming. We'll let you know.",
+    )
+    expect(computerApi.createConnectCode).not.toHaveBeenCalled()
+    expect(button('Or paste a token')).toBeUndefined()
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...fresh,
+      harnesses: ['codex'],
+      choice: 'codex',
+    })
+    act(() => codexCard().click())
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
+    expect(text()).not.toContain('is coming')
   })
 
   it('offers Codex on the agent card where this computer can run it', async () => {
