@@ -13,7 +13,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Loader2 } from 'lucide-react'
+import { Ellipsis, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/api/errors'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -27,6 +27,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { AuthContext } from '@/hooks/useAuth'
 import { BASE_GRANT_CENTS } from '@/lib/billing-onramp'
@@ -1035,19 +1041,38 @@ export function AgentManage({
   const needsLink = slackInstalled && !agent.linked
   const linked = linkedSlackUserLine(agent, slackInstalled)
   const subscriptions = subscriptionsOf(agent)
+  const groupName = useId()
+  const { setAgent } = useAgentCache()
+  const select = useMutation({
+    mutationFn: (provider: SubscriptionProvider) => setAgentChoice(provider),
+    onSuccess: async (next, provider) => {
+      await setAgent(next)
+      trackAgentChosen(provider)
+      notifySuccess(`${PROVIDER_NAME[provider]} runs your threads now.`)
+    },
+    onError: (error) => notifyError("Couldn't switch.", error),
+  })
   return (
     <div className="text-muted-foreground space-y-3 text-sm">
-      <div className="space-y-0.5">
-        <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-        {needsLink ? (
-          // After Slack, subscriptions belong to Slack users: a person not
-          // linked to one links first, on the Slack card above.
-          <p>Link your Slack account above to use your own subscription.</p>
-        ) : linked ? (
-          <p>{linked}</p>
-        ) : null}
-      </div>
-      <div className="divide-y rounded-lg border">
+      {!agent.subscription || needsLink || linked ? (
+        <div className="space-y-0.5">
+          {!agent.subscription ? (
+            <p className="text-foreground font-medium">{agentSummary(agent)}</p>
+          ) : null}
+          {needsLink ? (
+            // After Slack, subscriptions belong to Slack users: a person not
+            // linked to one links first, on the Slack card above.
+            <p>Link your Slack account above to use your own subscription.</p>
+          ) : linked ? (
+            <p>
+              For @{agent.linkedSlackUser?.name} in{' '}
+              {agent.linkedSlackUser?.teamName}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      <fieldset className="space-y-2" aria-busy={select.isPending}>
+        <legend className="sr-only">Agent for your threads</legend>
         {subscriptionProviderSchema.options.map((provider) => (
           <ProviderRow
             key={provider}
@@ -1055,9 +1080,13 @@ export function AgentManage({
             provider={provider}
             subscription={subscriptions[provider]}
             locked={needsLink}
+            groupName={groupName}
+            switching={select.isPending}
+            selecting={select.isPending && select.variables === provider}
+            onSelect={() => select.mutate(provider)}
           />
         ))}
-      </div>
+      </fieldset>
     </div>
   )
 }
@@ -1067,11 +1096,19 @@ function ProviderRow({
   provider,
   subscription,
   locked,
+  groupName,
+  switching,
+  selecting,
+  onSelect,
 }: {
   agent: ComputerAgent
   provider: SubscriptionProvider
   subscription: AgentSubscription | null
   locked: boolean
+  groupName: string
+  switching: boolean
+  selecting: boolean
+  onSelect: () => void
 }) {
   const { setAgent, reread } = useAgentCache()
   const [connecting, setConnecting] = useState(false)
@@ -1089,15 +1126,6 @@ function ProviderRow({
       if (refusalCode(error) === undefined) reread()
       notifyError("Couldn't resume.", error)
     },
-  })
-  const use = useMutation({
-    mutationFn: () => setAgentChoice(provider),
-    onSuccess: async (next) => {
-      await setAgent(next)
-      trackAgentChosen(provider)
-      notifySuccess(`${name} runs your threads now.`)
-    },
-    onError: (error) => notifyError("Couldn't switch.", error),
   })
   const disconnect = useMutation({
     mutationFn: disconnectSubscription,
@@ -1119,43 +1147,68 @@ function ProviderRow({
       : "Coming soon. We'll let you know."
 
   return (
-    <section aria-label={name} className="space-y-3 px-4 py-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
-          <ServiceLogo
-            service={PROVIDER_ROW[provider].logo}
-            className="text-foreground size-4"
+    <section
+      aria-label={name}
+      className={cn(
+        'space-y-3 rounded-lg border px-3 py-3 transition-colors',
+        runs && 'bg-muted/40',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 has-disabled:cursor-default">
+          <input
+            type="radio"
+            name={groupName}
+            value={provider}
+            aria-label={name}
+            aria-describedby={`${groupName}-${provider}-status`}
+            checked={runs}
+            disabled={
+              locked || connecting || switching || !subscription || !available
+            }
+            onChange={onSelect}
+            className="accent-foreground focus-visible:outline-ring size-4 shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default"
           />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-foreground font-medium">
-            {name}
-            {runs ? (
-              <span className="bg-muted text-muted-foreground ml-2 rounded px-1.5 py-0.5 text-xs font-normal">
-                Runs your threads
-              </span>
-            ) : null}
-          </p>
-          <p
-            className={cn(
-              'text-xs',
-              subscription?.health === 'invalid' && 'text-destructive',
-            )}
+          <span className="bg-background flex size-9 shrink-0 items-center justify-center rounded-md border">
+            <ServiceLogo
+              service={PROVIDER_ROW[provider].logo}
+              className="text-foreground size-5"
+            />
+          </span>
+          <span className="min-w-0 space-y-0.5">
+            <span className="text-foreground block font-medium">{name}</span>
+            <span
+              id={`${groupName}-${provider}-status`}
+              className={cn(
+                'block text-xs',
+                subscription?.health === 'invalid' && 'text-destructive',
+              )}
+            >
+              {subscription?.plan
+                ? `ChatGPT ${subscription.plan.charAt(0).toUpperCase()}${subscription.plan.slice(1)} · ${status}`
+                : subscription
+                  ? status
+                  : `${PROVIDER_ROW[provider].plans} · ${status}`}
+            </span>
+          </span>
+        </label>
+        {selecting ? (
+          <span
+            role="status"
+            className="text-muted-foreground flex items-center gap-1.5 text-xs"
           >
-            {subscription?.plan
-              ? `ChatGPT ${subscription.plan.charAt(0).toUpperCase()}${subscription.plan.slice(1)} · ${status}`
-              : subscription
-                ? status
-                : `${PROVIDER_ROW[provider].plans} · ${status}`}
-          </p>
-        </div>
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            <span className="sr-only sm:not-sr-only">Switching…</span>
+          </span>
+        ) : null}
         {locked || connecting ? null : (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             {canResume ? (
               <Button
                 size="sm"
+                variant="outline"
                 onClick={() => resume.mutate()}
-                disabled={resume.isPending}
+                disabled={resume.isPending || switching}
               >
                 {resume.isPending ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -1163,40 +1216,40 @@ function ProviderRow({
                 Resume
               </Button>
             ) : null}
-            {subscription && !runs && available ? (
+            {!subscription && available ? (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => use.mutate()}
-                disabled={use.isPending}
-              >
-                Use for threads
-              </Button>
-            ) : null}
-            {available ? (
-              // A login whose harness the gate switched off can still be
-              // disconnected, not signed in again.
-              <Button
-                size="sm"
-                variant={subscription ? 'ghost' : 'outline'}
+                disabled={switching}
                 onClick={() => setConnecting(true)}
               >
-                {!subscription
-                  ? 'Connect'
-                  : provider === 'codex'
-                    ? 'Reconnect'
-                    : 'Replace'}
+                Connect
               </Button>
             ) : null}
             {subscription ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => setConfirmDisconnect(true)}
-              >
-                Disconnect
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    aria-label={`Manage ${name} subscription`}
+                    disabled={switching || resume.isPending}
+                  >
+                    <Ellipsis aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-40">
+                  {available ? (
+                    <DropdownMenuItem onSelect={() => setConnecting(true)}>
+                      {provider === 'codex' ? 'Reconnect' : 'Replace'}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onSelect={() => setConfirmDisconnect(true)}>
+                    Disconnect
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
           </div>
         )}

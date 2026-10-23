@@ -199,6 +199,31 @@ describe('choosing the coding agent', () => {
       | HTMLButtonElement
       | undefined
 
+  const providerRadio = (provider: string) =>
+    container.querySelector<HTMLInputElement>(
+      `input[type="radio"][value="${provider}"]`,
+    )!
+
+  async function openSubscriptionMenu(name: string) {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="Manage ${name} subscription"]`,
+    )!
+    act(() => {
+      trigger.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      )
+    })
+    await settle(
+      () => document.querySelector('[role="menu"]') !== null,
+      'subscription menu',
+    )
+  }
+
+  const menuItem = (label: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === label,
+    )!
+
   function openPaste() {
     act(() => button('Or paste a token')!.click())
   }
@@ -375,6 +400,59 @@ describe('choosing the coding agent', () => {
       verified: true,
       via: 'pool',
     })
+  })
+
+  it('keeps the previous selection after a failed switch and allows retry', async () => {
+    const codex = {
+      provider: 'codex' as const,
+      health: 'ok' as const,
+      setAt: '2026-10-22T10:00:00Z',
+    }
+    const both = {
+      ...withCodex,
+      choice: 'claude' as const,
+      linked: true,
+      subscription: subscription('ok'),
+      subscriptions: { claude: subscription('ok'), codex },
+    }
+    await show({ ...onboarded, agent: both }, 'Models', CONNECTIONS)
+    const error = new Error('Connection interrupted')
+    computerApi.setAgentChoice.mockRejectedValueOnce(error)
+    act(() => providerRadio('codex').click())
+    await settle(
+      () => notify.notifyError.mock.calls.some((call) => call[1] === error),
+      'switch failed',
+    )
+    await settle(() => !providerRadio('codex').disabled, 'retry available')
+    expect(providerRadio('claude').checked).toBe(true)
+    expect(providerRadio('codex').checked).toBe(false)
+    computerApi.setAgentChoice.mockResolvedValueOnce({
+      ...both,
+      choice: 'codex',
+      subscription: codex,
+    })
+    act(() => providerRadio('codex').click())
+    await settle(() => providerRadio('codex').checked, 'retry succeeded')
+  })
+
+  it('requires a connection before an agent can be selected', async () => {
+    await show(
+      {
+        ...onboarded,
+        agent: {
+          ...withCodex,
+          linked: true,
+          choice: 'claude',
+          subscription: subscription('ok'),
+        },
+      },
+      'Models',
+      CONNECTIONS,
+    )
+    expect(providerRadio('codex').disabled).toBe(true)
+    expect(rowButton('Codex', 'Connect')).toBeDefined()
+    act(() => providerRadio('codex').click())
+    expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
   })
 
   it('says an unchecked token is saved', async () => {
@@ -923,10 +1001,21 @@ describe('choosing the coding agent', () => {
       CONNECTIONS,
     )
     expect(text()).toContain('This token stopped working.')
-    expect(text()).toContain('Runs threads from @maya in Acme.')
+    expect(text()).toContain('For @maya in Acme')
     expect(text()).not.toContain('@U1')
-    expect(button('Replace')).toBeDefined()
-    expect(button('Disconnect')).toBeDefined()
+    await openSubscriptionMenu('Claude Code')
+    expect(menuItem('Replace')).toBeDefined()
+    act(() => menuItem('Disconnect').click())
+    await settle(
+      () => text().includes('Disconnect Claude Code?'),
+      'disconnect confirmation',
+    )
+    expect(computerApi.disconnectClaudeSubscription).not.toHaveBeenCalled()
+    act(() => button('Cancel')!.click())
+    await settle(
+      () => !text().includes('Disconnect Claude Code?'),
+      'cancel disconnect',
+    )
     computerApi.resumeClaudeSubscription.mockResolvedValue({
       ...fresh,
       choice: 'claude',
@@ -952,21 +1041,30 @@ describe('choosing the coding agent', () => {
       subscriptions: { claude: subscription('ok'), codex },
     }
     await show({ ...onboarded, agent: both }, 'Models', CONNECTIONS)
-    const row = (name: string) =>
-      document.querySelector(`section[aria-label="${name}"]`)!.textContent
-    expect(row('Claude Code')).toContain('Runs your threads')
-    expect(row('Codex')).not.toContain('Runs your threads')
-    expect(rowButton('Claude Code', 'Use for threads')).toBeUndefined()
-    computerApi.setAgentChoice.mockResolvedValue({
-      ...both,
-      choice: 'codex',
-      subscription: codex,
-    })
-    act(() => rowButton('Codex', 'Use for threads')!.click())
-    await settle(
-      () => row('Codex')?.includes('Runs your threads') === true,
-      'codex runs',
+    expect(providerRadio('claude').checked).toBe(true)
+    expect(providerRadio('codex').checked).toBe(false)
+    let resolveSwitch!: (agent: ComputerAgent) => void
+    computerApi.setAgentChoice.mockImplementation(
+      () =>
+        new Promise<ComputerAgent>((resolve) => {
+          resolveSwitch = resolve
+        }),
     )
+    act(() => providerRadio('codex').click())
+    await settle(() => providerRadio('codex').disabled, 'switching')
+    expect(providerRadio('claude').disabled).toBe(true)
+    expect(providerRadio('claude').checked).toBe(true)
+    expect(providerRadio('codex').checked).toBe(false)
+    act(() =>
+      resolveSwitch({
+        ...both,
+        choice: 'codex',
+        subscription: codex,
+      }),
+    )
+    await settle(() => providerRadio('codex').checked, 'codex selected')
+    expect(providerRadio('claude').checked).toBe(false)
+    expect(providerRadio('claude').disabled).toBe(false)
     expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
     expect(notify.notifySuccess).toHaveBeenCalledWith(
       'Codex runs your threads now.',
