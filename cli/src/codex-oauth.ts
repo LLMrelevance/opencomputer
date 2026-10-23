@@ -25,6 +25,7 @@ export interface RelayedCodexCredential {
 
 interface TokenResponse {
   access_token: string;
+  id_token?: string;
   refresh_token?: string;
   token_type?: string;
   expires_in: number;
@@ -38,9 +39,17 @@ function base64url(bytes: Uint8Array): string {
     .replace(/=+$/, "");
 }
 
-export async function codexLogin(): Promise<{
+/**
+ * Browser sign-in to ChatGPT. `originator` is the client the token is issued
+ * for; it must match the Originator header the token is later used with (the
+ * computer's Codex harness sends `codex_cli_rs`, the serverless-agents proxy
+ * `opencode`).
+ */
+export async function codexLogin(originator = "opencode"): Promise<{
   credential: RelayedCodexCredential;
   accountHint: string;
+  /** The OpenID id_token; a computer's Codex auth.json needs it (work 082). */
+  idToken?: string;
 }> {
   const codeVerifier = base64url(randomBytes(32));
   const challengeBytes = await crypto.subtle.digest(
@@ -62,7 +71,7 @@ export async function codexLogin(): Promise<{
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("id_token_add_organizations", "true");
   authorizeUrl.searchParams.set("codex_cli_simplified_flow", "true");
-  authorizeUrl.searchParams.set("originator", "opencode");
+  authorizeUrl.searchParams.set("originator", originator);
 
   const authCode = await exchangeCodeOnCallback(
     authorizeUrl.toString(),
@@ -86,6 +95,7 @@ export async function codexLogin(): Promise<{
       expires_at: Date.now() + token.expires_in * 1_000,
     },
     accountHint: token.access_token.slice(0, 8),
+    idToken: typeof token.id_token === "string" ? token.id_token : undefined,
   };
 }
 
@@ -148,7 +158,9 @@ export function exchangeCodeOnCallback(
       finish(200, "Authorized. You can close this window.", { code });
     });
 
-    server.on("error", (error) => {
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE")
+        error.message = `Port ${String(port)} is in use: another Codex sign-in is holding it; close it and retry.`;
       reject(error);
     });
 

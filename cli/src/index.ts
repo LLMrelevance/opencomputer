@@ -94,11 +94,18 @@ Usage:
   opencomputer connection remove <alias|connection-id> [--service <name>]
   opencomputer github status [--project <id|slug>]
   opencomputer github connect [--new | --connection <id|account>] [--environment development|production] [--project <id|slug>] [--no-wait]
-  opencomputer model-access connect codex [--project <id|slug>]
-  opencomputer model-access connect openrouter [--api-key-stdin] [--project <id|slug>]
-  opencomputer model-access connect openai-compatible --base-url <url> [--api-key-stdin] [--project <id|slug>]
-  opencomputer model-access list
-  opencomputer model-access disconnect codex
+  opencomputer model connect claude --code <code> [--token-stdin]
+  opencomputer model connect codex --code <code>
+      connects your Claude or ChatGPT plan to your organization's computer with the
+      connect code from the dashboard (Computer → Agent); no login needed. claude runs
+      \`claude setup-token\` (or reads its token from stdin with --token-stdin); codex
+      opens a ChatGPT sign-in in your browser
+  opencomputer model connect codex [--project <id|slug>]
+  opencomputer model connect openrouter [--api-key-stdin] [--project <id|slug>]
+  opencomputer model connect openai-compatible --base-url <url> [--api-key-stdin] [--project <id|slug>]
+  opencomputer model list
+  opencomputer model disconnect codex
+      "models" and "model-access" are aliases of "model"
   opencomputer model-route set --project <id|slug> --connection <id> --model <model> [--agent <agent>] [--fallback fail|managed]
   opencomputer model-route list --project <id|slug>
   opencomputer model-route delete --project <id|slug> [--agent <agent>]
@@ -165,7 +172,7 @@ main().catch((error: unknown) => {
     process.stderr.write(`${JSON.stringify({ error: failure })}\n`);
   } else {
     process.stderr.write(
-      `opencomputer: ${failure.message}\nfix: ${failure.hint}\n`,
+      `opencomputer: ${failure.message}\n${failure.hint ? `fix: ${failure.hint}\n` : ""}`,
     );
   }
   process.exitCode = 1;

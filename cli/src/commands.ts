@@ -1,5 +1,6 @@
 import {
   OpenComputerClient,
+  type ComputerConnectRequest,
   type ManagedAgentEvent,
   type ManagedAgentLog,
   type ManagedGitHubInstallation,
@@ -22,6 +23,15 @@ import {
   UPGRADE_PLAN,
 } from "./billing.js";
 import { codexLogin } from "./codex-oauth.js";
+import {
+  codexAuthJson,
+  type ComputerConnectProvider,
+  connectSuccessMessage,
+  isClaudeSetupToken,
+  runClaudeSetupToken,
+  sendComputerConnect,
+  takeModelConnectArgs,
+} from "./computer-connect.js";
 import { resolveConfig } from "./config.js";
 import {
   publishProjectDeployment,
@@ -286,22 +296,130 @@ function printDatabaseResult(result: {
     );
 }
 
-function consumeModelAccessProvider(
-  args: string[],
-): "claude" | "codex" | "openrouter" | "openai-compatible" {
-  if (
-    args[0] === "claude" ||
-    args[0] === "codex" ||
-    args[0] === "openrouter" ||
-    args[0] === "openai-compatible"
-  ) {
-    return args.shift() as
-      "claude" | "codex" | "openrouter" | "openai-compatible";
-  }
+type ModelAccessProvider = "claude" | "codex" | "openrouter" | "openai-compatible";
+
+function isModelAccessProvider(value: string | undefined): value is ModelAccessProvider {
+  return (
+    value === "claude" ||
+    value === "codex" ||
+    value === "openrouter" ||
+    value === "openai-compatible"
+  );
+}
+
+function consumeModelAccessProvider(args: string[]): ModelAccessProvider {
+  if (isModelAccessProvider(args[0])) return args.shift() as ModelAccessProvider;
   return "codex";
 }
 
-async function readTemplateSecretValue(): Promise<string> {
+/**
+ * `model connect claude|codex --code <code>`: obtain a fresh subscription
+ * credential on this machine and hand it, with the dashboard's connect code,
+ * to the organization's computer. Never reads ~/.codex/auth.json or Claude
+ * Code's own login: a separate login keeps the person's own CLIs signed in.
+ */
+async function connectComputerSubscription(
+  provider: ComputerConnectProvider,
+  code: string,
+  tokenStdin: boolean,
+  client: OpenComputerClient,
+  globals: GlobalOptions,
+): Promise<void> {
+  // Progress and the provider's own UI go to stderr under --json (stdout
+  // carries only the JSON answer) or when stdout is not the terminal.
+  const display =
+    globals.json || !process.stdout.isTTY ? process.stderr : process.stdout;
+  let body: ComputerConnectRequest;
+  if (provider === "codex") {
+    display.write(
+      "Opening your browser to sign in to ChatGPT. Use the account that has your plan.\n",
+    );
+    // The computer's Codex harness uses the token as codex_cli_rs.
+    const { credential, idToken } = await codexLogin("codex_cli_rs");
+    body = {
+      code,
+      provider,
+      authJson: codexAuthJson({
+        idToken,
+        accessToken: credential.access_token,
+        refreshToken: credential.refresh_token,
+      }),
+    };
+  } else {
+    body = {
+      code,
+      provider,
+      token: tokenStdin
+        ? await claudeTokenFromStdin()
+        : await claudeTokenFromSetupToken(display),
+    };
+  }
+  const response = await sendComputerConnect(client, body);
+  if (globals.json) printJSON(response);
+  else process.stdout.write(connectSuccessMessage(provider));
+}
+
+async function claudeTokenFromStdin(): Promise<string> {
+  if (process.stdin.isTTY)
+    throw new CLIError(
+      "value_stdin_required",
+      "--token-stdin needs the token piped in.",
+      'Use `printf %s "$TOKEN" | npx -y @opencomputer/cli model connect claude --code <code> --token-stdin`, or drop --token-stdin to run `claude setup-token`.',
+    );
+  const token = (await readStdinValue(true)).trim();
+  if (!isClaudeSetupToken(token))
+    throw new CLIError(
+      "claude_token_invalid",
+      "Standard input is not a Claude setup token (sk-ant-oat01-…).",
+      "Pipe exactly the token `claude setup-token` printed.",
+    );
+  return token;
+}
+
+async function claudeTokenFromSetupToken(
+  display: NodeJS.WriteStream,
+): Promise<string> {
+  if (!process.stdin.isTTY)
+    throw new CLIError(
+      "interactive_terminal_required",
+      "`claude setup-token` needs an interactive terminal.",
+      "Run this in a terminal, or run `claude setup-token` yourself and pipe its token in with --token-stdin.",
+    );
+  display.write(
+    "Running `claude setup-token`. Sign in with the Claude account that has your plan;\n" +
+      "the token it creates goes to your computer and is not saved on this machine.\n\n",
+  );
+  const result = await runClaudeSetupToken(display);
+  if (result.token) {
+    display.write("\nRead the token. Connecting it to your computer…\n");
+    return result.token;
+  }
+  if (result.signal || (result.exitCode !== null && result.exitCode !== 0))
+    throw new CLIError(
+      "claude_setup_token_failed",
+      "`claude setup-token` did not finish.",
+      "Run the command again; the connect code still works until it is used or expires.",
+    );
+  // Windows (no PTY recorder), or output this CLI could not read: ask.
+  if (result.pty)
+    display.write("\nCould not read the token from `claude setup-token`'s output.\n");
+  const pasted = (
+    await readTemplateSecretValue(
+      "Paste the token `claude setup-token` printed (input hidden): ",
+    )
+  ).replace(/\s+/g, "");
+  if (!isClaudeSetupToken(pasted))
+    throw new CLIError(
+      "claude_token_invalid",
+      "That is not a Claude setup token (sk-ant-oat01-…).",
+      "Run the command again and paste the whole token, or pipe it in with --token-stdin.",
+    );
+  return pasted;
+}
+
+async function readTemplateSecretValue(
+  prompt = "Secret value (hidden): ",
+): Promise<string> {
   if (!process.stdin.isTTY) {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
@@ -313,7 +431,7 @@ async function readTemplateSecretValue(): Promise<string> {
     if (!value) throw new Error("Secret value was empty");
     return value;
   }
-  process.stderr.write("Secret value (hidden): ");
+  process.stderr.write(prompt);
   process.stdin.setRawMode(true);
   process.stdin.resume();
   return new Promise<string>((resolve, reject) => {
@@ -2102,19 +2220,39 @@ export async function runCommand(
     );
   }
 
-  if (command === "model-access") {
+  // `model` is the noun; `models` and `model-access` (the original name) are
+  // aliases with identical behaviour.
+  if (command === "model" || command === "models" || command === "model-access") {
     const action = args.shift();
     if (action === "connect") {
+      const namedProvider = isModelAccessProvider(args[0]);
+      const provider = consumeModelAccessProvider(args);
+      if (provider === "claude" || provider === "codex") {
+        // A connect code from the dashboard: connect the subscription to the
+        // organization's computer (work 082). No OpenComputer login needed.
+        const connect = takeModelConnectArgs(provider, args, {
+          option: (name) => option(args, name),
+          flag: (name) => flag(args, name),
+        });
+        if (connect.code !== undefined) {
+          if (!namedProvider)
+            throw new Error(
+              "Usage: opencomputer model connect claude|codex --code <code>",
+            );
+          await connectComputerSubscription(
+            provider,
+            connect.code,
+            connect.tokenStdin,
+            client,
+            globals,
+          );
+          return;
+        }
+      }
       // Local Codex-account OAuth: open a localhost callback
       // server, complete the flow in the user's browser, then relay the
       // credential to OpenComputer as a connected account. Nothing secret
       // is echoed or persisted locally.
-      const provider = consumeModelAccessProvider(args);
-      if (provider === "claude") {
-        throw new Error(
-          "Claude account BYOK is not supported. Connect a Codex account instead.",
-        );
-      }
       if (provider === "openrouter" || provider === "openai-compatible") {
         const projectReference = option(args, "--project");
         const baseUrl = option(args, "--base-url");

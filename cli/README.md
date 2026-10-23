@@ -44,6 +44,32 @@ opencomputer run hello-world "Say hello"
 The CLI calls the public OpenComputer API and uses OpenComputer authentication.
 It does not require a separate backend account, key, or CLI.
 
+## Connect a Claude or ChatGPT plan to your computer
+
+The dashboard (Computer → Agent) shows one command per plan, with a connect
+code (like `oc_7KQM2XP94HTRWN3F`) that works once and lasts 10 minutes. Run it anywhere; it needs no
+OpenComputer login:
+
+```bash
+npx -y @opencomputer/cli model connect claude --code <code>
+npx -y @opencomputer/cli model connect codex --code <code>
+```
+
+`claude` runs `claude setup-token` (through `npx -y @anthropic-ai/claude-code`
+when Claude Code is not installed): sign in, and the CLI reads the token it
+prints and sends it with the code. On macOS and Linux the TUI runs under
+`script` so the CLI can read what it draws; elsewhere you paste the token when
+asked. To supply the token yourself, pipe it in:
+`printf %s "$TOKEN" | npx -y @opencomputer/cli model connect claude --code <code> --token-stdin`.
+
+`codex` opens a ChatGPT sign-in in your browser. Each connect is its own
+sign-in; it never reads or reuses `~/.codex/auth.json`, so your own Codex CLI
+stays signed in.
+
+Neither command prints or stores the credential. A rejected credential leaves
+the code usable; run the command again. `--json` prints the API's answer.
+`model` also answers to `models` and `model-access`.
+
 ## Agent webhooks
 
 Create an environment-scoped webhook that starts a fresh session for the
