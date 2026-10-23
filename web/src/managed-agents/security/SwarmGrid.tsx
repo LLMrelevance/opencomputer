@@ -95,7 +95,7 @@ export function SwarmGrid({
         ))}
       </div>
 
-      {report ? <RunReportCard report={report} /> : null}
+      {report ? <RunReportCard report={report} projectId={projectId} /> : null}
     </div>
   )
 }
@@ -104,7 +104,15 @@ export function SwarmGrid({
 // artifact — the actionable verdicts rolled up and ranked. Tier 1 computes it
 // from the cell findings the grid already holds; a later reducer agent can
 // replace this with a written narrative over the same persisted document.
-export function RunReportCard({ report }: { report: SwarmRunReport }) {
+export function RunReportCard({
+  report,
+  projectId,
+}: {
+  report: SwarmRunReport
+  // When set, each row links to its cell's session — the way back into what the
+  // agent actually did, which matters most for a failed cell.
+  projectId?: string
+}) {
   const actionable = report.cells.filter(
     (c) => c.disposition !== 'not-exposed',
   )
@@ -133,7 +141,11 @@ export function RunReportCard({ report }: { report: SwarmRunReport }) {
       ) : (
         <ul className="divide-y">
           {actionable.map((c) => (
-            <ReportRow key={`${c.repository}__${c.cveId}`} cell={c} />
+            <ReportRow
+              key={`${c.repository}__${c.cveId}`}
+              cell={c}
+              projectId={projectId}
+            />
           ))}
         </ul>
       )}
@@ -141,7 +153,13 @@ export function RunReportCard({ report }: { report: SwarmRunReport }) {
   )
 }
 
-function ReportRow({ cell }: { cell: ReportCell }) {
+function ReportRow({
+  cell,
+  projectId,
+}: {
+  cell: ReportCell
+  projectId?: string
+}) {
   const meta =
     cell.disposition === 'failed'
       ? { label: 'Failed', className: 'text-muted-foreground border-border' }
@@ -165,6 +183,15 @@ function ReportRow({ cell }: { cell: ReportCell }) {
           <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-5">
             {cell.reasoning}
           </p>
+        ) : null}
+        {projectId && cell.sessionId ? (
+          <Link
+            to={`/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(cell.sessionId)}`}
+            className="text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1 text-xs hover:underline"
+          >
+            <ArrowUpRight className="size-3" />
+            Open session
+          </Link>
         ) : null}
       </div>
       {cell.pullRequest ? (

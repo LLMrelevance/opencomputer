@@ -101,6 +101,42 @@ export type SwarmRunData = {
   report: SwarmRunReport | null
 }
 
+function tallyCounts(states: readonly CellState[]): SwarmCounts {
+  return states.reduce<SwarmCounts>(
+    (acc, state) => {
+      if (state.phase === 'done' && state.finding)
+        acc[state.finding.disposition] += 1
+      else if (state.phase === 'failed') acc.failed += 1
+      else acc.pending += 1
+      return acc
+    },
+    { exposed: 0, 'not-exposed': 0, 'needs-review': 0, failed: 0, pending: 0 },
+  )
+}
+
+// Rebuild the cell grid/map straight from a persisted report, so a settled run
+// renders without polling any session. Every cell is already resolved: a verdict
+// is 'done', a verdict-less cell is 'failed'.
+export function statesFromReport(report: SwarmRunReport): {
+  states: CellState[]
+  counts: SwarmCounts
+} {
+  const states: CellState[] = report.cells.map((c) => ({
+    cell: { repository: c.repository, cveId: c.cveId },
+    sessionId: c.sessionId ?? '',
+    finding:
+      c.disposition === 'failed'
+        ? null
+        : {
+            disposition: c.disposition,
+            ...(c.reasoning ? { reasoning: c.reasoning } : {}),
+            ...(c.pullRequest ? { pullRequest: c.pullRequest } : {}),
+          },
+    phase: c.disposition === 'failed' ? 'failed' : 'done',
+  }))
+  return { states, counts: tallyCounts(states) }
+}
+
 // Poll one run's sessions (for liveness) and each cell's findings document (for
 // the verdict) until every cell settles, then roll the verdicts into the run
 // report and persist it once. Both the grid and the map view consume this, so
@@ -194,16 +230,7 @@ export function useSwarmRun({
     phase: computeCellPhase(s.progress, s.finding, confirmed),
   }))
 
-  const counts: SwarmCounts = states.reduce(
-    (acc, state) => {
-      if (state.phase === 'done' && state.finding)
-        acc[state.finding.disposition] += 1
-      else if (state.phase === 'failed') acc.failed += 1
-      else acc.pending += 1
-      return acc
-    },
-    { exposed: 0, 'not-exposed': 0, 'needs-review': 0, failed: 0, pending: 0 },
-  )
+  const counts = tallyCounts(states)
   const settled = confirmed
 
   useEffect(() => {
@@ -227,6 +254,7 @@ export function useSwarmRun({
             repository: s.cell.repository,
             cveId: s.cell.cveId,
             disposition,
+            sessionId: s.sessionId,
             ...(s.finding?.reasoning ? { reasoning: s.finding.reasoning } : {}),
             ...(s.finding?.pullRequest
               ? { pullRequest: s.finding.pullRequest }
