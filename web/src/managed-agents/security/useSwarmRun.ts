@@ -34,6 +34,7 @@ export type CellState = {
   sessionId: string
   progress?: SessionProgress
   finding: CellFinding | null
+  phase: CellPhase
 }
 
 export type CellPhase = 'done' | 'failed' | 'running' | 'queued'
@@ -54,14 +55,43 @@ function sessionFailed(progress: SessionProgress | undefined): boolean {
   return turn === 'failed' || turn === 'errored' || turn === 'cancelled'
 }
 
-// A cell is settled — we will never poll it again — when its verdict is saved
-// or it failed, i.e. its phase is 'done' or 'failed'.
-export function cellPhase(state: CellState): CellPhase {
-  if (state.finding) return 'done'
-  if (sessionFailed(state.progress)) return 'failed'
-  const status = state.progress?.status
+// A single-turn cell's turn is `completed` the moment the agent finishes, even
+// when it wrote no verdict. The session then sits `idle`, so without this the
+// cell would read as "running" forever and the run would never settle.
+function turnCompleted(progress: SessionProgress | undefined): boolean {
+  return progress?.lastTurnStatus === 'completed'
+}
+
+// A cell's session is terminal when it will do no more work: it failed, or its
+// turn completed (whether or not it left a finding).
+function cellTerminal(
+  progress: SessionProgress | undefined,
+  finding: CellFinding | null,
+): boolean {
+  return finding != null || sessionFailed(progress) || turnCompleted(progress)
+}
+
+// `confirmed` means we have re-read findings after the whole run went terminal,
+// so a completed cell with no finding really produced no verdict rather than us
+// racing the write. Until then we keep such a cell "running".
+function computeCellPhase(
+  progress: SessionProgress | undefined,
+  finding: CellFinding | null,
+  confirmed: boolean,
+): CellPhase {
+  if (finding) return 'done'
+  if (sessionFailed(progress)) return 'failed'
+  if (turnCompleted(progress)) return confirmed ? 'failed' : 'running'
+  const status = progress?.status
   if (status === 'running' || status === 'idle') return 'running'
   return 'queued'
+}
+
+// A cell is settled — we will never poll it again — when its phase is 'done' or
+// 'failed'. The phase is computed in the hook (it needs the run-wide confirm) and
+// carried on the state, so views just read it.
+export function cellPhase(state: CellState): CellPhase {
+  return state.phase
 }
 
 export type SwarmRunData = {
@@ -88,9 +118,12 @@ export function useSwarmRun({
   target?: string
   model?: string
 }): SwarmRunData {
-  // Both polls stop the moment every cell has settled. We recompute that each
-  // render and park it in a ref the two refetchInterval closures read, so
-  // neither needs the other's query data.
+  // The sessions poll stops once every cell is terminal (sessions won't change
+  // after that); the findings poll runs one cycle longer, until the run is
+  // settled, so a verdict written just as a turn completed isn't lost to poll
+  // lag. Both flags are recomputed each render and parked in refs the
+  // refetchInterval closures read.
+  const sessionsDoneRef = useRef(false)
   const allSettledRef = useRef(false)
 
   const sessions = useQuery({
@@ -107,7 +140,7 @@ export function useSwarmRun({
       )
       return Object.fromEntries(entries)
     },
-    refetchInterval: () => (allSettledRef.current ? false : 3_000),
+    refetchInterval: () => (sessionsDoneRef.current ? false : 3_000),
   })
 
   const findings = useQuery({
@@ -137,26 +170,45 @@ export function useSwarmRun({
     [sessions.data],
   )
 
-  const states: CellState[] = cells.map(({ cell, sessionId }) => ({
+  const base = cells.map(({ cell, sessionId }) => ({
     cell,
     sessionId,
     progress: progressBySession[sessionId],
     finding: findings.data?.[cellDocumentId(runId, cell)] ?? null,
   }))
 
+  // When every cell's session is terminal we freeze the sessions poll (below),
+  // so `sessions.dataUpdatedAt` stops advancing at that observation. The run is
+  // only `confirmed` once a findings fetch lands at/after that frozen snapshot —
+  // i.e. we re-read findings after the last turn completed. That guards against
+  // reading a finding-less cell as a failure when its verdict was written just
+  // before its turn completed. Both timestamps are plain query values, read in
+  // render; the stop flags are the only refs, written in effects.
+  const allTerminal =
+    base.length > 0 && base.every((s) => cellTerminal(s.progress, s.finding))
+  const confirmed =
+    allTerminal && findings.dataUpdatedAt >= sessions.dataUpdatedAt
+
+  const states: CellState[] = base.map((s) => ({
+    ...s,
+    phase: computeCellPhase(s.progress, s.finding, confirmed),
+  }))
+
   const counts: SwarmCounts = states.reduce(
     (acc, state) => {
-      const phase = cellPhase(state)
-      if (phase === 'done' && state.finding)
+      if (state.phase === 'done' && state.finding)
         acc[state.finding.disposition] += 1
-      else if (phase === 'failed') acc.failed += 1
+      else if (state.phase === 'failed') acc.failed += 1
       else acc.pending += 1
       return acc
     },
     { exposed: 0, 'not-exposed': 0, 'needs-review': 0, failed: 0, pending: 0 },
   )
-  const settled = counts.pending === 0
+  const settled = confirmed
 
+  useEffect(() => {
+    sessionsDoneRef.current = allTerminal
+  }, [allTerminal])
   useEffect(() => {
     allSettledRef.current = settled
   }, [settled])
