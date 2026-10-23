@@ -333,13 +333,17 @@ function AgentOption({
 }
 
 // The command's code works for ten minutes. Re-read the status quickly for a
-// while after the command is shown or copied (the person may sign in in a
-// window beside this one), then slower, then not at all: a person who comes
-// back from the terminal or the browser refocuses the tab, which re-reads it.
+// while after the person last acted (the command shown, copied or renewed:
+// they may sign in in a window beside this one), then slower, then not at
+// all: a person who comes back from the terminal or the browser refocuses
+// the tab, which re-reads it. An expired code is replaced on its own for
+// half an hour after they last acted; after that the command reads expired
+// until they ask for another, so a tab left open mints and polls nothing.
 const WAIT_FAST_MS = 3_000
 const WAIT_SLOW_MS = 10_000
 const WAIT_FAST_FOR_MS = 2 * 60_000
 const WAIT_FOR_MS = 10 * 60_000
+const CODE_AUTO_RENEW_FOR_MS = 30 * 60_000
 const computerQueryHash = hashKey(computerQueryKey)
 // A stored code is reused only with this long left to run it.
 const CODE_REUSE_MIN_MS = 60_000
@@ -348,15 +352,30 @@ function connectCodeStorageKey(scope: string) {
   return `opencomputer.computer.connect-code:${scope}`
 }
 
-function storedConnectCode(key: string): ComputerConnectCode | null {
+/**
+ * The stored code, unless it is nearly expired or was likely spent: a
+ * subscription set after it was minted (the command ran while no tab was
+ * watching, so none forgot it) means it was used.
+ */
+function storedConnectCode(
+  key: string,
+  subscriptionSetAt: string | undefined,
+): ComputerConnectCode | null {
   try {
-    const raw = window.sessionStorage.getItem(key)
+    const raw = window.localStorage.getItem(key)
     if (!raw) return null
-    const stored = JSON.parse(raw) as Partial<ComputerConnectCode>
+    const stored = JSON.parse(raw) as Partial<
+      ComputerConnectCode & { mintedAt: number }
+    >
     if (
       typeof stored.code !== 'string' ||
       typeof stored.expiresAt !== 'string' ||
       new Date(stored.expiresAt).getTime() - Date.now() < CODE_REUSE_MIN_MS
+    )
+      return null
+    if (
+      subscriptionSetAt &&
+      new Date(subscriptionSetAt).getTime() >= (stored.mintedAt ?? 0)
     )
       return null
     return { code: stored.code, expiresAt: stored.expiresAt }
@@ -367,14 +386,14 @@ function storedConnectCode(key: string): ComputerConnectCode | null {
 
 /**
  * This person's connect code, one for both cards (the command names the
- * provider). Minting replaces the last code, so a reload must not mint a new
- * one under a command the person is already running: the code is kept in
- * this tab's session storage until it is nearly expired. A code is re-minted
- * once it expires, but only while the tab is visible (react-query skips
- * background intervals and catches up on focus), so a forgotten tab does
- * not mint forever.
+ * provider). Minting replaces the last code, so neither a reload nor a
+ * second tab may mint a new one under a command the person is already
+ * running: the code is kept in local storage until it is nearly expired.
+ * A code is re-minted once it expires, only while the tab is visible
+ * (react-query skips background intervals and catches up on focus) and
+ * only until `renewUntil`.
  */
-function useConnectCode() {
+function useConnectCode(renewUntil: number) {
   const auth = useContext(AuthContext)
   const key = connectCodeStorageKey(
     `${auth?.user?.orgId ?? ''}:${auth?.user?.id ?? ''}`,
@@ -383,11 +402,16 @@ function useConnectCode() {
   const query = useQuery({
     queryKey: [...computerConnectCodeQueryKey, key],
     queryFn: async () => {
-      const stored = storedConnectCode(key)
+      const status = queryClient.getQueryData<ComputerStatus>(computerQueryKey)
+      const stored = storedConnectCode(key, status?.agent?.subscription?.setAt)
       if (stored) return stored
+      const mintedAt = Date.now()
       const minted = await createConnectCode()
       try {
-        window.sessionStorage.setItem(key, JSON.stringify(minted))
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({ ...minted, mintedAt }),
+        )
       } catch {
         // Storage off: a reload mints a new code, nothing worse.
       }
@@ -396,7 +420,9 @@ function useConnectCode() {
     retry: false,
     staleTime: (q) => msUntil(q.state.data?.expiresAt),
     refetchInterval: (q) =>
-      q.state.data ? Math.max(1_000, msUntil(q.state.data.expiresAt)) : false,
+      q.state.data && Date.now() < renewUntil
+        ? Math.max(1_000, msUntil(q.state.data.expiresAt))
+        : false,
   })
   const renew = useCallback(() => {
     forgetStoredCode(key)
@@ -419,7 +445,7 @@ function useConnectCode() {
 
 function forgetStoredCode(key: string) {
   try {
-    window.sessionStorage.removeItem(key)
+    window.localStorage.removeItem(key)
   } catch {
     // Nothing stored.
   }
@@ -510,7 +536,18 @@ function CommandConnect({
   replacing: boolean
   onDone?: () => void
 }) {
-  const { query: code, renew, forget } = useConnectCode()
+  // The last sign of the person acting: the command shown, copied or
+  // renewed. Waiting and renewing are paced from it.
+  const [actedAt, setActedAt] = useState(() => Date.now())
+  const {
+    query: code,
+    renew: renewCode,
+    forget,
+  } = useConnectCode(actedAt + CODE_AUTO_RENEW_FOR_MS)
+  const renew = () => {
+    setActedAt(Date.now())
+    renewCode()
+  }
   const queryClient = useQueryClient()
   // What was there when the command was shown: only a change counts.
   const [before] = useState(
@@ -518,15 +555,11 @@ function CommandConnect({
       queryClient.getQueryData<ComputerStatus>(computerQueryKey)?.agent
         ?.subscription?.setAt ?? null,
   )
-  // The last sign of the person acting: the command shown (a new code) or
-  // copied. The wait is quick right after it.
-  const [copiedAt, setCopiedAt] = useState(() => Date.now())
-  const since = Math.max(copiedAt, code.dataUpdatedAt)
   const status = useQuery({
     queryKey: computerQueryKey,
     queryFn: getComputer,
     refetchInterval: () => {
-      const waited = Date.now() - since
+      const waited = Date.now() - actedAt
       if (waited >= WAIT_FOR_MS) return false
       return waited < WAIT_FAST_FOR_MS ? WAIT_FAST_MS : WAIT_SLOW_MS
     },
@@ -535,6 +568,19 @@ function CommandConnect({
   const connected =
     subscription?.provider === provider && subscription.setAt !== before
   const codeValue = code.data?.code
+  // The code this command shows ran out (no auto-renew any more): say so
+  // rather than keep a dead command and a spinner up.
+  const [expiredCode, setExpiredCode] = useState<string | null>(null)
+  const expiresAt = code.data?.expiresAt
+  useEffect(() => {
+    if (!codeValue) return
+    const timer = window.setTimeout(
+      () => setExpiredCode(codeValue),
+      msUntil(expiresAt),
+    )
+    return () => window.clearTimeout(timer)
+  }, [codeValue, expiresAt])
+  const expired = Boolean(codeValue) && expiredCode === codeValue
   // Announced from the cache, as the status lands: in setup the step moves
   // on (and this unmounts) in the very render that brings the subscription.
   const announced = useRef(false)
@@ -582,7 +628,7 @@ function CommandConnect({
       {codeValue ? (
         <CopyRow
           value={connectCommand(provider, codeValue)}
-          onCopy={() => setCopiedAt(Date.now())}
+          onCopy={() => setActedAt(Date.now())}
         />
       ) : (
         <div
@@ -596,6 +642,8 @@ function CommandConnect({
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         {connected ? (
           <span>{PROVIDER_NAME[provider]} is connected.</span>
+        ) : expired ? (
+          <span aria-live="polite">This command expired.</span>
         ) : (
           <span className="flex items-center gap-1.5" aria-live="polite">
             <Loader2 className="size-3 animate-spin" aria-hidden />
@@ -604,7 +652,7 @@ function CommandConnect({
               : 'Waiting for you to sign in…'}
           </span>
         )}
-        <span>Works once, for 10 minutes.</span>
+        {!expired && <span>Works once, for 10 minutes.</span>}
         <Button
           variant="link"
           size="xs"

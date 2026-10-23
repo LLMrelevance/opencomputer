@@ -12,6 +12,8 @@ export interface ManagedAgentsEnv {
   OPENCOMPUTER_DB?: D1Database;
   AUTUMN_SECRET_KEY?: string;
   AUTUMN_BASE_URL?: string;
+  /** Per-IP cap on the public CLI connect route (work 082). */
+  COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
 }
 
 export interface ManagedAgentsCaller {
@@ -3232,7 +3234,9 @@ export async function handleComputerSlackWebhook(
 
 // Work 082: the backend bounds the body the same way (CODEX_BODY_MAX_BYTES:
 // twice the 64 KiB auth.json cap, plus room for the code and provider).
-export const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
+export // Blue verifies the subscription with its provider before answering.
+const COMPUTER_AGENT_CONNECT_TIMEOUT_MS = 30_000;
+const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
 // `occ_<base64url(accountId)>.<base64url nonce>`; anything else is refused here
 // so garbage never reaches the backend.
 const CONNECT_CODE = /^occ_[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{16,200}$/;
@@ -3287,36 +3291,86 @@ export async function handleComputerAgentConnect(
   request: Request,
   env: ManagedAgentsEnv,
 ): Promise<Response> {
+  const startedAt = Date.now();
+  const finish = (response: Response, result: string): Response => {
+    // One line per attempt: the funnel from command run to connected, and
+    // what the edge refused before blue saw it.
+    console.log(
+      JSON.stringify({
+        event: "computer_agent_connect",
+        result,
+        http_status: response.status,
+        duration_ms: Date.now() - startedAt,
+      }),
+    );
+    return response;
+  };
   if (request.method !== "POST") {
-    return new Response("Method not allowed", {
-      status: 405,
-      headers: { allow: "POST" },
-    });
+    return finish(
+      new Response("Method not allowed", {
+        status: 405,
+        headers: { allow: "POST" },
+      }),
+      "method",
+    );
+  }
+  // Codes carry 128 bits, so this caps load on blue rather than guessing.
+  // Without the binding (tests, a misconfigured env) the route stays open:
+  // blue still refuses anything but a live code.
+  if (env.COMPUTER_CONNECT_RATE_LIMIT) {
+    const ip = request.headers.get("CF-Connecting-IP")?.trim();
+    const key = ip && ip.length <= 64 ? ip : "unknown";
+    const allowed = await env.COMPUTER_CONNECT_RATE_LIMIT.limit({ key }).then(
+      (r) => r.success,
+      () => true,
+    );
+    if (!allowed) {
+      return finish(
+        connectProblem(
+          429,
+          "rate_limited",
+          "Too many connect attempts. Wait a minute and try again.",
+        ),
+        "rate_limited",
+      );
+    }
   }
   const contentType = request.headers.get("content-type") ?? "";
   if (!/^application\/json\s*(;|$)/i.test(contentType)) {
-    return connectProblem(
-      415,
-      "invalid_request",
-      "Send the connect request as application/json.",
+    return finish(
+      connectProblem(
+        415,
+        "invalid_request",
+        "Send the connect request as application/json.",
+      ),
+      "content_type",
     );
   }
   const bytes = await boundedBody(request, COMPUTER_AGENT_CONNECT_MAX_BYTES);
   if (!bytes) {
-    return connectProblem(413, "invalid_request", "The request is too large.");
+    return finish(
+      connectProblem(413, "invalid_request", "The request is too large."),
+      "too_large",
+    );
   }
   let code: unknown;
   try {
     code = (JSON.parse(new TextDecoder().decode(bytes)) as { code?: unknown })
       ?.code;
   } catch {
-    return connectProblem(400, "invalid_request", "The request is not JSON.");
+    return finish(
+      connectProblem(400, "invalid_request", "The request is not JSON."),
+      "not_json",
+    );
   }
   if (typeof code !== "string" || !CONNECT_CODE.test(code)) {
-    return connectProblem(
-      401,
-      "computer_connect_code_invalid",
-      "That connect code is not valid. Get a new one from the dashboard.",
+    return finish(
+      connectProblem(
+        401,
+        "computer_connect_code_invalid",
+        "That connect code is not valid. Get a new one from the dashboard.",
+      ),
+      "malformed_code",
     );
   }
   const base = (
@@ -3324,10 +3378,13 @@ export async function handleComputerAgentConnect(
   ).replace(/\/+$/, "");
   const target = new URL(`${base}/v1/computer/agent/connect`);
   if (target.protocol !== "https:" && target.hostname !== "localhost") {
-    return connectProblem(
-      503,
-      "computer_not_configured",
-      "Connecting a subscription isn't available yet. Try again shortly.",
+    return finish(
+      connectProblem(
+        503,
+        "computer_not_configured",
+        "Connecting a subscription isn't available yet. Try again shortly.",
+      ),
+      "not_configured",
     );
   }
   try {
@@ -3336,16 +3393,23 @@ export async function handleComputerAgentConnect(
       headers: { "content-type": "application/json" },
       body: bytes,
       redirect: "manual",
+      signal: AbortSignal.timeout(COMPUTER_AGENT_CONNECT_TIMEOUT_MS),
     });
     const headers = new Headers({ "cache-control": "no-store" });
     const upstreamType = upstream.headers.get("content-type");
     if (upstreamType) headers.set("content-type", upstreamType);
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return finish(
+      new Response(upstream.body, { status: upstream.status, headers }),
+      upstream.ok ? "connected" : "refused_upstream",
+    );
   } catch {
-    return connectProblem(
-      502,
-      "computer_unavailable",
-      "Connecting a subscription isn't available right now. Try again shortly.",
+    return finish(
+      connectProblem(
+        502,
+        "computer_unavailable",
+        "Connecting a subscription isn't available right now. Try again shortly.",
+      ),
+      "upstream_unavailable",
     );
   }
 }

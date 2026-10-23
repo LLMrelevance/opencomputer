@@ -770,6 +770,25 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     );
     expect(resp.status).toBe(502);
   });
+
+  it("rate-limits per caller IP before reading the body or calling blue", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const limit = vi.fn(async () => ({ success: false }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+        body: JSON.stringify({ code, provider: "claude", token: "t" }),
+      }),
+      { ...target, COMPUTER_CONNECT_RATE_LIMIT: { limit } } as unknown as Env,
+      ctx,
+    );
+    expect(resp.status).toBe(429);
+    expect(await resp.json()).toMatchObject({ error: { code: "rate_limited" } });
+    expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("/internal/computer-keys", () => {

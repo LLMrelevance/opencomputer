@@ -121,7 +121,7 @@ describe('choosing the coding agent', () => {
       code: CODE,
       expiresAt: inTenMinutes(),
     })
-    window.sessionStorage.clear()
+    window.localStorage.clear()
   })
 
   afterEach(() => {
@@ -450,7 +450,7 @@ describe('choosing the coding agent', () => {
       via: 'command',
     })
     // A used code is never offered again.
-    expect(window.sessionStorage.length).toBe(0)
+    expect(window.localStorage.length).toBe(0)
   })
 
   it('waits quickly for the sign-in while the tab is in view', async () => {
@@ -480,6 +480,68 @@ describe('choosing the coding agent', () => {
     expect(computerApi.getComputer.mock.calls.length).toBeGreaterThan(reads)
   })
 
+  it('stops renewing and waiting in a tab left open, until asked again', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+      ],
+    })
+    let minted = 0
+    computerApi.createConnectCode.mockImplementation(() =>
+      Promise.resolve({
+        code: `${CODE}${minted++}`,
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }),
+    )
+    computerApi.getComputer.mockResolvedValue({ ...empty, agent: fresh })
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/computer']}>
+            <Routes>
+              <Route path="computer" element={<ComputerPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toBeDefined()
+    // An hour with nobody acting: renewed for half an hour, then left.
+    for (let i = 0; i < 60; i++)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+    expect(computerApi.createConnectCode.mock.calls.length).toBeLessThanOrEqual(
+      4,
+    )
+    expect(text()).toContain('This command expired.')
+    expect(text()).not.toContain('Waiting for you to sign in')
+    const reads = computerApi.getComputer.mock.calls.length
+    const mints = computerApi.createConnectCode.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30 * 60_000)
+    })
+    // Only the page's own slow poll (every 30 s) is left.
+    expect(
+      computerApi.getComputer.mock.calls.length - reads,
+    ).toBeLessThanOrEqual(61)
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints)
+    // Asked again: a fresh command, and the wait is back.
+    act(() => button('Get a new command')!.click())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints + 1)
+    expect(text()).toContain('Waiting for you to sign in')
+  })
+
   it('keeps the command across a reload, and gives a new one on request', async () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
     await settle(() => command() !== undefined, 'command')
@@ -499,6 +561,29 @@ describe('choosing the coding agent', () => {
     act(() => button('Get a new command')!.click())
     await settle(() => command()?.includes(CODE_2) === true, 'new command')
     expect(computerApi.createConnectCode).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops a stored code a sign-in already used while no tab watched', async () => {
+    window.localStorage.setItem(
+      'opencomputer.computer.connect-code::',
+      JSON.stringify({
+        code: 'occ_c3BlbnQ.spent-code-0000000000',
+        expiresAt: inTenMinutes(),
+        mintedAt: Date.parse('2026-10-22T09:59:00Z'),
+      }),
+    )
+    await show(
+      {
+        ...empty,
+        agent: { ...fresh, choice: 'claude', subscription: subscription('ok') },
+      },
+      'Add OpenComputer to Slack',
+    )
+    act(() => button('Change')!.click())
+    await settle(() => command() !== undefined, 'command')
+    expect(command()).toContain(CODE)
+    expect(command()).not.toContain('spent')
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
   })
 
   it('mints a new command once the code expires', async () => {

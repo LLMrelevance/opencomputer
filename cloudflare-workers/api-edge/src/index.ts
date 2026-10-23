@@ -108,6 +108,8 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv {
   // several times after a single start request.
   CLI_AUTH_START_RATE_LIMIT: RateLimit;
   CLI_AUTH_EXCHANGE_RATE_LIMIT: RateLimit;
+  // Public CLI connect (work 082), per caller IP ahead of blue.
+  COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
   // Dedicated HMAC secret for the Sessions API's minimal Agent Hook exposure
   // alert. It is intentionally not shared with other internal routes.
   OC_SECURITY_NOTIFICATION_SECRET?: string;
