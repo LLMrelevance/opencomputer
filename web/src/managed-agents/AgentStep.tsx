@@ -1192,7 +1192,7 @@ function ProviderRow({
               <Button
                 size="sm"
                 variant="ghost"
-                className="text-destructive"
+                className="text-muted-foreground"
                 onClick={() => setConfirmDisconnect(true)}
               >
                 Disconnect
@@ -1219,7 +1219,6 @@ function ProviderRow({
             : `${name} stays off until you connect it again.`
         }
         confirmLabel="Disconnect"
-        destructive
         pending={disconnect.isPending}
         onConfirm={() => disconnect.mutate(provider)}
       />
