@@ -25,6 +25,7 @@ export interface RelayedCodexCredential {
 
 interface TokenResponse {
   access_token: string;
+  id_token?: string;
   refresh_token?: string;
   token_type?: string;
   expires_in: number;
@@ -41,6 +42,8 @@ function base64url(bytes: Uint8Array): string {
 export async function codexLogin(): Promise<{
   credential: RelayedCodexCredential;
   accountHint: string;
+  /** The OpenID id_token; a computer's Codex auth.json needs it (work 082). */
+  idToken?: string;
 }> {
   const codeVerifier = base64url(randomBytes(32));
   const challengeBytes = await crypto.subtle.digest(
@@ -86,6 +89,7 @@ export async function codexLogin(): Promise<{
       expires_at: Date.now() + token.expires_in * 1_000,
     },
     accountHint: token.access_token.slice(0, 8),
+    idToken: typeof token.id_token === "string" ? token.id_token : undefined,
   };
 }
 

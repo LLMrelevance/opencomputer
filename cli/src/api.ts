@@ -482,9 +482,29 @@ function errorMessage(body: unknown, status: number): string {
       const message = (record.error as Record<string, unknown>).message;
       if (typeof message === "string") return message;
     }
+    if (typeof record.detail === "string") return record.detail;
     if (typeof record.message === "string") return record.message;
+    if (typeof record.title === "string") return record.title;
   }
   return `OpenComputer request failed (${status})`;
+}
+
+/** `POST /api/managed-agents/computer/agent/connect`: the connect code is the only credential. */
+export interface ComputerConnectRequest {
+  code: string;
+  provider: "claude" | "codex";
+  /** Claude: the `claude setup-token` token. */
+  token?: string;
+  /** Codex: the Codex CLI auth.json object. */
+  authJson?: {
+    auth_mode: "chatgpt";
+    tokens: { id_token: string; access_token: string; refresh_token: string };
+  };
+}
+
+export interface ComputerConnectResponse {
+  provider: "claude" | "codex";
+  connected: boolean;
 }
 
 export class OpenComputerClient {
@@ -620,6 +640,15 @@ export class OpenComputerClient {
 
   whoami() {
     return this.request<OpenComputerIdentity>("/api/whoami");
+  }
+
+  /** Unauthenticated on purpose: no API key is sent even when one is configured. */
+  connectComputerAgent(body: ComputerConnectRequest) {
+    return this.request<ComputerConnectResponse>(
+      "/api/managed-agents/computer/agent/connect",
+      { method: "POST", body: JSON.stringify(body) },
+      false,
+    );
   }
 
   revokeCredential() {
