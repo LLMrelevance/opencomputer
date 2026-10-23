@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
+  ChevronDown,
   FolderGit2,
   Loader2,
   Radar,
@@ -29,9 +30,11 @@ import {
   getManagedGitHubConnections,
   getManagedTemplateInstallation,
   inspectManagedTemplate,
+  listManagedDeploymentSourceRepositories,
   putAgentRuntimeVariable,
   replaceManagedMemoryDocument,
   startManagedAgentSession,
+  type ManagedDeploymentSourceRepository,
 } from '../api'
 import { installedTemplateAgentId } from '../template-continuation'
 import {
@@ -173,6 +176,32 @@ async function waitForInstallation(id: string) {
   return installation
 }
 
+// The GitHub install is the swarm's hard boundary, so the repos it grants are
+// exactly the ones worth offering. Walk every page into one list, sorted and
+// drained of archived repos — they can't be swarmed usefully.
+async function listConnectedRepositories(input: {
+  projectId: string
+  connectionId: string
+}): Promise<string[]> {
+  const all: ManagedDeploymentSourceRepository[] = []
+  const seen = new Set<string>()
+  let cursor: string | null = null
+  do {
+    const page = await listManagedDeploymentSourceRepositories({
+      ...input,
+      cursor,
+    })
+    all.push(...page.repositories)
+    cursor = page.nextCursor
+    if (cursor && seen.has(cursor)) break
+    if (cursor) seen.add(cursor)
+  } while (cursor)
+  return all
+    .filter((r) => !r.archived)
+    .map((r) => r.fullName)
+    .sort((a, b) => a.localeCompare(b))
+}
+
 export default function SecurityOnboarding() {
   const navigate = useNavigate()
 
@@ -182,11 +211,31 @@ export default function SecurityOnboarding() {
     queryFn: getManagedGitHubConnections,
     retry: false,
   })
-  const connected = (connections.data?.connections ?? []).some(
+  const activeConnection = (connections.data?.connections ?? []).find(
     (c) => c.state === 'active',
   )
+  const connected = Boolean(activeConnection)
 
   const [deployed, setDeployed] = useState<DeployResult | null>(null)
+
+  // The repos the install grants — the swarm's boundary and the autocomplete
+  // source. It needs a project to scope the listing, so it can only load once
+  // the background deploy has settled; by then the operator is usually still
+  // filling the payload.
+  const connectedRepos = useQuery({
+    queryKey: [
+      'swarm-connected-repos',
+      deployed?.projectId,
+      activeConnection?.id,
+    ],
+    enabled: Boolean(deployed?.projectId && activeConnection?.id),
+    staleTime: 5 * 60_000,
+    queryFn: () =>
+      listConnectedRepositories({
+        projectId: deployed!.projectId,
+        connectionId: activeConnection!.id,
+      }),
+  })
 
   // Two steps now: connect, then launch. The deploy happens on its own between
   // them, so it isn't a step the operator waits on.
@@ -440,6 +489,8 @@ export default function SecurityOnboarding() {
           <DeployStatus state={deployState} onRetry={() => void startDeploy()} />
           <PayloadBuilder
             deployState={deployState}
+            availableRepos={connectedRepos.data ?? []}
+            reposLoading={connectedRepos.isLoading}
             launching={launch.isPending}
             onLaunch={(payload) => launch.mutate(payload)}
           />
@@ -584,16 +635,19 @@ function DeployStatus({
 
 function PayloadBuilder({
   deployState,
+  availableRepos,
+  reposLoading,
   launching,
   onLaunch,
 }: {
   deployState: DeployState
+  availableRepos: string[]
+  reposLoading: boolean
   launching: boolean
   onLaunch: (payload: SwarmPayload) => void
 }) {
   const [target, setTarget] = useState('')
   const [declaration, setDeclaration] = useState(false)
-  const [repoInput, setRepoInput] = useState('')
   const [repositories, setRepositories] = useState<string[]>([])
   // Prefill every CVE in this week's feed so a first swarm runs with no typing.
   const [cveIds, setCveIds] = useState<string[]>(() =>
@@ -612,23 +666,32 @@ function PayloadBuilder({
     [target, declaration, repositories, cveIds],
   )
 
+  // Default to every connected repo the moment the list lands — the operator
+  // asked to swarm their whole surface, so that's the useful starting point.
+  // One-shot: once defaulted (or the operator edits first) we leave the
+  // selection alone, so a removed repo doesn't snap back on the next render.
+  const defaultedRef = useRef(false)
+  useEffect(() => {
+    if (defaultedRef.current || availableRepos.length === 0) return
+    defaultedRef.current = true
+    setRepositories((current) => (current.length > 0 ? current : availableRepos))
+  }, [availableRepos])
+
   // The target is the asset under test, and the declaration attests ownership
   // of "this web application" — so a launch needs a real https(s) URL. An empty
   // or malformed target blocks the button.
   const targetValid = /^https?:\/\/.+/i.test(payload.target)
+  // Each cell is one sandbox, so a repository × CVE matrix past the cap is a
+  // launch we won't start — surface it before the click, not on it.
+  const cellCount = repositories.length * cveIds.length
+  const overCap = cellCount > MAX_SWARM_CELLS
   // Fan-out needs explicit repositories: one session per repository × CVE cell.
   const ready =
     declaration &&
     cveIds.length > 0 &&
     repositories.length > 0 &&
+    !overCap &&
     targetValid
-
-  function addRepo() {
-    const value = repoInput.trim().replace(/^https?:\/\/github\.com\//i, '')
-    if (!/^[^/\s]+\/[^/\s]+$/.test(value)) return
-    if (!repositories.includes(value)) setRepositories([...repositories, value])
-    setRepoInput('')
-  }
 
   return (
     <div className="space-y-5">
@@ -652,46 +715,14 @@ function PayloadBuilder({
 
       <Field
         label="Repositories"
-        hint="Repos from your GitHub install to swarm. Each repository is checked against each CVE as its own parallel cell."
+        hint="Every repo from your GitHub install, selected by default. Each repository is checked against each CVE as its own parallel cell."
       >
-        <div className="flex gap-2">
-          <Input
-            placeholder="owner/repository"
-            value={repoInput}
-            onChange={(e) => setRepoInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                addRepo()
-              }
-            }}
-          />
-          <Button type="button" variant="outline" onClick={addRepo}>
-            Add
-          </Button>
-        </div>
-        {repositories.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {repositories.map((repo) => (
-              <span
-                key={repo}
-                className="bg-muted inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs"
-              >
-                {repo}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setRepositories(repositories.filter((r) => r !== repo))
-                  }
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label={`Remove ${repo}`}
-                >
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <RepoPicker
+          available={availableRepos}
+          loading={reposLoading}
+          selected={repositories}
+          onChange={setRepositories}
+        />
       </Field>
 
       <Field
@@ -768,11 +799,18 @@ function PayloadBuilder({
         >
           Preview payload
         </Button>
-        {ready ? (
-          <span className="text-muted-foreground text-xs">
-            {repositories.length} × {cveIds.length} ={' '}
-            {repositories.length * cveIds.length} parallel cell
-            {repositories.length * cveIds.length === 1 ? '' : 's'}
+        {repositories.length > 0 && cveIds.length > 0 ? (
+          <span
+            className={cn(
+              'text-xs',
+              overCap ? 'text-destructive' : 'text-muted-foreground',
+            )}
+          >
+            {repositories.length} × {cveIds.length} = {cellCount} cell
+            {cellCount === 1 ? '' : 's'}
+            {overCap
+              ? ` — over the ${MAX_SWARM_CELLS} limit, trim repositories or CVEs`
+              : null}
           </span>
         ) : null}
       </div>
@@ -781,6 +819,153 @@ function PayloadBuilder({
         <pre className="bg-muted text-foreground overflow-x-auto rounded-md p-4 font-mono text-xs leading-5 whitespace-pre-wrap">
           {preview}
         </pre>
+      ) : null}
+    </div>
+  )
+}
+
+// A chip multi-select over the install's repos: type to filter, click to add,
+// with the whole set selected by default upstream. Repos not in the fetched
+// list can still be typed in full (owner/repository) as a fallback, since the
+// install — not this list — is the real boundary.
+function RepoPicker({
+  available,
+  loading,
+  selected,
+  onChange,
+}: {
+  available: string[]
+  loading: boolean
+  selected: string[]
+  onChange: (repos: string[]) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Close the dropdown when focus or a click lands outside the picker.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const normalized = query.trim().replace(/^https?:\/\/github\.com\//i, '')
+  const unselected = available.filter((r) => !selected.includes(r))
+  const matches = normalized
+    ? unselected.filter((r) =>
+        r.toLowerCase().includes(normalized.toLowerCase()),
+      )
+    : unselected
+  // Allow a repo the listing didn't return (fine-grained installs can hide
+  // some) as long as it's a well-formed owner/repository not already chosen.
+  const canAddRaw =
+    /^[^/\s]+\/[^/\s]+$/.test(normalized) &&
+    !selected.includes(normalized) &&
+    !available.includes(normalized)
+
+  function add(repo: string) {
+    if (!selected.includes(repo)) onChange([...selected, repo])
+    setQuery('')
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Input
+            placeholder={
+              loading ? 'Loading your repositories…' : 'Search or owner/repository'
+            }
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setOpen(true)
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                if (matches.length > 0) add(matches[0])
+                else if (canAddRaw) add(normalized)
+              } else if (e.key === 'Escape') {
+                setOpen(false)
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-2 flex items-center"
+            aria-label="Toggle repository list"
+          >
+            <ChevronDown className="size-4" />
+          </button>
+        </div>
+        {available.length > 0 ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              onChange(
+                selected.length === available.length ? [] : [...available],
+              )
+            }
+          >
+            {selected.length === available.length ? 'Clear' : 'Select all'}
+          </Button>
+        ) : null}
+      </div>
+
+      {open && (matches.length > 0 || canAddRaw) ? (
+        <ul className="bg-popover text-popover-foreground absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border p-1 shadow-md">
+          {matches.map((repo) => (
+            <li key={repo}>
+              <button
+                type="button"
+                onClick={() => add(repo)}
+                className="hover:bg-muted flex w-full items-center rounded px-2 py-1.5 text-left font-mono text-xs"
+              >
+                {repo}
+              </button>
+            </li>
+          ))}
+          {canAddRaw ? (
+            <li>
+              <button
+                type="button"
+                onClick={() => add(normalized)}
+                className="hover:bg-muted flex w-full items-center rounded px-2 py-1.5 text-left text-xs"
+              >
+                Add <span className="ml-1 font-mono">{normalized}</span>
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {selected.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {selected.map((repo) => (
+            <span
+              key={repo}
+              className="bg-muted inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs"
+            >
+              {repo}
+              <button
+                type="button"
+                onClick={() => onChange(selected.filter((r) => r !== repo))}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={`Remove ${repo}`}
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
       ) : null}
     </div>
   )
