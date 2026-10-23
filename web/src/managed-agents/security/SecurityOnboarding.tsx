@@ -172,7 +172,9 @@ export default function SecurityOnboarding() {
   // page can rebuild the grid after we navigate to it — the ids don't survive in
   // React state across the route change.
   const launch = useMutation({
-    mutationFn: async (payload: SwarmPayload): Promise<{ projectId: string }> => {
+    mutationFn: async (
+      payload: SwarmPayload,
+    ): Promise<{ projectId: string; runId: string }> => {
       if (!deployed) throw new Error('Deploy the swarm before launching.')
       const cells = swarmCells(payload)
       if (cells.length === 0) {
@@ -228,10 +230,12 @@ export default function SecurityOnboarding() {
         }),
         agentWrites: 'disabled',
       })
-      return { projectId: deployed.projectId }
+      return { projectId: deployed.projectId, runId }
     },
-    onSuccess: ({ projectId }) =>
-      navigate(`/projects/${encodeURIComponent(projectId)}/swarm`),
+    onSuccess: ({ projectId, runId }) =>
+      navigate(
+        `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(runId)}`,
+      ),
     onError: (error) => notifyError("Couldn't start the swarm.", error),
   })
 

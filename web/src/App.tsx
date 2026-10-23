@@ -133,10 +133,6 @@ export default function App() {
               element={<ManagedProjectSwarms />}
             />
             <Route
-              path="projects/:projectId/swarms/:runId"
-              element={<ManagedProjectSwarm />}
-            />
-            <Route
               path="projects/:projectId/:tab"
               element={<ManagedProjectDetail />}
             />
@@ -168,6 +164,12 @@ export default function App() {
             <Route path="billing" element={<Billing />} />
             <Route path="settings" element={<Settings />} />
           </Route>
+          {/* A swarm run is its own full-screen view: no app-shell sidebar, so
+              the mission-control map and report get the whole width. */}
+          <Route
+            path="projects/:projectId/swarms/:runId"
+            element={<ManagedProjectSwarm />}
+          />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
