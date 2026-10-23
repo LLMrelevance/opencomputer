@@ -1425,6 +1425,11 @@ function previewAgentRequest(path: string, method: string, body: unknown) {
   ) as { token?: string; choice?: PreviewAgent['choice']; purpose?: string }
   if (path.endsWith('/choice')) {
     agent.choice = choice ?? null
+    if (agent.subscriptions) {
+      const { claude, codex } = agent.subscriptions
+      agent.subscription =
+        choice === 'codex' ? (codex ?? claude) : (claude ?? codex)
+    }
     return { agent: structuredClone(agent) }
   }
   if (path.endsWith('/connect-code')) {

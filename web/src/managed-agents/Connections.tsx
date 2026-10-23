@@ -390,9 +390,9 @@ function ModelConnection() {
     <ServiceCard
       icon={<Cpu className="size-4" aria-hidden />}
       title="Models"
-      summary="Your Claude or ChatGPT subscription runs your threads."
+      summary="Choose your coding agent."
     >
-      <div className="py-4 pr-5 pl-18">
+      <div className="px-5 py-4 sm:pl-18">
         <AgentManage
           agent={agent}
           slackInstalled={status.data?.slack.installed ?? false}
