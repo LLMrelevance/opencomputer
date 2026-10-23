@@ -3,6 +3,8 @@
 // the user connects, and the code-owned safety rails live in the deployed
 // cve-swarm template. Nothing here widens scope; it only prefills the payload.
 
+import { assignAngles, feedSeedingLines } from './feeds'
+
 // The deployable template the security flow installs. Must be a public repo the
 // template-installation backend can inspect.
 export const SECURITY_SWARM_TEMPLATE_REPOSITORY =
@@ -233,24 +235,46 @@ export function listManifestDocs(
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
-// One cell's first-run input: a single repository checked against a single CVE.
-// The worker agent already collapses to a 1×1 matrix when the payload names one
-// of each, so this is the launch prompt narrowed to the cell.
+// How a cell turns the repository into a live hunt once it has fingerprinted the
+// target. Shared by the cell and launch prompts so "derive routes, probe, keep
+// evidence" reads identically everywhere. Scoped hard to the attested host — the
+// authorization boundary is the operator's ownership declaration, so probing
+// must never leave that one target.
+export function discoveryLines(target: string): string[] {
+  if (!target) {
+    return [
+      'Read the repository clone to prove whether the seeded CVEs are reachable in this code, then save the finding with memory_save.',
+    ]
+  }
+  return [
+    'Discover, do not just read:',
+    '- Read the repository clone to derive its real routes, parameters and auth flows — that map is what you probe.',
+    `- Fingerprint ${target} with scan_surface, then exercise the mapped routes on that host to prove whether the exposure is actually reachable. Stay on ${target}; never touch another host.`,
+    '- Record evidence into /workspace as you go (request/response logs, screenshots, a finding.md) so the proof outlives the session.',
+    '- Save the finding with memory_save.',
+  ]
+}
+
+// One cell's first-run input. A cell still carries one repository and one CVE
+// seed, but the task is discovery, not a lockfile read: pull live feed
+// intelligence, derive the repo's routes, probe the attested target, and keep
+// evidence. The worker collapses to a single hunt when the payload names one
+// repository and one CVE.
 export function composeCellPrompt(payload: SwarmPayload, cell: SwarmCell): string {
   const lines = [
     'Launch a CVE swarm cell against my own assets.',
     '',
     `Declaration: ${SCAN_DECLARATION}`,
     payload.target
-      ? `Target endpoint (passive scan only): ${payload.target}`
+      ? `Target (authorized discovery within this host only): ${payload.target}`
       : null,
     `Repository: ${cell.repository}`,
-    `CVE: ${cell.cveId}`,
+    `CVE seed: ${cell.cveId}`,
     `Model: ${payload.model}`,
     '',
-    payload.target
-      ? 'Run scan_surface on the target once to fingerprint it passively, then prove whether this CVE is reachable in this repository by reading the clone, then save the one finding with memory_save.'
-      : 'Prove whether this CVE is reachable in this repository by reading the clone, then save the one finding with memory_save.',
+    ...feedSeedingLines(),
+    '',
+    ...discoveryLines(payload.target),
     'If the verdict is EXPOSED, open_fix_pull_request (dependency-only, single pin). Honor PUBLISH_ENABLED — dry run unless it is enabled.',
   ].filter((line): line is string => line !== null)
   return lines.join('\n')
@@ -447,20 +471,24 @@ export function composeLaunchPrompt(payload: SwarmPayload): string {
     payload.cveIds.length > 0
       ? payload.cveIds.join(', ')
       : "this week's full feed"
+  const angles = assignAngles(Math.max(payload.repositories.length, 1))
+    .map((a) => a.label)
+    .join(', ')
   const lines = [
     'Launch a CVE swarm against my own assets.',
     '',
     `Declaration: ${SCAN_DECLARATION}`,
     payload.target
-      ? `Target endpoint (passive scan only): ${payload.target}`
+      ? `Target (authorized discovery within this host only): ${payload.target}`
       : null,
     `Repositories: ${repos}`,
-    `CVEs: ${cves}`,
+    `CVE seeds: ${cves}`,
+    `Discovery angles to spread across the swarm: ${angles}`,
     `Model: ${payload.model}`,
     '',
-    payload.target
-      ? 'Run scan_surface on the target to fingerprint it passively, then prove reachability across the repository × CVE matrix by reading each clone, then save the findings once with memory_save.'
-      : 'Prove reachability across the repository × CVE matrix by reading each clone, then save the findings once with memory_save.',
+    ...feedSeedingLines(),
+    '',
+    ...discoveryLines(payload.target),
     'For any EXPOSED verdict, open_fix_pull_request (dependency-only, single pin). Honor PUBLISH_ENABLED — dry run unless it is enabled.',
   ].filter((line): line is string => line !== null)
   return lines.join('\n')
