@@ -32,3 +32,7 @@ new_sqlite_classes = ["VmSession"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["MicrovmSession"]
+
+# Ship Worker logs to opencomputer-log-tail-prod → Axiom dataset oc-platform-edge.
+[[tail_consumers]]
+service = "opencomputer-log-tail-prod"
