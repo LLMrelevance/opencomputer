@@ -50,6 +50,8 @@ const fresh: ComputerAgent = {
   subscription: null,
   managedModel: 'Claude Opus 5.5',
 }
+// The rollout gate: blue says this computer can run Codex.
+const withCodex: ComputerAgent = { ...fresh, codexAvailable: true }
 const subscription = (
   health: NonNullable<ComputerAgent['subscription']>['health'],
 ) => ({ provider: 'claude' as const, health, setAt: '2026-10-22T10:00:00Z' })
@@ -408,8 +410,11 @@ describe('choosing the coding agent', () => {
   })
 
   it('connects Codex with one command and moves on once signed in', async () => {
-    await show({ ...empty, agent: fresh }, 'Choose your coding agent')
-    computerApi.setAgentChoice.mockResolvedValue({ ...fresh, choice: 'codex' })
+    await show({ ...empty, agent: withCodex }, 'Choose your coding agent')
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...withCodex,
+      choice: 'codex',
+    })
     act(() => codexCard().click())
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
     expect(command()).toBe(
@@ -436,7 +441,7 @@ describe('choosing the coding agent', () => {
     computerApi.getComputer.mockResolvedValue({
       ...empty,
       agent: {
-        ...fresh,
+        ...withCodex,
         choice: 'codex',
         subscription: {
           provider: 'codex',
@@ -626,12 +631,73 @@ describe('choosing the coding agent', () => {
 
   it('lands on the step again with Codex chosen, Codex selected', async () => {
     await show(
-      { ...empty, agent: { ...fresh, choice: 'codex' } },
+      { ...empty, agent: { ...withCodex, choice: 'codex' } },
       'Choose your coding agent',
     )
     expect(text()).toContain('Step 1 of 4')
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
     expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
+  })
+
+  describe('where this computer cannot run Codex yet', () => {
+    it.each([
+      ['an older backend that does not say', fresh],
+      ['the gate switched off', { ...fresh, codexAvailable: false }],
+    ])('only records Codex on %s', async (_, agent: ComputerAgent) => {
+      await show({ ...empty, agent }, 'Choose your coding agent')
+      await settle(() => command() !== undefined, 'claude command')
+      computerApi.setAgentChoice.mockResolvedValue({
+        ...agent,
+        choice: 'codex',
+      })
+      act(() => codexCard().click())
+      await settle(
+        () => text().includes("Codex is coming. We'll let you know."),
+        'coming line',
+      )
+      expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
+      expect(command()).toBeUndefined()
+      expect(text()).not.toContain('it opens ChatGPT to sign in')
+      // The Claude command was minted for the first card; Codex mints none.
+      expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    })
+
+    it('lands on the coming line with Codex chosen, and mints nothing', async () => {
+      await show(
+        { ...empty, agent: { ...fresh, choice: 'codex' } },
+        "Codex is coming. We'll let you know.",
+      )
+      expect(command()).toBeUndefined()
+      expect(computerApi.createConnectCode).not.toHaveBeenCalled()
+      expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
+    })
+
+    it('offers only Claude Code on the agent card', async () => {
+      await show(
+        {
+          ...onboarded,
+          agent: { ...fresh, choice: 'credits', linked: true },
+        },
+        'Your agent',
+      )
+      expect(button('Connect Claude Code')).toBeDefined()
+      expect(button('Use Codex instead')).toBeUndefined()
+      expect(button('Connect Codex')).toBeUndefined()
+    })
+  })
+
+  it('offers Codex on the agent card where this computer can run it', async () => {
+    await show(
+      {
+        ...onboarded,
+        agent: { ...withCodex, choice: 'credits', linked: true },
+      },
+      'Your agent',
+    )
+    expect(button('Connect Claude Code')).toBeDefined()
+    act(() => button('Use Codex instead')!.click())
+    act(() => button('Connect Codex')!.click())
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
   })
 
   it('starts on free credits', async () => {

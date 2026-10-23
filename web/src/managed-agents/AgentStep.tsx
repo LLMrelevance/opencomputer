@@ -249,13 +249,21 @@ export function AgentSetup({
           mark={<span className="bg-foreground text-background">◎</span>}
         />
       </div>
-      <SubscriptionConnect
-        // A new card is a new command: its own sign-in and wait.
-        key={selected}
-        provider={selected}
-        replacing={agent.subscription?.provider === selected}
-        onDone={onDone}
-      />
+      {selected === 'codex' && !agent.codexAvailable ? (
+        // Not rolled out to this computer (or switched off): the card only
+        // records the interest, no code is minted.
+        <p className="bg-muted/60 text-foreground rounded-lg px-4 py-3">
+          Codex is coming. We&apos;ll let you know.
+        </p>
+      ) : (
+        <SubscriptionConnect
+          // A new card is a new command: its own sign-in and wait.
+          key={selected}
+          provider={selected}
+          replacing={agent.subscription?.provider === selected}
+          onDone={onDone}
+        />
+      )}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed px-4 py-3">
         <div>
           <p className="text-foreground font-semibold">
@@ -867,9 +875,12 @@ export function AgentManage({
   const [replacing, setReplacing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   // Which subscription to connect when there is none.
-  const [connecting, setConnecting] = useState<SubscriptionProvider>(
+  const codex = agent.codexAvailable === true
+  const [picked, setConnecting] = useState<SubscriptionProvider>(
     agent.choice === 'codex' ? 'codex' : 'claude',
   )
+  // Codex only where this computer can run it (the rollout gate).
+  const connecting: SubscriptionProvider = codex ? picked : 'claude'
   const resume = useMutation({
     mutationFn: resumeClaudeSubscription,
     onSuccess: async (next) => {
@@ -917,14 +928,16 @@ export function AgentManage({
           provider={connecting}
           mintOnShow={false}
         />
-        <Button
-          variant="link"
-          size="sm"
-          className="text-muted-foreground h-auto px-0"
-          onClick={() => setConnecting(other)}
-        >
-          Use {PROVIDER_NAME[other]} instead
-        </Button>
+        {codex ? (
+          <Button
+            variant="link"
+            size="sm"
+            className="text-muted-foreground h-auto px-0"
+            onClick={() => setConnecting(other)}
+          >
+            Use {PROVIDER_NAME[other]} instead
+          </Button>
+        ) : null}
       </div>
     )
   }
@@ -968,13 +981,17 @@ export function AgentManage({
               Resume
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReplacing(true)}
-          >
-            {subscription.provider === 'codex' ? 'Reconnect' : 'Replace'}
-          </Button>
+          {subscription.provider === 'claude' || codex ? (
+            // A Codex login switched off by the gate can still be
+            // disconnected, not signed in again.
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setReplacing(true)}
+            >
+              {subscription.provider === 'codex' ? 'Reconnect' : 'Replace'}
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"

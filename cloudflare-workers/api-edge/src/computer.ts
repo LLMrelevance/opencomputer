@@ -46,6 +46,7 @@ export const COMPUTER_ERROR_MESSAGES: Record<string, string> = {
     "That's not a ChatGPT login. Paste the auth.json that codex login wrote.",
   computer_connect_code_invalid:
     "That connect code is not valid. Get a new one from the dashboard.",
+  computer_codex_unavailable: "Codex isn't available on this computer yet.",
   invalid_request: "That choice isn't valid.",
 };
 
@@ -183,6 +184,9 @@ export function publicComputerAgent(
     ...(linkedSlackUser ? { linkedSlackUser } : {}),
     subscription,
     managedModel: agent.managedModel,
+    // Rollout gate and kill switch (work 082): an older blue that does not
+    // send it keeps Codex hidden.
+    codexAvailable: agent.codexAvailable === true,
   };
 }
 

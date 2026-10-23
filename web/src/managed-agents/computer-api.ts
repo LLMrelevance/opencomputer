@@ -61,6 +61,11 @@ export const computerAgentSchema = z.object({
     .nullable(),
   /** The model free credits run, e.g. "Claude Opus 5.5". */
   managedModel: z.string(),
+  /**
+   * This computer can run Codex (work 082 rollout gate and kill switch).
+   * Absent reads as false: Codex stays "coming".
+   */
+  codexAvailable: z.boolean().optional(),
 })
 
 export const computerStatusSchema = z.object({

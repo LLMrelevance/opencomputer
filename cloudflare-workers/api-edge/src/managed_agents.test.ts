@@ -6693,6 +6693,7 @@ describe("organization computer (work 052)", () => {
       setAt: "2026-10-22T10:00:00.000Z",
     },
     managedModel: "Claude Opus 5.5",
+    codexAvailable: false,
   };
 
   it("passes the agent block of GET /computer field by field", async () => {
@@ -6728,10 +6729,29 @@ describe("organization computer (work 052)", () => {
       "/computer",
       Response.json({ ...computerStatus, agent: minimal }),
     );
+    // An older blue sends no codexAvailable: Codex stays hidden.
     await expect(response.json()).resolves.toEqual({
       ...computerStatus,
-      agent: minimal,
+      agent: { ...minimal, codexAvailable: false },
     });
+  });
+
+  it.each([
+    [true, true],
+    [false, false],
+    ["true", false],
+    [1, false],
+  ])("passes codexAvailable %j as %j", async (value, expected) => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({
+        ...computerStatus,
+        agent: { ...agent, codexAvailable: value },
+      }),
+    );
+    const body = (await response.json()) as { agent: { codexAvailable: unknown } };
+    expect(body.agent.codexAvailable).toBe(expected);
   });
 
   it.each([
@@ -6976,6 +6996,7 @@ describe("organization computer (work 052)", () => {
     [403, "computer_agent_not_member", "You're not a member of this organization's Slack workspace."],
     [422, "computer_agent_codex_auth", "That's not a ChatGPT login. Paste the auth.json that codex login wrote."],
     [401, "computer_connect_code_invalid", "That connect code is not valid. Get a new one from the dashboard."],
+    [409, "computer_codex_unavailable", "Codex isn't available on this computer yet."],
   ])("maps %s %s to fixed copy", async (status, code, message) => {
     const { response } = await call(
       "PUT",
