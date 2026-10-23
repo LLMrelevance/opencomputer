@@ -41,8 +41,8 @@ vi.mock('@/lib/errors', () => notify)
 const { default: ComputerPage } = await import('./Computer')
 
 const TOKEN = `sk-ant-oat01-${'a'.repeat(40)}`
-const CODE = 'occ_b3JnX3Rlc3Q.0123456789abcdefghijkl'
-const CODE_2 = 'occ_b3JnX3Rlc3Q.mnopqrstuvwxyz012345'
+const CODE = 'oc_7KQM2XP94HTRWN3F'
+const CODE_2 = 'oc_0J5V8D1ZGB6CY4AE'
 const inTenMinutes = () => new Date(Date.now() + 10 * 60_000).toISOString()
 const fresh: ComputerAgent = {
   choice: null,
@@ -392,6 +392,12 @@ describe('choosing the coding agent', () => {
     expect(command()).toBe(
       `npx -y @opencomputer/cli model connect claude --code ${CODE}`,
     )
+    // One line, scrolled sideways when narrow, never broken mid-word.
+    const row = [...document.body.querySelectorAll('code')].find((c) =>
+      c.textContent?.startsWith('npx '),
+    )!
+    expect(row.className).toContain('whitespace-nowrap')
+    expect(row.className).not.toContain('break-all')
     expect(text()).toContain(
       'Run this in a terminal; it opens Claude to sign in.',
     )
@@ -567,7 +573,7 @@ describe('choosing the coding agent', () => {
     window.localStorage.setItem(
       'opencomputer.computer.connect-code::',
       JSON.stringify({
-        code: 'occ_c3BlbnQ.spent-code-0000000000',
+        code: 'oc_SPENT00000000000',
         expiresAt: inTenMinutes(),
         mintedAt: Date.parse('2026-10-22T09:59:00Z'),
       }),
@@ -582,7 +588,7 @@ describe('choosing the coding agent', () => {
     act(() => button('Change')!.click())
     await settle(() => command() !== undefined, 'command')
     expect(command()).toContain(CODE)
-    expect(command()).not.toContain('spent')
+    expect(command()).not.toContain('SPENT')
     expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
   })
 

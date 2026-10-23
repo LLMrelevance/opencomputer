@@ -3234,12 +3234,13 @@ export async function handleComputerSlackWebhook(
 
 // Work 082: the backend bounds the body the same way (CODEX_BODY_MAX_BYTES:
 // twice the 64 KiB auth.json cap, plus room for the code and provider).
-export // Blue verifies the subscription with its provider before answering.
+// Blue verifies the subscription with its provider before answering.
 const COMPUTER_AGENT_CONNECT_TIMEOUT_MS = 30_000;
-const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
-// `occ_<base64url(accountId)>.<base64url nonce>`; anything else is refused here
-// so garbage never reaches the backend.
-const CONNECT_CODE = /^occ_[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{16,200}$/;
+export const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
+// `oc_` + 16 Crockford base32 characters (short enough to keep the command
+// on one line); anything else is refused here so garbage never reaches the
+// backend. Case-insensitive: people retype codes.
+const CONNECT_CODE = /^oc_[0-9a-z]{16}$/i;
 
 function connectProblem(status: number, code: string, message: string) {
   return Response.json(

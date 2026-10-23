@@ -1399,7 +1399,7 @@ function previewAgentRequest(path: string, method: string, body: unknown) {
       }, 6_000)
     return {
       // A placeholder in the real shape; it connects nothing.
-      code: 'occ_cHJldmlldw.preview-code-not-real-0000',
+      code: 'oc_PREVIEW00000000',
       expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     }
   }

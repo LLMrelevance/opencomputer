@@ -16,7 +16,7 @@ import {
 import { Loader2 } from 'lucide-react'
 import { ApiError } from '@/api/errors'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyRow } from '@/components/copy-row'
+import { CopyCommand, CopyRow } from '@/components/copy-row'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -622,22 +622,28 @@ function CommandConnect({
       </div>
     )
   }
+  const lead = (
+    <>Run this in a terminal; it opens {SIGN_IN_AT[provider]} to sign in.</>
+  )
   return (
     <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
-      <p>Run this in a terminal; it opens {SIGN_IN_AT[provider]} to sign in.</p>
       {codeValue ? (
-        <CopyRow
+        <CopyCommand
           value={connectCommand(provider, codeValue)}
+          lead={lead}
           onCopy={() => setActedAt(Date.now())}
         />
       ) : (
-        <div
-          className="bg-panel-2 text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]"
-          aria-busy
-        >
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          Getting your command…
-        </div>
+        <>
+          <p>{lead}</p>
+          <div
+            className="bg-panel-2 text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]"
+            aria-busy
+          >
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            Getting your command…
+          </div>
+        </>
       )}
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         {connected ? (

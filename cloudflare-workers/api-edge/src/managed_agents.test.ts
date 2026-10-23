@@ -6798,7 +6798,7 @@ describe("organization computer (work 052)", () => {
   });
 
   it("mints a connect code and returns only its contract", async () => {
-    const code = "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl";
+    const code = "oc_7KQM2XP94HTRWN3F";
     const { response, fetchMock } = await call(
       "POST",
       "/computer/agent/connect-code",

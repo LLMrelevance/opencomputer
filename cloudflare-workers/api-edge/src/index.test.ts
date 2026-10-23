@@ -646,7 +646,7 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
   });
 
   const url = "https://app.opencomputer.dev/api/managed-agents/computer/agent/connect";
-  const code = "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl";
+  const code = "oc_7KQM2XP94HTRWN3F";
   const target = { ...env, MANAGED_AGENTS_API_URL: "https://managedagents.test" };
   const stub = (upstream: Response) => {
     const fetchSpy = vi.fn(
@@ -713,6 +713,21 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     await expect(resp.json()).resolves.toEqual(refusal);
   });
 
+  it("accepts a retyped code in lower case", async () => {
+    const fetchSpy = stub(Response.json({ connected: true }, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: code.toLowerCase(), provider: "claude", token: "t" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["GET", undefined, undefined, 405],
     ["PUT", "application/json", JSON.stringify({ code }), 405],
@@ -720,7 +735,10 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     ["POST", "application/x-www-form-urlencoded", `code=${code}`, 415],
     ["POST", "application/json", "{not json", 400],
     ["POST", "application/json", JSON.stringify({ provider: "claude" }), 401],
-    ["POST", "application/json", JSON.stringify({ code: "occ_x" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3F0" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "oc_7KQM2XP94HTRWN3-" }), 401],
     ["POST", "application/json", JSON.stringify({ code: "osb_0123456789abcdefghijkl" }), 401],
   ])("refuses %s %s %s at the edge", async (method, contentType, body, status) => {
     const fetchSpy = stub(new Response(null, { status: 200 }));
