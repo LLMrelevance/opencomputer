@@ -1302,7 +1302,10 @@ let previewBootSince: number | null = null
 // person running it: about six seconds later the card's subscription (Codex
 // when Codex is chosen, else Claude) is connected. `?harnesses=claude,codex`
 // names the harnesses the computer can run (`?agent=codex` implies both);
-// without it the agent names none, as an older backend: Claude only.
+// without it the agent names none, as an older backend: Claude only. With
+// `?connect=unavailable` setup starts on the Codex card and its mint is
+// refused the way blue refuses a harness it cannot run (409, in its own
+// words).
 type PreviewAgent = {
   harnesses?: string[]
   choice: 'claude' | 'codex' | 'credits' | null
@@ -1321,7 +1324,9 @@ let previewAgentState: PreviewAgent | null | undefined
 
 function previewAgent(): PreviewAgent | null {
   if (previewAgentState !== undefined) return previewAgentState
-  const param = new URLSearchParams(window.location.search).get('agent')
+  const search = new URLSearchParams(window.location.search)
+  const param = search.get('agent')
+  const connect = search.get('connect')
   const setup = previewComputerMode() === 'setup'
   const linkedSlackUser = { id: 'U0PREVIEW', name: 'maya', teamName: 'Acme' }
   const subscription = (
@@ -1377,7 +1382,12 @@ function previewAgent(): PreviewAgent | null {
                   subscription: subscription(param),
                 }
               : setup
-                ? { ...base, choice: null, linked: false, subscription: null }
+                ? {
+                    ...base,
+                    choice: connect === 'unavailable' ? 'codex' : null,
+                    linked: false,
+                    subscription: null,
+                  }
                 : {
                     ...base,
                     ...link,
@@ -1398,7 +1408,14 @@ function previewAgentRequest(path: string, method: string, body: unknown) {
     return { agent: structuredClone(agent) }
   }
   if (path.endsWith('/connect-code')) {
-    if (new URLSearchParams(window.location.search).get('connect') === 'auto')
+    const connect = new URLSearchParams(window.location.search).get('connect')
+    if (connect === 'unavailable' && agent.choice === 'codex')
+      throw new ApiError(
+        "Codex isn't available on this computer yet",
+        409,
+        'computer_harness_unavailable',
+      )
+    if (connect === 'auto')
       setTimeout(() => {
         const codex = agent.choice === 'codex'
         agent.choice = codex ? 'codex' : 'claude'

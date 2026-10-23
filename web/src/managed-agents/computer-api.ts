@@ -242,7 +242,6 @@ export function createConnectCode() {
   )
 }
 
-/** The one command a person runs to connect a subscription with a code. */
 /** What an older backend that names no harnesses can run: today's Claude. */
 const DEFAULT_HARNESSES: readonly string[] = ['claude']
 
@@ -257,6 +256,7 @@ export function isHarnessAvailable(
   return (agent.harnesses ?? DEFAULT_HARNESSES).includes(harness)
 }
 
+/** The one command a person runs to connect a subscription with a code. */
 export function connectCommand(provider: SubscriptionProvider, code: string) {
   return `npx -y @opencomputer/cli model connect ${provider} --code ${code}`
 }

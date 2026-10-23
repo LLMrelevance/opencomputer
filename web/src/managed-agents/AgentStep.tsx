@@ -224,8 +224,14 @@ export function AgentSetup({
   const pick = (choice: AgentCardChoice) => {
     if (choice === selected) return
     onSelect(choice)
-    // Codex is recorded on selection: the step reopens on it after a reload.
-    if (choice === 'codex' && agent.choice !== 'codex') choose.mutate('codex')
+    // Codex is recorded on selection, so the step reopens on it after a
+    // reload; so is any card this computer cannot run yet, as the interest
+    // is all that card does.
+    if (
+      (choice === 'codex' || !isHarnessAvailable(agent, choice)) &&
+      agent.choice !== choice
+    )
+      choose.mutate(choice)
   }
   const onCredits = !agent.subscription && agent.choice === 'credits'
 
@@ -402,7 +408,8 @@ function storedConnectCode(
  * running: the code is kept in local storage until it is nearly expired.
  * A code is re-minted once it expires, only while the tab is visible
  * (react-query skips background intervals and catches up on focus) and
- * only until `renewUntil`.
+ * only until `renewUntil`: after that a tab left open mints nothing, not
+ * even when it is focused again.
  */
 function useConnectCode(renewUntil: number) {
   const auth = useContext(AuthContext)
@@ -434,6 +441,7 @@ function useConnectCode(renewUntil: number) {
       q.state.data && Date.now() < renewUntil
         ? Math.max(1_000, msUntil(q.state.data.expiresAt))
         : false,
+    refetchOnWindowFocus: () => Date.now() < renewUntil,
   })
   const renew = useCallback(() => {
     forgetStoredCode(key)
@@ -591,7 +599,9 @@ function CommandConnect({
     )
     return () => window.clearTimeout(timer)
   }, [codeValue, expiresAt])
-  const expired = Boolean(codeValue) && expiredCode === codeValue
+  // Not while a renewal is in flight: the new code is about to replace it.
+  const expired =
+    Boolean(codeValue) && expiredCode === codeValue && !code.isFetching
   // Announced from the cache, as the status lands: in setup the step moves
   // on (and this unmounts) in the very render that brings the subscription.
   const announced = useRef(false)
@@ -879,7 +889,7 @@ export function AgentManage({
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   // Which subscription to connect when there is none: only the harnesses
   // this computer can run (the rollout gate), the chosen one first.
-  const [picked, setConnecting] = useState<SubscriptionProvider>(
+  const [picked, setPicked] = useState<SubscriptionProvider>(
     agent.choice === 'codex' ? 'codex' : 'claude',
   )
   const available = subscriptionProviderSchema.options.filter((provider) =>
@@ -940,7 +950,7 @@ export function AgentManage({
             variant="link"
             size="sm"
             className="text-muted-foreground h-auto px-0"
-            onClick={() => setConnecting(other)}
+            onClick={() => setPicked(other)}
           >
             Use {PROVIDER_NAME[other]} instead
           </Button>

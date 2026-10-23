@@ -713,6 +713,26 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     await expect(resp.json()).resolves.toEqual(refusal);
   });
 
+  it("trims a pasted code and forwards the trimmed one", async () => {
+    const fetchSpy = stub(Response.json({ connected: true }, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: ` ${code}\n`, provider: "claude", token: "t" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(200);
+    const [, init] = fetchSpy.mock.calls[0];
+    expect(JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))).toEqual({
+      code,
+      provider: "claude",
+      token: "t",
+    });
+  });
+
   it("accepts a retyped code in lower case", async () => {
     const fetchSpy = stub(Response.json({ connected: true }, { status: 200 }));
     const resp = await worker.fetch(
@@ -759,6 +779,16 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     }
   });
 
+  it("refuses another method as JSON, naming the one allowed", async () => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const resp = await worker.fetch(new Request(url, { method: "GET" }), target, ctx);
+    expect(resp.status).toBe(405);
+    expect(resp.headers.get("allow")).toBe("POST");
+    expect(resp.headers.get("cache-control")).toBe("no-store");
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "method_not_allowed" } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses a body over the bound without reading it all", async () => {
     const fetchSpy = stub(new Response(null, { status: 200 }));
     const big = JSON.stringify({ code, provider: "codex", authJson: "x".repeat(200 * 1024) });
@@ -775,18 +805,52 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("answers 502 when the backend is unreachable", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));
-    const resp = await worker.fetch(
+  const attempt = (env: Env) =>
+    worker.fetch(
       new Request(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code, provider: "claude", token: "t" }),
       }),
-      target,
+      env,
       ctx,
     );
+  const logged = (log: ReturnType<typeof vi.spyOn>) =>
+    log.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .find((entry) => entry.event === "computer_agent_connect");
+
+  it("answers 502 when the backend is unreachable, logging the error's name", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.stubGlobal("fetch", vi.fn(async () => { throw timeout; }));
+    const resp = await attempt(target);
     expect(resp.status).toBe(502);
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "computer_unavailable" } });
+    const entry = logged(log);
+    log.mockRestore();
+    expect(entry).toMatchObject({ result: "upstream_unavailable", error_name: "TimeoutError" });
+    expect(JSON.stringify(entry)).not.toContain("aborted");
+  });
+
+  it("answers 502 when the backend redirects instead of answering", async () => {
+    stub(new Response(null, { status: 302, headers: { location: "https://elsewhere.test/" } }));
+    const resp = await attempt(target);
+    expect(resp.status).toBe(502);
+    expect(resp.headers.get("location")).toBeNull();
+    await expect(resp.json()).resolves.toMatchObject({ error: { code: "computer_unavailable" } });
+  });
+
+  it("logs an unbound rate limit in prod only", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    stub(Response.json({ connected: true }, { status: 200 }));
+    await attempt({ ...target, WORKER_ENV: "prod" } as Env);
+    expect(logged(log)).toMatchObject({ result: "connected", rate_limit: "unbound" });
+    log.mockClear();
+    await attempt(target);
+    expect(logged(log)).not.toHaveProperty("rate_limit");
+    log.mockRestore();
   });
 
   it("rate-limits per caller IP before reading the body or calling blue", async () => {
@@ -803,6 +867,7 @@ describe("/api/managed-agents/computer/agent/connect — public CLI connect", ()
       ctx,
     );
     expect(resp.status).toBe(429);
+    expect(resp.headers.get("retry-after")).toBe("60");
     expect(await resp.json()).toMatchObject({ error: { code: "rate_limited" } });
     expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
     expect(fetchSpy).not.toHaveBeenCalled();

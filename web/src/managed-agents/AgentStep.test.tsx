@@ -375,10 +375,12 @@ describe('choosing the coding agent', () => {
     expect(text()).toContain('Still checking…')
   })
 
-  const codexCard = () =>
+  const card = (name: string) =>
     [...container.querySelectorAll('[role="radio"]')].find((radio) =>
-      radio.textContent?.includes('Codex'),
+      radio.textContent?.includes(name),
     ) as HTMLButtonElement
+  const codexCard = () => card('Codex')
+  const claudeCard = () => card('Claude')
 
   // The person comes back to the tab from the terminal or the browser.
   function refocus() {
@@ -539,6 +541,12 @@ describe('choosing the coding agent', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30 * 60_000)
     })
+    // Coming back to the tab mints nothing either.
+    refocus()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(computerApi.createConnectCode.mock.calls.length).toBe(mints)
     // Only the page's own slow poll (every 30 s) is left.
     expect(
       computerApi.getComputer.mock.calls.length - reads,
@@ -551,6 +559,61 @@ describe('choosing the coding agent', () => {
     })
     expect(computerApi.createConnectCode.mock.calls.length).toBe(mints + 1)
     expect(text()).toContain('Waiting for you to sign in')
+  })
+
+  it('renews an expired code without saying it expired', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+      ],
+    })
+    let release: (() => void) | undefined
+    let minted = 0
+    computerApi.createConnectCode.mockImplementation(() => {
+      const code = {
+        code: `${CODE}${minted++}`,
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }
+      // The first mint lands at once, the renewal when released.
+      return minted === 1
+        ? Promise.resolve(code)
+        : new Promise((resolve) => {
+            release = () => resolve(code)
+          })
+    })
+    computerApi.getComputer.mockResolvedValue({ ...empty, agent: fresh })
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/computer']}>
+            <Routes>
+              <Route path="computer" element={<ComputerPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toContain(`${CODE}0`)
+    // Past the code's expiry, with the renewal still on its way.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 2_000)
+    })
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(2)
+    expect(text()).not.toContain('This command expired.')
+    expect(text()).toContain('Works once, for 10 minutes.')
+    await act(async () => {
+      release?.()
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(command()).toContain(`${CODE}1`)
+    expect(text()).not.toContain('This command expired.')
   })
 
   it('keeps the command across a reload, and gives a new one on request', async () => {
@@ -701,6 +764,18 @@ describe('choosing the coding agent', () => {
     act(() => codexCard().click())
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
     expect(text()).not.toContain('is coming')
+    // Back to the Claude card: the interest is recorded, as Codex's is.
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...fresh,
+      harnesses: ['codex'],
+      choice: 'claude',
+    })
+    act(() => claudeCard().click())
+    await settle(
+      () => text().includes("Claude Code is coming. We'll let you know."),
+      'coming line',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenLastCalledWith('claude')
   })
 
   it('offers Codex on the agent card where this computer can run it', async () => {

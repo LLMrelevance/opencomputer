@@ -371,10 +371,11 @@ function computerRoute(method: string, suffix: string) {
 /**
  * Codes whose backend message is written for people and names the agent
  * ("Codex isn't available on this computer yet."): it passes through when
- * it reads as one plain line, else the fixed copy above stands in.
+ * it reads as one plain line (no control, format or other invisible
+ * characters, no markup), else the fixed copy above stands in.
  */
 const BACKEND_WORDED_CODES = new Set(["computer_harness_unavailable"]);
-const PERSON_READABLE = /^[^\p{Cc}<>]{1,200}$/u;
+const PERSON_READABLE = /^[^\p{C}<>]{1,200}$/u;
 
 export const computerFamily: RouteFamily = {
   owns: (suffix) => COMPUTER_ROUTE.test(suffix),

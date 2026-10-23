@@ -7033,6 +7033,7 @@ describe("organization computer (work 052)", () => {
     ["fallback copy for markup", "<b>Codex</b> is off", "That agent isn't available on this computer yet."],
     ["fallback copy for several lines", "Codex\nstack trace", "That agent isn't available on this computer yet."],
     ["fallback copy for a long message", "x".repeat(201), "That agent isn't available on this computer yet."],
+    ["fallback copy for a zero-width character", "Codex\u200b isn't available", "That agent isn't available on this computer yet."],
   ])("says an unavailable harness in %s", async (_, upstreamMessage, message) => {
     const { response } = await call(
       "POST",
