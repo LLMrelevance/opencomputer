@@ -21,6 +21,7 @@ import {
 } from './catalog'
 import { RunReportCard, SwarmGrid } from './SwarmGrid'
 import { SwarmMap } from './SwarmMap'
+import { CellDispatchPanel, FindingsPanel, StatBar } from './SwarmPanels'
 import {
   statesFromReport,
   useSwarmRun,
@@ -226,9 +227,15 @@ function RunBody({
         </div>
       </div>
 
+      <StatBar states={states} counts={counts} />
+
       {view === 'map' ? (
         <div className="space-y-4">
           <SwarmMap states={states} counts={counts} settled={settled} />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <FindingsPanel states={states} projectId={projectId} />
+            <CellDispatchPanel states={states} projectId={projectId} />
+          </div>
           {report ? (
             <RunReportCard report={report} projectId={projectId} />
           ) : null}
