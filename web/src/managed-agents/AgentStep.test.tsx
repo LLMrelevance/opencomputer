@@ -29,7 +29,18 @@ vi.mock('./computer-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./computer-api')>()),
   ...computerApi,
 }))
-vi.mock('./api', () => ({ addManagedGitHubConnection: vi.fn() }))
+vi.mock('./api', () => ({
+  addManagedGitHubConnection: vi.fn(),
+  claimManagedAgentChannelIdentity: vi.fn(),
+  disconnectManagedAgentConnection: vi.fn(),
+  displayManagedAgentName: (agent: { id: string }) => agent.id,
+  getManagedAgentConnections: vi.fn(() => Promise.resolve([])),
+  getManagedAgents: vi.fn(() => Promise.resolve([])),
+  getManagedGitHubConnections: vi.fn(() =>
+    Promise.resolve({ connections: [] }),
+  ),
+  linkManagedAgentConnection: vi.fn(),
+}))
 const capture = vi.hoisted(() => vi.fn())
 vi.mock('posthog-js', () => ({ default: { capture } }))
 const notify = vi.hoisted(() => ({
@@ -39,6 +50,20 @@ const notify = vi.hoisted(() => ({
 vi.mock('@/lib/errors', () => notify)
 
 const { default: ComputerPage } = await import('./Computer')
+const { default: ConnectionsPage } = await import('./Connections')
+const { AuthContext } = await import('@/hooks/useAuth')
+// Subscriptions are managed on Connections (work 083).
+const CONNECTIONS = '/managed-agents/connections'
+const auth = {
+  user: {
+    id: 'u1',
+    email: 'a@b.c',
+    orgId: 'org_1',
+    durableSessionsEnabled: false,
+    infrastructureEnabled: false,
+    computerEnabled: true,
+  },
+} as never
 
 const TOKEN = `sk-ant-oat01-${'a'.repeat(40)}`
 const CODE = 'oc_7KQM2XP94HTRWN3F'
@@ -142,18 +167,24 @@ describe('choosing the coding agent', () => {
       (b) => b.textContent?.trim() === label,
     )
 
-  async function show(status: object, until: string) {
+  async function show(status: object, until: string, path = '/computer') {
     computerApi.getComputer.mockResolvedValue(status)
     if ('slack' in status && (status.slack as { installed: boolean }).installed)
       computerApi.getComputerSessions.mockResolvedValue([session])
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={path === CONNECTIONS ? auth : null}>
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -474,11 +505,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -514,11 +551,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -589,11 +632,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -741,7 +790,8 @@ describe('choosing the coding agent', () => {
           ...onboarded,
           agent: { ...fresh, choice: 'credits', linked: true },
         },
-        'Your agent',
+        'Models',
+        CONNECTIONS,
       )
       expect(button('Connect Claude Code')).toBeDefined()
       expect(button('Use Codex instead')).toBeUndefined()
@@ -784,7 +834,8 @@ describe('choosing the coding agent', () => {
         ...onboarded,
         agent: { ...withCodex, choice: 'credits', linked: true },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     expect(button('Connect Claude Code')).toBeDefined()
     act(() => button('Use Codex instead')!.click())
@@ -861,7 +912,8 @@ describe('choosing the coding agent', () => {
           subscription: subscription('invalid'),
         },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     expect(text()).toContain('This token stopped working.')
     expect(text()).toContain('Runs threads from @maya in Acme.')
@@ -889,7 +941,8 @@ describe('choosing the coding agent', () => {
           subscription: subscription('unchecked'),
         },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     expect(text()).toContain("Saved. We'll check it when your computer starts.")
     expect(button('Resume')).toBeUndefined()
@@ -898,7 +951,8 @@ describe('choosing the coding agent', () => {
   it('links someone not linked to Slack with a code', async () => {
     await show(
       { ...onboarded, agent: { ...fresh, choice: 'credits' } },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     await settle(() => text().includes(`!link ${CODE}`), 'link command')
     expect(computerApi.createConnectCode).toHaveBeenCalledWith('link')
@@ -924,6 +978,23 @@ describe('choosing the coding agent', () => {
     expect(capture).toHaveBeenCalledWith('computer.agent.linked')
     // A used code is never offered again.
     expect(Object.keys(window.localStorage)).toEqual([])
+  })
+
+  it('sums the agent up on the page, and sends changes to Connections', async () => {
+    await show(
+      { ...onboarded, agent: { ...fresh, choice: 'credits' } },
+      'Your agent',
+    )
+    expect(text()).toContain(
+      'Link your Slack account to use your own subscription.',
+    )
+    const link = () =>
+      container.querySelector<HTMLAnchorElement>(
+        'section[aria-labelledby="computer-agent"] a',
+      )!
+    expect(link().textContent).toBe('Link Slack')
+    expect(link().getAttribute('href')).toBe(CONNECTIONS)
+    expect(computerApi.createConnectCode).not.toHaveBeenCalled()
   })
 
   it('is not there for an older backend', async () => {

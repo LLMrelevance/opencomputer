@@ -14,6 +14,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { ApiError } from '@/api/errors'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyCommand, CopyRow } from '@/components/copy-row'
@@ -710,7 +711,7 @@ function CommandConnect({
  * the card becomes the usual connect card, with this Slack user's
  * subscriptions.
  */
-function LinkSlack() {
+export function LinkSlack() {
   const [actedAt, setActedAt] = useState(() => Date.now())
   // Set with the link, before this unmounts: the forgotten code's query is
   // still observed until then, and must not mint again.
@@ -1047,12 +1048,12 @@ export function AgentManage({
 
   if (!subscription) {
     // After Slack, subscriptions belong to Slack users: a person not linked
-    // to one links first (work 083), or connects from Slack.
+    // to one links first, on the Slack card above (work 083).
     if (slackInstalled && !agent.linked) {
       return (
-        <div className="text-muted-foreground space-y-4 text-sm">
+        <div className="text-muted-foreground space-y-1 text-sm">
           <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-          <LinkSlack />
+          <p>Link your Slack account above to use your own subscription.</p>
         </div>
       )
     }
@@ -1196,19 +1197,34 @@ export function AgentChangeAction({ agent }: { agent: ComputerAgent }) {
   )
 }
 
-/** The Your agent card on the page once setup is done. */
+/**
+ * The Your agent line on the page once setup is done: what runs threads, and
+ * where to change it. Subscriptions are managed on Connections, one place
+ * for every account (work 083).
+ */
 export function AgentCard({ status }: { status: ComputerStatus }) {
-  if (!status.agent) return null
+  const { agent } = status
+  if (!agent) return null
+  const needsLink = status.slack.installed && !agent.linked
   return (
     <section aria-labelledby="computer-agent">
       <h2 id="computer-agent" className="mb-3 text-sm font-semibold">
         Your agent
       </h2>
-      <div className="bg-panel rounded-lg border px-5 py-4">
-        <AgentManage
-          agent={status.agent}
-          slackInstalled={status.slack.installed}
-        />
+      <div className="bg-panel flex flex-wrap items-center justify-between gap-3 rounded-lg border px-5 py-3 text-sm">
+        <div className="min-w-0">
+          <p className="text-foreground font-medium">{agentSummary(agent)}</p>
+          {needsLink ? (
+            <p className="text-muted-foreground">
+              Link your Slack account to use your own subscription.
+            </p>
+          ) : null}
+        </div>
+        <Button variant={needsLink ? 'default' : 'outline'} size="sm" asChild>
+          <Link to="/managed-agents/connections">
+            {needsLink ? 'Link Slack' : 'Manage'}
+          </Link>
+        </Button>
       </div>
     </section>
   )
