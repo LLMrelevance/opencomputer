@@ -313,6 +313,17 @@ describe('choosing the coding agent (work 081)', () => {
     expect(agentSummary({ ...fresh, choice: 'credits' })).toBe(
       'Claude Opus 5.5 · free credits',
     )
+    expect(
+      agentSummary({
+        ...connected,
+        choice: 'codex',
+        subscription: {
+          ...connected.subscription!,
+          provider: 'codex',
+          plan: 'plus',
+        },
+      }),
+    ).toBe('Codex · your ChatGPT plan')
   })
 
   it('parses the agent block and refuses unknown health', () => {

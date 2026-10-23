@@ -169,9 +169,9 @@ export type SetupStep = (typeof SETUP_STEPS)[number]
  * The setup step a person is on, or null once set up. The coding agent comes
  * first (work 081), then Slack brings the computer to life, GitHub gives it
  * the code, and the first mention in Slack finishes setup. Step 1 is done
- * once the person has connected a subscription or chosen free credits;
- * choosing Codex records interest and keeps the step open, on reload too,
- * since nothing runs Codex yet. It only blocks before Slack, and only when
+ * once the person has connected a subscription (Claude or, since work 082,
+ * a ChatGPT plan for Codex) or chosen free credits; choosing a card alone
+ * keeps the step open, on reload too. It only blocks before Slack, and only when
  * the backend reports it: existing organizations (all installed) and an
  * older backend never see it, and nobody is sent back to it. Sessions not
  * read yet (or unreadable) never hold the page on setup.
@@ -199,9 +199,10 @@ export function setupStep(
 
 /** The done row of step 1: what runs the person's threads. */
 export function agentSummary(agent: ComputerAgent): string {
-  return agent.subscription
-    ? 'Claude Code · your subscription'
-    : `${agent.managedModel} · free credits`
+  if (!agent.subscription) return `${agent.managedModel} · free credits`
+  return agent.subscription.provider === 'codex'
+    ? 'Codex · your ChatGPT plan'
+    : 'Claude Code · your subscription'
 }
 
 /**

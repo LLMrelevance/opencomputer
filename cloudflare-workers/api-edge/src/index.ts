@@ -94,6 +94,7 @@ import {
   handleManagedLinearCallback,
   handleComputerSlackCallback,
   handleComputerSlackWebhook,
+  handleComputerAgentConnect,
   handleManagedAgentChannelConnection,
   proxyManagedAgents,
 } from "./managed_agents";
@@ -5703,6 +5704,13 @@ export default {
       req.method === "POST"
     ) {
       return handleComputerSlackWebhook(req, env, "interactivity");
+    }
+    // The CLI's one-command subscription connect (work 082): the
+    // dashboard-minted code in the body is the only credential, so it stays
+    // above the API-key check. Every method lands here (non-POST is a 405)
+    // so the path never falls through to the API-key mount.
+    if (path === "/api/managed-agents/computer/agent/connect") {
+      return handleComputerAgentConnect(req, env);
     }
     if (path.startsWith("/api/agent-webhooks/")) {
       return handleAgentWebhookInvocation(req, env);

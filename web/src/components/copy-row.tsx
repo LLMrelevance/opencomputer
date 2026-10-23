@@ -15,11 +15,14 @@ export function CopyRow({
   transform,
   maskable = false,
   className,
+  onCopy,
 }: {
   value: string
   transform?: (s: string) => string
   maskable?: boolean
   className?: string
+  /** Called once the value is on the clipboard. */
+  onCopy?: () => void
 }) {
   const [copied, markCopied] = useTransientFlag(1500)
   const [revealed, setRevealed] = useState(!maskable)
@@ -33,7 +36,10 @@ export function CopyRow({
     // Only show "Copied" if the write actually succeeds (clipboard can be
     // blocked by permissions / insecure context).
     void navigator.clipboard.writeText(copyText).then(
-      () => markCopied(),
+      () => {
+        markCopied()
+        onCopy?.()
+      },
       (e: unknown) => notifyError("Couldn't copy to clipboard.", e),
     )
   }

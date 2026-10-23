@@ -41,6 +41,11 @@ export const COMPUTER_ERROR_MESSAGES: Record<string, string> = {
   computer_agent_disabled: "Your workspace admin turned this off.",
   computer_agent_not_member:
     "You're not a member of this organization's Slack workspace.",
+  // One-command connect (work 082).
+  computer_agent_codex_auth:
+    "That's not a ChatGPT login. Paste the auth.json that codex login wrote.",
+  computer_connect_code_invalid:
+    "That connect code is not valid. Get a new one from the dashboard.",
   invalid_request: "That choice isn't valid.",
 };
 
@@ -94,6 +99,9 @@ function publicComputer(value: unknown): Record<string, unknown> | null {
 }
 
 const AGENT_CHOICES = new Set(["claude", "codex", "credits"]);
+const SUBSCRIPTION_PROVIDERS = new Set(["claude", "codex"]);
+// A ChatGPT plan name from the token's claims ("plus", "pro", "team"...).
+const SUBSCRIPTION_PLAN = /^[A-Za-z0-9_-]{1,32}$/;
 const SUBSCRIPTION_HEALTH = new Set([
   "ok",
   "unchecked",
@@ -123,7 +131,8 @@ function publicSubscription(
   const subscription = record(value);
   if (
     !subscription ||
-    subscription.provider !== "claude" ||
+    typeof subscription.provider !== "string" ||
+    !SUBSCRIPTION_PROVIDERS.has(subscription.provider) ||
     typeof subscription.health !== "string" ||
     !SUBSCRIPTION_HEALTH.has(subscription.health) ||
     typeof subscription.setAt !== "string"
@@ -131,12 +140,17 @@ function publicSubscription(
     return undefined;
   }
   return {
-    provider: "claude",
+    provider: subscription.provider,
     health: subscription.health,
     ...(typeof subscription.limitedUntil === "string"
       ? { limitedUntil: subscription.limitedUntil }
       : {}),
     setAt: subscription.setAt,
+    ...(subscription.provider === "codex" &&
+    typeof subscription.plan === "string" &&
+    SUBSCRIPTION_PLAN.test(subscription.plan)
+      ? { plan: subscription.plan }
+      : {}),
   };
 }
 
@@ -270,6 +284,17 @@ function publicAgentOnly(body: Record<string, unknown>) {
   return { agent: requiredAgent(body.agent) };
 }
 
+function publicConnectCode(body: Record<string, unknown>) {
+  if (
+    typeof body.code !== "string" ||
+    !body.code ||
+    typeof body.expiresAt !== "string"
+  ) {
+    throw new Error("Invalid computer connect code response");
+  }
+  return { code: body.code, expiresAt: body.expiresAt };
+}
+
 /**
  * The contract's routes. `shape` rebuilds the success body from the
  * backend's; `null` means the route answers with no content (unlinking
@@ -306,6 +331,15 @@ const COMPUTER_ROUTES: ReadonlyArray<{
     shape: publicAgentOnly,
   },
   { method: "PUT", suffix: "/computer/agent/choice", shape: publicAgentOnly },
+  // One-command connect (work 082): the dashboard mints a code the CLI redeems
+  // on the public connect route; Codex's auth.json can also come in directly.
+  {
+    method: "POST",
+    suffix: "/computer/agent/connect-code",
+    shape: publicConnectCode,
+  },
+  { method: "PUT", suffix: "/computer/agent/codex", shape: publicAgentOnly },
+  { method: "DELETE", suffix: "/computer/agent/codex", shape: null },
 ];
 
 function computerRoute(method: string, suffix: string) {

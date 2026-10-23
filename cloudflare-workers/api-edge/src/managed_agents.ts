@@ -3230,6 +3230,126 @@ export async function handleComputerSlackWebhook(
   }
 }
 
+// Work 082: the backend bounds the body the same way (CODEX_BODY_MAX_BYTES:
+// twice the 64 KiB auth.json cap, plus room for the code and provider).
+export const COMPUTER_AGENT_CONNECT_MAX_BYTES = 2 * 64 * 1024 + 1024;
+// `occ_<base64url(accountId)>.<base64url nonce>`; anything else is refused here
+// so garbage never reaches the backend.
+const CONNECT_CODE = /^occ_[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{16,200}$/;
+
+function connectProblem(status: number, code: string, message: string) {
+  return Response.json(
+    { error: { code, message } },
+    { status, headers: { "cache-control": "no-store" } },
+  );
+}
+
+/** Reads at most `max` bytes; null when the body is longer. */
+async function boundedBody(
+  request: Request,
+  max: number,
+): Promise<Uint8Array | null> {
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * The CLI's one-command connect (work 082): `opencomputer model connect
+ * claude|codex --code <code>` posts `{code, provider, token|authJson}` here
+ * with no OpenComputer credentials; the dashboard-minted code is the only
+ * auth. It goes to one fixed backend route with only a JSON content type
+ * (no cookies or other headers), the body byte for byte, and the backend's
+ * answer comes back as is. The edge only bounds the size and refuses a body
+ * whose code cannot be one, so this is no open proxy and no oracle.
+ */
+export async function handleComputerAgentConnect(
+  request: Request,
+  env: ManagedAgentsEnv,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: { allow: "POST" },
+    });
+  }
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
+    return connectProblem(
+      415,
+      "invalid_request",
+      "Send the connect request as application/json.",
+    );
+  }
+  const bytes = await boundedBody(request, COMPUTER_AGENT_CONNECT_MAX_BYTES);
+  if (!bytes) {
+    return connectProblem(413, "invalid_request", "The request is too large.");
+  }
+  let code: unknown;
+  try {
+    code = (JSON.parse(new TextDecoder().decode(bytes)) as { code?: unknown })
+      ?.code;
+  } catch {
+    return connectProblem(400, "invalid_request", "The request is not JSON.");
+  }
+  if (typeof code !== "string" || !CONNECT_CODE.test(code)) {
+    return connectProblem(
+      401,
+      "computer_connect_code_invalid",
+      "That connect code is not valid. Get a new one from the dashboard.",
+    );
+  }
+  const base = (
+    env.MANAGED_AGENTS_API_URL ?? DEFAULT_MANAGED_AGENTS_API_URL
+  ).replace(/\/+$/, "");
+  const target = new URL(`${base}/v1/computer/agent/connect`);
+  if (target.protocol !== "https:" && target.hostname !== "localhost") {
+    return connectProblem(
+      503,
+      "computer_not_configured",
+      "Connecting a subscription isn't available yet. Try again shortly.",
+    );
+  }
+  try {
+    const upstream = await fetch(target, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: bytes,
+      redirect: "manual",
+    });
+    const headers = new Headers({ "cache-control": "no-store" });
+    const upstreamType = upstream.headers.get("content-type");
+    if (upstreamType) headers.set("content-type", upstreamType);
+    return new Response(upstream.body, { status: upstream.status, headers });
+  } catch {
+    return connectProblem(
+      502,
+      "computer_unavailable",
+      "Connecting a subscription isn't available right now. Try again shortly.",
+    );
+  }
+}
+
 function channelConnectionPage(
   action: string,
   status: number,

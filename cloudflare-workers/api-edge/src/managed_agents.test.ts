@@ -6750,6 +6750,115 @@ describe("organization computer (work 052)", () => {
     await expect(response.json()).resolves.toEqual(computerStatus);
   });
 
+  // One-command connect (work 082).
+  const codexAgent = {
+    ...agent,
+    choice: "codex",
+    subscription: {
+      provider: "codex",
+      health: "ok",
+      setAt: "2026-10-22T10:00:00.000Z",
+      plan: "plus",
+    },
+  };
+
+  it("passes a ChatGPT subscription and its plan through", async () => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({
+        ...computerStatus,
+        agent: {
+          ...codexAgent,
+          subscription: { ...codexAgent.subscription, accountId: "acct_private" },
+        },
+      }),
+    );
+    await expect(response.json()).resolves.toEqual({
+      ...computerStatus,
+      agent: codexAgent,
+    });
+  });
+
+  it.each([
+    ["a Claude row", { ...agent.subscription, plan: "max" }, agent.subscription],
+    [
+      "a malformed plan",
+      { ...codexAgent.subscription, plan: "<script>" },
+      { provider: "codex", health: "ok", setAt: "2026-10-22T10:00:00.000Z" },
+    ],
+  ])("drops the plan of %s", async (_name, subscription, expected) => {
+    const { response } = await call(
+      "GET",
+      "/computer",
+      Response.json({ ...computerStatus, agent: { ...agent, subscription } }),
+    );
+    const body = (await response.json()) as { agent: { subscription: unknown } };
+    expect(body.agent.subscription).toEqual(expected);
+  });
+
+  it("mints a connect code and returns only its contract", async () => {
+    const code = "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl";
+    const { response, fetchMock } = await call(
+      "POST",
+      "/computer/agent/connect-code",
+      Response.json({
+        code,
+        expiresAt: "2026-10-22T10:10:00.000Z",
+        userId: "user_private",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      code,
+      expiresAt: "2026-10-22T10:10:00.000Z",
+    });
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(target.toString()).toBe(
+      "https://managedagents.test/v1/computer/agent/connect-code",
+    );
+    expect(init.method).toBe("POST");
+  });
+
+  it("refuses a connect-code response without a code", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { response } = await call(
+      "POST",
+      "/computer/agent/connect-code",
+      Response.json({ expiresAt: "2026-10-22T10:10:00.000Z" }),
+    );
+    error.mockRestore();
+    expect(response.status).toBe(502);
+  });
+
+  it("connects a pasted Codex auth.json and returns the agent", async () => {
+    const { response, fetchMock } = await call(
+      "PUT",
+      "/computer/agent/codex",
+      Response.json({ agent: codexAgent, verified: true }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ agent: codexAgent });
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(target.toString()).toBe(
+      "https://managedagents.test/v1/computer/agent/codex",
+    );
+    expect(init.method).toBe("PUT");
+  });
+
+  it("answers a Codex disconnect with no content", async () => {
+    const { response, fetchMock } = await call(
+      "DELETE",
+      "/computer/agent/codex",
+      new Response(null, { status: 204 }),
+    );
+    expect(response.status).toBe(204);
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toBe(
+      "https://managedagents.test/v1/computer/agent/codex",
+    );
+  });
+
   it("forwards a connect with its body and returns the contract", async () => {
     const token = `sk-ant-oat01-${"a".repeat(40)}`;
     const logs = [
@@ -6847,7 +6956,9 @@ describe("organization computer (work 052)", () => {
     ["POST", "/computer/agent/claude"],
     ["GET", "/computer/agent/choice"],
     ["DELETE", "/computer/agent/choice"],
-    ["PUT", "/computer/agent/codex"],
+    ["POST", "/computer/agent/codex"],
+    ["GET", "/computer/agent/connect-code"],
+    ["POST", "/computer/agent/connect"],
     ["GET", "/computer/agent/claude/resume"],
   ])("refuses agent route %s %s outside the contract", async (method, path) => {
     const { response, fetchMock } = await call(method, path, Response.json({}));
@@ -6863,6 +6974,8 @@ describe("organization computer (work 052)", () => {
     [409, "computer_agent_connect_in_slack", "Connect from Slack: !claude connect"],
     [403, "computer_agent_disabled", "Your workspace admin turned this off."],
     [403, "computer_agent_not_member", "You're not a member of this organization's Slack workspace."],
+    [422, "computer_agent_codex_auth", "That's not a ChatGPT login. Paste the auth.json that codex login wrote."],
+    [401, "computer_connect_code_invalid", "That connect code is not valid. Get a new one from the dashboard."],
   ])("maps %s %s to fixed copy", async (status, code, message) => {
     const { response } = await call(
       "PUT",

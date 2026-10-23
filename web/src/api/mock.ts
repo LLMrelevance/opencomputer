@@ -1297,15 +1297,20 @@ let previewBootSince: number | null = null
 // that sends no agent block). The paste form answers by the token: one
 // containing "rejected" is refused, "taken" is someone else's, "unchecked"
 // is saved without a check; any other well-formed one is verified.
+// `?agent=codex` is a connected ChatGPT plan. The one-command connect (work
+// 082) mints a placeholder code; with `?connect=auto` the preview plays the
+// person running it: about six seconds later the card's subscription (Codex
+// when Codex is chosen, else Claude) is connected.
 type PreviewAgent = {
   choice: 'claude' | 'codex' | 'credits' | null
   linked: boolean
   linkedSlackUser?: { id: string; name: string; teamName: string }
   subscription: null | {
-    provider: 'claude'
+    provider: 'claude' | 'codex'
     health: 'ok' | 'unchecked' | 'paused' | 'limited' | 'invalid'
     limitedUntil?: string
     setAt: string
+    plan?: string
   }
   managedModel: string
 }
@@ -1337,24 +1342,36 @@ function previewAgent(): PreviewAgent | null {
         ? { ...base, ...link, choice: 'credits', subscription: null }
         : param === 'unlinked'
           ? { ...base, choice: 'credits', linked: false, subscription: null }
-          : param === 'unchecked' ||
-              param === 'paused' ||
-              param === 'limited' ||
-              param === 'invalid'
+          : param === 'codex'
             ? {
                 ...base,
                 ...link,
-                choice: 'claude',
-                subscription: subscription(param),
+                choice: 'codex',
+                subscription: {
+                  provider: 'codex',
+                  health: 'ok',
+                  setAt: new Date(BASE).toISOString(),
+                  plan: 'plus',
+                },
               }
-            : setup
-              ? { ...base, choice: null, linked: false, subscription: null }
-              : {
+            : param === 'unchecked' ||
+                param === 'paused' ||
+                param === 'limited' ||
+                param === 'invalid'
+              ? {
                   ...base,
                   ...link,
                   choice: 'claude',
-                  subscription: subscription('ok'),
+                  subscription: subscription(param),
                 }
+              : setup
+                ? { ...base, choice: null, linked: false, subscription: null }
+                : {
+                    ...base,
+                    ...link,
+                    choice: 'claude',
+                    subscription: subscription('ok'),
+                  }
   return previewAgentState
 }
 
@@ -1368,12 +1385,31 @@ function previewAgentRequest(path: string, method: string, body: unknown) {
     agent.choice = choice ?? null
     return { agent: structuredClone(agent) }
   }
+  if (path.endsWith('/connect-code')) {
+    if (new URLSearchParams(window.location.search).get('connect') === 'auto')
+      setTimeout(() => {
+        const codex = agent.choice === 'codex'
+        agent.choice = codex ? 'codex' : 'claude'
+        agent.subscription = {
+          provider: codex ? 'codex' : 'claude',
+          health: 'ok',
+          setAt: new Date().toISOString(),
+          ...(codex ? { plan: 'plus' } : {}),
+        }
+      }, 6_000)
+    return {
+      // A placeholder in the real shape; it connects nothing.
+      code: 'occ_cHJldmlldw.preview-code-not-real-0000',
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    }
+  }
   if (path.endsWith('/resume')) {
     if (agent.subscription) agent.subscription.health = 'ok'
     return { agent: structuredClone(agent) }
   }
   if (method === 'DELETE') {
-    agent.subscription = null
+    const provider = path.endsWith('/codex') ? 'codex' : 'claude'
+    if (agent.subscription?.provider === provider) agent.subscription = null
     return undefined
   }
   if (token?.includes('rejected')) {

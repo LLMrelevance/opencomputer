@@ -640,6 +640,138 @@ describe("/api/managed-agents/computer/slack — public mounts", () => {
   });
 });
 
+describe("/api/managed-agents/computer/agent/connect — public CLI connect", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const url = "https://app.opencomputer.dev/api/managed-agents/computer/agent/connect";
+  const code = "occ_b3JnX3Rlc3Q.0123456789abcdefghijkl";
+  const target = { ...env, MANAGED_AGENTS_API_URL: "https://managedagents.test" };
+  const stub = (upstream: Response) => {
+    const fetchSpy = vi.fn(
+      async (_target: URL | RequestInfo, _init?: RequestInit) => upstream,
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    return fetchSpy;
+  };
+
+  it("forwards the body untouched without an API key and passes the answer back", async () => {
+    const fetchSpy = stub(
+      Response.json({ provider: "codex", connected: true }, { status: 200 }),
+    );
+    const body = JSON.stringify({
+      code,
+      provider: "codex",
+      authJson: { auth_mode: "chatgpt", tokens: { id_token: "i", access_token: "a", refresh_token: "r" } },
+    });
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          cookie: "oc_session=private",
+          authorization: "Bearer osb_private",
+        },
+        body,
+      }),
+      target,
+      ctx,
+    );
+
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("cache-control")).toBe("no-store");
+    await expect(resp.json()).resolves.toEqual({ provider: "codex", connected: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [forwardedTo, init] = fetchSpy.mock.calls[0];
+    expect(forwardedTo.toString()).toBe("https://managedagents.test/v1/computer/agent/connect");
+    expect(init?.method).toBe("POST");
+    const headers = new Headers(init?.headers);
+    expect([...headers.keys()]).toEqual(["content-type"]);
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe(body);
+  });
+
+  it("passes a backend refusal through as is", async () => {
+    const refusal = {
+      error: {
+        code: "computer_agent_token_format",
+        message: "That's not a setup token. It starts with sk-ant-oat01-.",
+      },
+    };
+    stub(Response.json(refusal, { status: 422 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, provider: "claude", token: "nope" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(422);
+    await expect(resp.json()).resolves.toEqual(refusal);
+  });
+
+  it.each([
+    ["GET", undefined, undefined, 405],
+    ["PUT", "application/json", JSON.stringify({ code }), 405],
+    ["POST", "text/plain", JSON.stringify({ code }), 415],
+    ["POST", "application/x-www-form-urlencoded", `code=${code}`, 415],
+    ["POST", "application/json", "{not json", 400],
+    ["POST", "application/json", JSON.stringify({ provider: "claude" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "occ_x" }), 401],
+    ["POST", "application/json", JSON.stringify({ code: "osb_0123456789abcdefghijkl" }), 401],
+  ])("refuses %s %s %s at the edge", async (method, contentType, body, status) => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method,
+        ...(contentType ? { headers: { "content-type": contentType } } : {}),
+        ...(body !== undefined ? { body } : {}),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(status);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    if (status === 401) {
+      const answer = (await resp.json()) as { error: { code: string } };
+      expect(answer.error.code).toBe("computer_connect_code_invalid");
+    }
+  });
+
+  it("refuses a body over the bound without reading it all", async () => {
+    const fetchSpy = stub(new Response(null, { status: 200 }));
+    const big = JSON.stringify({ code, provider: "codex", authJson: "x".repeat(200 * 1024) });
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: big,
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(413);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("answers 502 when the backend is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));
+    const resp = await worker.fetch(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, provider: "claude", token: "t" }),
+      }),
+      target,
+      ctx,
+    );
+    expect(resp.status).toBe(502);
+  });
+});
+
 describe("/internal/computer-keys", () => {
   const MANAGED = "managed-secret";
   const sign = async (secret: string, ts: string, body: string): Promise<string> => {

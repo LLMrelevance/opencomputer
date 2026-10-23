@@ -1,5 +1,9 @@
 import posthog from 'posthog-js'
-import type { AgentChoice, ComputerAgentConnect } from './computer-api'
+import type {
+  AgentChoice,
+  ComputerAgentConnect,
+  SubscriptionProvider,
+} from './computer-api'
 
 // Setup step 1 funnel on /computer (serverless-agents-ws work 081,
 // "Telemetry"). Same shape as `lib/billing-onramp.ts`: one named helper per
@@ -23,9 +27,12 @@ export function trackAgentChosen(choice: AgentChoice): void {
   posthog.capture('computer.setup.agent_chosen', { choice })
 }
 
-export function trackAgentConnected(
-  props: Pick<ComputerAgentConnect, 'verified' | 'via'>,
-): void {
+/** `via: 'command'`: connected with the one-command CLI (work 082). */
+export function trackAgentConnected(props: {
+  provider: SubscriptionProvider
+  verified: boolean
+  via: ComputerAgentConnect['via'] | 'command'
+}): void {
   posthog.capture('computer.setup.agent_connected', props)
 }
 
