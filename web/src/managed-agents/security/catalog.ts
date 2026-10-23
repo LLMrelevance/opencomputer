@@ -250,6 +250,7 @@ export function discoveryLines(target: string): string[] {
     'Discover, do not just read:',
     '- Read the repository clone to derive its real routes, parameters and auth flows — that map is what you probe.',
     `- Fingerprint ${target} with scan_surface, then exercise the mapped routes on that host to prove whether the exposure is actually reachable. Stay on ${target}; never touch another host.`,
+    '- A headless Chromium is preinstalled in the sandbox: `npm i playwright` (the browser is already downloaded), then drive it to load pages, reach client-side routes and capture screenshots.',
     '- Record evidence into /workspace as you go (request/response logs, screenshots, a finding.md) so the proof outlives the session.',
     '- Save the finding with memory_save.',
   ]
