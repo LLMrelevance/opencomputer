@@ -41,6 +41,16 @@ export const agentSubscriptionHealthSchema = z.enum([
 
 export const subscriptionProviderSchema = z.enum(['claude', 'codex'])
 
+const agentSubscriptionSchema = z.object({
+  // `codex` is a ChatGPT plan running Codex (work 082).
+  provider: subscriptionProviderSchema,
+  health: agentSubscriptionHealthSchema,
+  limitedUntil: z.string().optional(),
+  setAt: z.string(),
+  /** ChatGPT only: the plan from the login ("plus", "pro"…). */
+  plan: z.string().optional(),
+})
+
 export const computerAgentSchema = z.object({
   choice: agentChoiceSchema.nullable(),
   /** This dashboard user is linked to a Slack user (through the install). */
@@ -48,17 +58,18 @@ export const computerAgentSchema = z.object({
   linkedSlackUser: z
     .object({ id: z.string(), name: z.string(), teamName: z.string() })
     .optional(),
-  subscription: z
+  /** The one that runs threads: the chosen provider's, else the other's. */
+  subscription: agentSubscriptionSchema.nullable(),
+  /**
+   * Every provider's, connected or not (work 083), so each gets a row.
+   * Absent from an older backend: only `subscription` is known.
+   */
+  subscriptions: z
     .object({
-      // `codex` is a ChatGPT plan running Codex (work 082).
-      provider: subscriptionProviderSchema,
-      health: agentSubscriptionHealthSchema,
-      limitedUntil: z.string().optional(),
-      setAt: z.string(),
-      /** ChatGPT only: the plan from the login ("plus", "pro"…). */
-      plan: z.string().optional(),
+      claude: agentSubscriptionSchema.nullable(),
+      codex: agentSubscriptionSchema.nullable(),
     })
-    .nullable(),
+    .optional(),
   /** The model free credits run, e.g. "Claude Opus 5.5". */
   managedModel: z.string(),
   /**
@@ -138,6 +149,7 @@ export type ComputerState = z.infer<typeof computerStateSchema>
 export type Computer = z.infer<typeof computerSchema>
 export type ComputerStatus = z.infer<typeof computerStatusSchema>
 export type ComputerAgent = z.infer<typeof computerAgentSchema>
+export type AgentSubscription = z.infer<typeof agentSubscriptionSchema>
 export type AgentChoice = z.infer<typeof agentChoiceSchema>
 export type SubscriptionProvider = z.infer<typeof subscriptionProviderSchema>
 export type ComputerConnectCode = z.infer<typeof computerConnectCodeSchema>

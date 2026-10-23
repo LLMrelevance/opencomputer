@@ -1298,7 +1298,8 @@ let previewBootSince: number | null = null
 // containing "rejected" is refused, "taken" is someone else's, "unchecked"
 // is saved without a check; any other well-formed one is verified.
 // Unlinked with Slack installed, the card mints a link code (work 083).
-// `?agent=codex` is a connected ChatGPT plan. The one-command connect (work
+// `?agent=codex` is a connected ChatGPT plan; `?agent=both` has Claude and
+// Codex connected, Claude running threads. The one-command connect (work
 // 082) mints a placeholder code; with `?connect=auto` the preview plays the
 // person running it: about six seconds later the card's subscription (Codex
 // when Codex is chosen, else Claude) is connected. `?harnesses=claude,codex`
@@ -1308,6 +1309,7 @@ let previewBootSince: number | null = null
 // refused the way blue refuses a harness it cannot run (409, in its own
 // words).
 type PreviewAgent = {
+  subscriptions?: Record<'claude' | 'codex', PreviewAgent['subscription']>
   harnesses?: string[]
   choice: 'claude' | 'codex' | 'credits' | null
   linked: boolean
@@ -1360,41 +1362,58 @@ function previewAgent(): PreviewAgent | null {
         ? { ...base, ...link, choice: 'credits', subscription: null }
         : param === 'unlinked'
           ? { ...base, choice: 'credits', linked: false, subscription: null }
-          : param === 'codex'
+          : param === 'both'
             ? {
                 ...base,
                 ...link,
-                choice: 'codex',
-                subscription: {
-                  provider: 'codex',
-                  health: 'ok',
-                  setAt: new Date(BASE).toISOString(),
-                  plan: 'plus',
+                harnesses: ['claude', 'codex'],
+                choice: 'claude',
+                subscription: subscription('ok'),
+                subscriptions: {
+                  claude: subscription('ok'),
+                  codex: {
+                    provider: 'codex',
+                    health: 'ok',
+                    setAt: new Date(BASE).toISOString(),
+                    plan: 'plus',
+                  },
                 },
               }
-            : param === 'unchecked' ||
-                param === 'paused' ||
-                param === 'limited' ||
-                param === 'invalid'
+            : param === 'codex'
               ? {
                   ...base,
                   ...link,
-                  choice: 'claude',
-                  subscription: subscription(param),
+                  choice: 'codex',
+                  subscription: {
+                    provider: 'codex',
+                    health: 'ok',
+                    setAt: new Date(BASE).toISOString(),
+                    plan: 'plus',
+                  },
                 }
-              : setup
+              : param === 'unchecked' ||
+                  param === 'paused' ||
+                  param === 'limited' ||
+                  param === 'invalid'
                 ? {
-                    ...base,
-                    choice: connect === 'unavailable' ? 'codex' : null,
-                    linked: false,
-                    subscription: null,
-                  }
-                : {
                     ...base,
                     ...link,
                     choice: 'claude',
-                    subscription: subscription('ok'),
+                    subscription: subscription(param),
                   }
+                : setup
+                  ? {
+                      ...base,
+                      choice: connect === 'unavailable' ? 'codex' : null,
+                      linked: false,
+                      subscription: null,
+                    }
+                  : {
+                      ...base,
+                      ...link,
+                      choice: 'claude',
+                      subscription: subscription('ok'),
+                    }
   return previewAgentState
 }
 

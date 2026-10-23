@@ -191,6 +191,14 @@ describe('choosing the coding agent', () => {
     await settle(() => text().includes(until), until)
   }
 
+  // A button in one subscription's row on the Models card.
+  const rowButton = (row: string, label: string) =>
+    [
+      ...document.body.querySelectorAll(`section[aria-label="${row}"] button`),
+    ].find((b) => b.textContent?.trim() === label) as
+      | HTMLButtonElement
+      | undefined
+
   function openPaste() {
     act(() => button('Or paste a token')!.click())
   }
@@ -793,9 +801,9 @@ describe('choosing the coding agent', () => {
         'Models',
         CONNECTIONS,
       )
-      expect(button('Connect Claude Code')).toBeDefined()
-      expect(button('Use Codex instead')).toBeUndefined()
-      expect(button('Connect Codex')).toBeUndefined()
+      expect(rowButton('Claude Code', 'Connect')).toBeDefined()
+      expect(rowButton('Codex', 'Connect')).toBeUndefined()
+      expect(text()).toContain("Coming soon. We'll let you know.")
     })
   })
 
@@ -837,9 +845,8 @@ describe('choosing the coding agent', () => {
       'Models',
       CONNECTIONS,
     )
-    expect(button('Connect Claude Code')).toBeDefined()
-    act(() => button('Use Codex instead')!.click())
-    act(() => button('Connect Codex')!.click())
+    expect(rowButton('Claude Code', 'Connect')).toBeDefined()
+    act(() => rowButton('Codex', 'Connect')!.click())
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
   })
 
@@ -930,6 +937,42 @@ describe('choosing the coding agent', () => {
     await settle(() => text().includes('Connected'), 'resumed')
   })
 
+  it('shows a row for each subscription, and switches which runs threads', async () => {
+    const codex = {
+      provider: 'codex' as const,
+      health: 'ok' as const,
+      setAt: '2026-10-22T10:00:00Z',
+      plan: 'plus',
+    }
+    const both = {
+      ...withCodex,
+      choice: 'claude' as const,
+      linked: true,
+      subscription: subscription('ok'),
+      subscriptions: { claude: subscription('ok'), codex },
+    }
+    await show({ ...onboarded, agent: both }, 'Models', CONNECTIONS)
+    const row = (name: string) =>
+      document.querySelector(`section[aria-label="${name}"]`)!.textContent
+    expect(row('Claude Code')).toContain('Runs your threads')
+    expect(row('Codex')).not.toContain('Runs your threads')
+    expect(rowButton('Claude Code', 'Use for threads')).toBeUndefined()
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...both,
+      choice: 'codex',
+      subscription: codex,
+    })
+    act(() => rowButton('Codex', 'Use for threads')!.click())
+    await settle(
+      () => row('Codex')?.includes('Runs your threads') === true,
+      'codex runs',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
+    expect(notify.notifySuccess).toHaveBeenCalledWith(
+      'Codex runs your threads now.',
+    )
+  })
+
   it('says an unchecked token is saved on the card', async () => {
     await show(
       {
@@ -969,7 +1012,10 @@ describe('choosing the coding agent', () => {
       },
     })
     refocus()
-    await settle(() => text().includes('Connect Claude Code'), 'connect card')
+    await settle(
+      () => rowButton('Claude Code', 'Connect') !== undefined,
+      'connect card',
+    )
     expect(notify.notifySuccess).toHaveBeenCalledWith(
       'Linked to your Slack account.',
     )
