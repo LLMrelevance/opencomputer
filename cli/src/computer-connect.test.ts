@@ -13,6 +13,7 @@ import {
   codexAuthJson,
   connectError,
   findExecutable,
+  normalizeConnectCode,
   runClaudeSetupToken,
   sendComputerConnect,
   setupTokenCommand,
@@ -23,7 +24,7 @@ import { renderTerminalScreen } from "./terminal-screen.js";
 
 const TOKEN =
   "sk-ant-oat01-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-ZyXwVu-QAA";
-const CODE = "occ_YWNjdF8xMjM.Zm9vYmFyYmF6cXV4cXV1eA";
+const CODE = "oc_7KQM2XP94HTRWN3F";
 
 function parse(provider: "claude" | "codex", args: string[]) {
   return takeModelConnectArgs(provider, args, {
@@ -54,6 +55,21 @@ test("model connect parses --code and --token-stdin", () => {
   const rest = ["--project", "demo"];
   assert.deepEqual(parse("codex", rest), { code: undefined, tokenStdin: false });
   assert.deepEqual(rest, ["--project", "demo"]);
+});
+
+test("connect codes are trimmed and accepted in any case", () => {
+  assert.equal(normalizeConnectCode("  oc_7kqm2xp94htrwn3f\n"), CODE);
+  assert.equal(normalizeConnectCode("OC_7KQM2XP94HTRWN3F"), CODE);
+  assert.deepEqual(parse("codex", ["--code", " Oc_7kQm2Xp94hTrWn3F "]), { code: CODE, tokenStdin: false });
+  for (const bad of [
+    "oc_7KQM2XP94HTRWN3",
+    "oc_7KQM2XP94HTRWN3FF",
+    "oc_7KQM2XP94HTRWN3U",
+    "oc_7KQM 2XP94HTRWN3",
+    "occ_YWNjdF8xMjM.Zm9vYmFy",
+    "7KQM2XP94HTRWN3F",
+  ])
+    assert.equal(normalizeConnectCode(bad), undefined, bad);
 });
 
 test("model connect rejects a missing or malformed code and stray arguments", () => {

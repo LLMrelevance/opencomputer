@@ -47,7 +47,7 @@ It does not require a separate backend account, key, or CLI.
 ## Connect a Claude or ChatGPT plan to your computer
 
 The dashboard (Computer → Agent) shows one command per plan, with a connect
-code that works once and lasts 10 minutes. Run it anywhere; it needs no
+code (like `oc_7KQM2XP94HTRWN3F`) that works once and lasts 10 minutes. Run it anywhere; it needs no
 OpenComputer login:
 
 ```bash

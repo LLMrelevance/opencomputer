@@ -18,6 +18,19 @@ export type ComputerConnectProvider = "claude" | "codex";
 export const DASHBOARD_CONNECT_HINT =
   "Get a connect command from the dashboard (Computer → Agent).";
 
+/** `oc_` + 16 Crockford base32 characters (no I, L, O, U). */
+const CONNECT_CODE = /^oc_[0-9A-HJKMNP-TV-Z]{16}$/;
+
+/**
+ * The canonical connect code (`oc_` + upper-case body), accepting surrounding
+ * whitespace and any letter case; undefined when it is not a connect code.
+ */
+export function normalizeConnectCode(value: string): string | undefined {
+  const trimmed = value.trim();
+  const code = `${trimmed.slice(0, 3).toLowerCase()}${trimmed.slice(3).toUpperCase()}`;
+  return CONNECT_CODE.test(code) ? code : undefined;
+}
+
 export interface ModelConnectArgs {
   code?: string;
   tokenStdin: boolean;
@@ -29,15 +42,15 @@ export function takeModelConnectArgs(
   args: string[],
   take: { option(name: string): string | undefined; flag(name: string): boolean },
 ): ModelConnectArgs {
-  const code = take.option("--code");
+  const rawCode = take.option("--code");
   const tokenStdin = take.flag("--token-stdin");
   if (tokenStdin && provider !== "claude")
     throw new Error("--token-stdin is only for `model connect claude`");
-  // The server is the authority on codes; this only catches a mangled paste.
-  if (code !== undefined && !/^occ_[\x21-\x7e]+$/.test(code))
+  const code = rawCode === undefined ? undefined : normalizeConnectCode(rawCode);
+  if (rawCode !== undefined && code === undefined)
     throw new CLIError(
       "connect_code_invalid",
-      "That is not a connect code (it starts with occ_).",
+      "That is not a connect code (oc_ and 16 letters and digits).",
       `Copy the whole command again. ${DASHBOARD_CONNECT_HINT}`,
     );
   if (provider === "claude" && code === undefined)
