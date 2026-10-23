@@ -29,7 +29,18 @@ vi.mock('./computer-api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./computer-api')>()),
   ...computerApi,
 }))
-vi.mock('./api', () => ({ addManagedGitHubConnection: vi.fn() }))
+vi.mock('./api', () => ({
+  addManagedGitHubConnection: vi.fn(),
+  claimManagedAgentChannelIdentity: vi.fn(),
+  disconnectManagedAgentConnection: vi.fn(),
+  displayManagedAgentName: (agent: { id: string }) => agent.id,
+  getManagedAgentConnections: vi.fn(() => Promise.resolve([])),
+  getManagedAgents: vi.fn(() => Promise.resolve([])),
+  getManagedGitHubConnections: vi.fn(() =>
+    Promise.resolve({ connections: [] }),
+  ),
+  linkManagedAgentConnection: vi.fn(),
+}))
 const capture = vi.hoisted(() => vi.fn())
 vi.mock('posthog-js', () => ({ default: { capture } }))
 const notify = vi.hoisted(() => ({
@@ -39,6 +50,20 @@ const notify = vi.hoisted(() => ({
 vi.mock('@/lib/errors', () => notify)
 
 const { default: ComputerPage } = await import('./Computer')
+const { default: ConnectionsPage } = await import('./Connections')
+const { AuthContext } = await import('@/hooks/useAuth')
+// Subscriptions are managed on Connections (work 083).
+const CONNECTIONS = '/managed-agents/connections'
+const auth = {
+  user: {
+    id: 'u1',
+    email: 'a@b.c',
+    orgId: 'org_1',
+    durableSessionsEnabled: false,
+    infrastructureEnabled: false,
+    computerEnabled: true,
+  },
+} as never
 
 const TOKEN = `sk-ant-oat01-${'a'.repeat(40)}`
 const CODE = 'oc_7KQM2XP94HTRWN3F'
@@ -142,23 +167,37 @@ describe('choosing the coding agent', () => {
       (b) => b.textContent?.trim() === label,
     )
 
-  async function show(status: object, until: string) {
+  async function show(status: object, until: string, path = '/computer') {
     computerApi.getComputer.mockResolvedValue(status)
     if ('slack' in status && (status.slack as { installed: boolean }).installed)
       computerApi.getComputerSessions.mockResolvedValue([session])
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={path === CONNECTIONS ? auth : null}>
+            <MemoryRouter initialEntries={[path]}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
     await settle(() => text().includes(until), until)
   }
+
+  // A button in one subscription's row on the Models card.
+  const rowButton = (row: string, label: string) =>
+    [
+      ...document.body.querySelectorAll(`section[aria-label="${row}"] button`),
+    ].find((b) => b.textContent?.trim() === label) as
+      | HTMLButtonElement
+      | undefined
 
   function openPaste() {
     act(() => button('Or paste a token')!.click())
@@ -474,11 +513,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -514,11 +559,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -589,11 +640,17 @@ describe('choosing the coding agent', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={['/computer']}>
-            <Routes>
-              <Route path="computer" element={<ComputerPage />} />
-            </Routes>
-          </MemoryRouter>
+          <AuthContext.Provider value={null}>
+            <MemoryRouter initialEntries={['/computer']}>
+              <Routes>
+                <Route path="computer" element={<ComputerPage />} />
+                <Route
+                  path="managed-agents/connections"
+                  element={<ConnectionsPage />}
+                />
+              </Routes>
+            </MemoryRouter>
+          </AuthContext.Provider>
         </QueryClientProvider>,
       )
     })
@@ -741,11 +798,12 @@ describe('choosing the coding agent', () => {
           ...onboarded,
           agent: { ...fresh, choice: 'credits', linked: true },
         },
-        'Your agent',
+        'Models',
+        CONNECTIONS,
       )
-      expect(button('Connect Claude Code')).toBeDefined()
-      expect(button('Use Codex instead')).toBeUndefined()
-      expect(button('Connect Codex')).toBeUndefined()
+      expect(rowButton('Claude Code', 'Connect')).toBeDefined()
+      expect(rowButton('Codex', 'Connect')).toBeUndefined()
+      expect(text()).toContain("Coming soon. We'll let you know.")
     })
   })
 
@@ -784,11 +842,11 @@ describe('choosing the coding agent', () => {
         ...onboarded,
         agent: { ...withCodex, choice: 'credits', linked: true },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
-    expect(button('Connect Claude Code')).toBeDefined()
-    act(() => button('Use Codex instead')!.click())
-    act(() => button('Connect Codex')!.click())
+    expect(rowButton('Claude Code', 'Connect')).toBeDefined()
+    act(() => rowButton('Codex', 'Connect')!.click())
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
   })
 
@@ -861,7 +919,8 @@ describe('choosing the coding agent', () => {
           subscription: subscription('invalid'),
         },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     expect(text()).toContain('This token stopped working.')
     expect(text()).toContain('Runs threads from @maya in Acme.')
@@ -878,6 +937,42 @@ describe('choosing the coding agent', () => {
     await settle(() => text().includes('Connected'), 'resumed')
   })
 
+  it('shows a row for each subscription, and switches which runs threads', async () => {
+    const codex = {
+      provider: 'codex' as const,
+      health: 'ok' as const,
+      setAt: '2026-10-22T10:00:00Z',
+      plan: 'plus',
+    }
+    const both = {
+      ...withCodex,
+      choice: 'claude' as const,
+      linked: true,
+      subscription: subscription('ok'),
+      subscriptions: { claude: subscription('ok'), codex },
+    }
+    await show({ ...onboarded, agent: both }, 'Models', CONNECTIONS)
+    const row = (name: string) =>
+      document.querySelector(`section[aria-label="${name}"]`)!.textContent
+    expect(row('Claude Code')).toContain('Runs your threads')
+    expect(row('Codex')).not.toContain('Runs your threads')
+    expect(rowButton('Claude Code', 'Use for threads')).toBeUndefined()
+    computerApi.setAgentChoice.mockResolvedValue({
+      ...both,
+      choice: 'codex',
+      subscription: codex,
+    })
+    act(() => rowButton('Codex', 'Use for threads')!.click())
+    await settle(
+      () => row('Codex')?.includes('Runs your threads') === true,
+      'codex runs',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('codex')
+    expect(notify.notifySuccess).toHaveBeenCalledWith(
+      'Codex runs your threads now.',
+    )
+  })
+
   it('says an unchecked token is saved on the card', async () => {
     await show(
       {
@@ -889,19 +984,63 @@ describe('choosing the coding agent', () => {
           subscription: subscription('unchecked'),
         },
       },
-      'Your agent',
+      'Models',
+      CONNECTIONS,
     )
     expect(text()).toContain("Saved. We'll check it when your computer starts.")
     expect(button('Resume')).toBeUndefined()
   })
 
-  it('sends someone not linked to Slack there to connect', async () => {
+  it('links someone not linked to Slack with a code', async () => {
+    await show(
+      { ...onboarded, agent: { ...fresh, choice: 'credits' } },
+      'Models',
+      CONNECTIONS,
+    )
+    await settle(() => text().includes(`!link ${CODE}`), 'link command')
+    expect(computerApi.createConnectCode).toHaveBeenCalledWith('link')
+    expect(text()).toContain('Or connect from Slack: !claude connect')
+    expect(container.querySelector('input[type="password"]')).toBeNull()
+
+    computerApi.getComputer.mockResolvedValue({
+      ...onboarded,
+      agent: {
+        ...fresh,
+        choice: 'credits',
+        linked: true,
+        linkedSlackUser: { id: 'U1', name: 'maya', teamName: 'Acme' },
+      },
+    })
+    refocus()
+    await settle(
+      () => rowButton('Claude Code', 'Connect') !== undefined,
+      'connect card',
+    )
+    expect(notify.notifySuccess).toHaveBeenCalledWith(
+      'Linked to your Slack account.',
+    )
+    expect(computerApi.createConnectCode).toHaveBeenCalledTimes(1)
+    expect(capture).toHaveBeenCalledWith('computer.agent.link_shown')
+    expect(capture).toHaveBeenCalledWith('computer.agent.linked')
+    // A used code is never offered again.
+    expect(Object.keys(window.localStorage)).toEqual([])
+  })
+
+  it('sums the agent up on the page, and sends changes to Connections', async () => {
     await show(
       { ...onboarded, agent: { ...fresh, choice: 'credits' } },
       'Your agent',
     )
-    expect(text()).toContain('Connect from Slack: !claude connect')
-    expect(container.querySelector('input[type="password"]')).toBeNull()
+    expect(text()).toContain(
+      'Link your Slack account to use your own subscription.',
+    )
+    const link = () =>
+      container.querySelector<HTMLAnchorElement>(
+        'section[aria-labelledby="computer-agent"] a',
+      )!
+    expect(link().textContent).toBe('Link Slack')
+    expect(link().getAttribute('href')).toBe(CONNECTIONS)
+    expect(computerApi.createConnectCode).not.toHaveBeenCalled()
   })
 
   it('is not there for an older backend', async () => {

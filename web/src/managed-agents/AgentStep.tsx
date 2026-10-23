@@ -14,9 +14,11 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { ApiError } from '@/api/errors'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyCommand, CopyRow } from '@/components/copy-row'
+import { ServiceLogo } from '@/components/service-logo'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -35,6 +37,8 @@ import {
   trackAgentConnected,
   trackAgentFailed,
   trackAgentStepShown,
+  trackLinked,
+  trackLinkShown,
 } from './computer-analytics'
 import {
   computerConnectCodeQueryKey,
@@ -51,7 +55,9 @@ import {
   subscriptionProviderSchema,
   type AgentChoice,
   type ComputerAgent,
+  type AgentSubscription,
   type ComputerConnectCode,
+  type ConnectCodePurpose,
   type ComputerStatus,
   type SubscriptionProvider,
 } from './computer-api'
@@ -365,8 +371,9 @@ const computerQueryHash = hashKey(computerQueryKey)
 // A stored code is reused only with this long left to run it.
 const CODE_REUSE_MIN_MS = 60_000
 
-function connectCodeStorageKey(scope: string) {
-  return `opencomputer.computer.connect-code:${scope}`
+function connectCodeStorageKey(scope: string, purpose: ConnectCodePurpose) {
+  const base = `opencomputer.computer.connect-code:${scope}`
+  return purpose === 'link' ? `${base}:link` : base
 }
 
 /**
@@ -411,10 +418,15 @@ function storedConnectCode(
  * only until `renewUntil`: after that a tab left open mints nothing, not
  * even when it is focused again.
  */
-function useConnectCode(renewUntil: number) {
+function useConnectCode(
+  renewUntil: number,
+  purpose: ConnectCodePurpose = 'connect',
+  enabled = true,
+) {
   const auth = useContext(AuthContext)
   const key = connectCodeStorageKey(
     `${auth?.user?.orgId ?? ''}:${auth?.user?.id ?? ''}`,
+    purpose,
   )
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -424,7 +436,7 @@ function useConnectCode(renewUntil: number) {
       const stored = storedConnectCode(key, status?.agent?.subscription?.setAt)
       if (stored) return stored
       const mintedAt = Date.now()
-      const minted = await createConnectCode()
+      const minted = await createConnectCode(purpose)
       try {
         window.localStorage.setItem(
           key,
@@ -435,6 +447,7 @@ function useConnectCode(renewUntil: number) {
       }
       return minted
     },
+    enabled,
     retry: false,
     staleTime: (q) => msUntil(q.state.data?.expiresAt),
     refetchInterval: (q) =>
@@ -695,6 +708,120 @@ function CommandConnect({
 }
 
 /**
+ * Linking this person to their Slack user (work 083): `!link <code>` sent to
+ * the app in Slack. The page re-reads the status until it says linked; then
+ * the card becomes the usual connect card, with this Slack user's
+ * subscriptions.
+ */
+export function LinkSlack() {
+  const [actedAt, setActedAt] = useState(() => Date.now())
+  // Set with the link, before this unmounts: the forgotten code's query is
+  // still observed until then, and must not mint again.
+  const [linked, setLinked] = useState(false)
+  useEffect(() => {
+    trackLinkShown()
+  }, [])
+  const {
+    query: code,
+    renew: renewCode,
+    forget,
+  } = useConnectCode(actedAt + CODE_AUTO_RENEW_FOR_MS, 'link', !linked)
+  const renew = () => {
+    setActedAt(Date.now())
+    renewCode()
+  }
+  useQuery({
+    queryKey: computerQueryKey,
+    queryFn: getComputer,
+    refetchInterval: () => {
+      const waited = Date.now() - actedAt
+      if (waited >= WAIT_FOR_MS) return false
+      return waited < WAIT_FAST_FOR_MS ? WAIT_FAST_MS : WAIT_SLOW_MS
+    },
+  })
+  // Announced once, from the cache: the card swaps in the render that
+  // brings the link, and this unmounts.
+  const queryClient = useQueryClient()
+  const announced = useRef(false)
+  useEffect(() => {
+    const check = (next: ComputerStatus | undefined) => {
+      if (announced.current || !next?.agent?.linked) return
+      announced.current = true
+      setLinked(true)
+      forget()
+      trackLinked()
+      notifySuccess('Linked to your Slack account.')
+    }
+    check(queryClient.getQueryData<ComputerStatus>(computerQueryKey))
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (
+        event.type === 'updated' &&
+        event.query.queryHash === computerQueryHash
+      )
+        check(event.query.state.data as ComputerStatus | undefined)
+    })
+  }, [queryClient, forget])
+
+  const codeValue = code.data?.code
+  const lead = <>Link your Slack account: send this to the app in Slack.</>
+  return (
+    <div className="space-y-3">
+      {code.isError && !code.data ? (
+        <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+          <p role="alert" className="text-destructive">
+            {connectErrorCopy(code.error)}
+          </p>
+          <Button size="sm" variant="outline" onClick={renew}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <div className="bg-muted/60 text-foreground space-y-3 rounded-lg p-4">
+          {codeValue ? (
+            <CopyCommand
+              value={`!link ${codeValue}`}
+              lead={lead}
+              onCopy={() => setActedAt(Date.now())}
+            />
+          ) : (
+            <>
+              <p>{lead}</p>
+              <div
+                className="bg-panel-2 text-muted-foreground flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]"
+                aria-busy
+              >
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                Getting your code…
+              </div>
+            </>
+          )}
+          <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="flex items-center gap-1.5" aria-live="polite">
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+              Waiting for it in Slack…
+            </span>
+            <span>Works once, for 10 minutes.</span>
+            <Button
+              variant="link"
+              size="xs"
+              className="text-muted-foreground h-auto px-0 text-xs underline"
+              disabled={code.isFetching}
+              onClick={renew}
+            >
+              Get a new code
+            </Button>
+          </div>
+        </div>
+      )}
+      <p>
+        Or connect from Slack: <Cmd>!claude connect</Cmd> or{' '}
+        <Cmd>!codex connect</Cmd>
+      </p>
+    </div>
+  )
+}
+
+/**
  * The paste form. The token lives in the field only until it is sent, and
  * then in a ref only until the server answers: the field is a password
  * field, never autocompleted, and emptied on submit; the ref is emptied and
@@ -872,10 +999,31 @@ function healthLine(
       })}.`
 }
 
+/** Each subscription's row: its mark, and what it takes. */
+const PROVIDER_ROW: Record<
+  SubscriptionProvider,
+  { logo: 'claude' | 'openai'; plans: string }
+> = {
+  claude: { logo: 'claude', plans: 'Claude Pro or Max' },
+  codex: { logo: 'openai', plans: 'ChatGPT Plus or Pro' },
+}
+
+/** Every provider's subscription, from an older backend's one if need be. */
+function subscriptionsOf(
+  agent: ComputerAgent,
+): Record<SubscriptionProvider, AgentSubscription | null> {
+  if (agent.subscriptions) return agent.subscriptions
+  const one = agent.subscription
+  return {
+    claude: one?.provider === 'claude' ? one : null,
+    codex: one?.provider === 'codex' ? one : null,
+  }
+}
+
 /**
- * What runs the person's threads, and its housekeeping: health, Resume,
- * Replace, Disconnect; or how to connect one. The Your agent card after
- * setup.
+ * The person's subscriptions, one row each whether connected or not (work
+ * 083): health, Connect, Replace, Resume, Disconnect, and which one runs
+ * their threads. The Models card on Connections.
  */
 export function AgentManage({
   agent,
@@ -884,18 +1032,53 @@ export function AgentManage({
   agent: ComputerAgent
   slackInstalled: boolean
 }) {
+  const needsLink = slackInstalled && !agent.linked
+  const linked = linkedSlackUserLine(agent, slackInstalled)
+  const subscriptions = subscriptionsOf(agent)
+  return (
+    <div className="text-muted-foreground space-y-3 text-sm">
+      <div className="space-y-0.5">
+        <p className="text-foreground font-medium">{agentSummary(agent)}</p>
+        {needsLink ? (
+          // After Slack, subscriptions belong to Slack users: a person not
+          // linked to one links first, on the Slack card above.
+          <p>Link your Slack account above to use your own subscription.</p>
+        ) : linked ? (
+          <p>{linked}</p>
+        ) : null}
+      </div>
+      <div className="divide-y rounded-lg border">
+        {subscriptionProviderSchema.options.map((provider) => (
+          <ProviderRow
+            key={provider}
+            agent={agent}
+            provider={provider}
+            subscription={subscriptions[provider]}
+            locked={needsLink}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ProviderRow({
+  agent,
+  provider,
+  subscription,
+  locked,
+}: {
+  agent: ComputerAgent
+  provider: SubscriptionProvider
+  subscription: AgentSubscription | null
+  locked: boolean
+}) {
   const { setAgent, reread } = useAgentCache()
-  const [replacing, setReplacing] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
-  // Which subscription to connect when there is none: only the harnesses
-  // this computer can run (the rollout gate), the chosen one first.
-  const [picked, setPicked] = useState<SubscriptionProvider>(
-    agent.choice === 'codex' ? 'codex' : 'claude',
-  )
-  const available = subscriptionProviderSchema.options.filter((provider) =>
-    isHarnessAvailable(agent, provider),
-  )
-  const connecting = available.includes(picked) ? picked : available[0]
+  const available = isHarnessAvailable(agent, provider)
+  const name = PROVIDER_NAME[provider]
+  const runs = agent.subscription?.provider === provider
   const resume = useMutation({
     mutationFn: resumeClaudeSubscription,
     onSuccess: async (next) => {
@@ -907,129 +1090,140 @@ export function AgentManage({
       notifyError("Couldn't resume.", error)
     },
   })
+  const use = useMutation({
+    mutationFn: () => setAgentChoice(provider),
+    onSuccess: async (next) => {
+      await setAgent(next)
+      trackAgentChosen(provider)
+      notifySuccess(`${name} runs your threads now.`)
+    },
+    onError: (error) => notifyError("Couldn't switch.", error),
+  })
   const disconnect = useMutation({
     mutationFn: disconnectSubscription,
-    onSuccess: (_, provider) => {
+    onSuccess: () => {
       setConfirmDisconnect(false)
-      notifySuccess(`${PROVIDER_NAME[provider]} is disconnected.`)
+      notifySuccess(`${name} is disconnected.`)
       reread()
     },
     onError: (error) => notifyError("Couldn't disconnect.", error),
   })
-  const { subscription } = agent
-
-  const linked = linkedSlackUserLine(agent, slackInstalled)
-  const linkedLine = linked ? <p>{linked}</p> : null
-
-  if (!subscription) {
-    // After Slack, a person not linked to a Slack user connects there: the
-    // token belongs to whoever asks in Slack.
-    if (slackInstalled && !agent.linked) {
-      return (
-        <div className="text-muted-foreground space-y-2 text-sm">
-          <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-          <p>{SLACK_INSTRUCTION}</p>
-        </div>
-      )
-    }
-    const others = available.filter((provider) => provider !== connecting)
-    return (
-      <div className="text-muted-foreground space-y-4 text-sm">
-        <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-        {linkedLine}
-        {connecting ? (
-          <SubscriptionConnect
-            key={connecting}
-            provider={connecting}
-            mintOnShow={false}
-          />
-        ) : null}
-        {others.map((other) => (
-          <Button
-            key={other}
-            variant="link"
-            size="sm"
-            className="text-muted-foreground h-auto px-0"
-            onClick={() => setPicked(other)}
-          >
-            Use {PROVIDER_NAME[other]} instead
-          </Button>
-        ))}
-      </div>
-    )
-  }
-
-  const name = PROVIDER_NAME[subscription.provider]
   // Resume is Claude's: a ChatGPT login that stopped working signs in again.
   const canResume =
-    subscription.provider === 'claude' &&
-    (subscription.health === 'paused' || subscription.health === 'invalid')
+    provider === 'claude' &&
+    (subscription?.health === 'paused' || subscription?.health === 'invalid')
+  const status = subscription
+    ? healthLine(subscription)
+    : available
+      ? 'Not connected'
+      : "Coming soon. We'll let you know."
+
   return (
-    <div className="text-muted-foreground space-y-4 text-sm">
-      <div className="space-y-1">
-        <p className="text-foreground font-medium">{agentSummary(agent)}</p>
-        <p
-          className={cn(
-            subscription.health === 'invalid' && 'text-destructive',
-          )}
-        >
-          {healthLine(subscription)}
-        </p>
-        {linkedLine}
-      </div>
-      {replacing ? (
-        <SubscriptionConnect
-          provider={subscription.provider}
-          replacing
-          onDone={() => setReplacing(false)}
-          onCancel={() => setReplacing(false)}
-        />
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {canResume ? (
-            <Button
-              size="sm"
-              onClick={() => resume.mutate()}
-              disabled={resume.isPending}
-            >
-              {resume.isPending ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : null}
-              Resume
-            </Button>
-          ) : null}
-          {isHarnessAvailable(agent, subscription.provider) ? (
-            // A login whose harness the gate switched off can still be
-            // disconnected, not signed in again.
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setReplacing(true)}
-            >
-              {subscription.provider === 'codex' ? 'Reconnect' : 'Replace'}
-            </Button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-destructive"
-            onClick={() => setConfirmDisconnect(true)}
-          >
-            Disconnect
-          </Button>
+    <section aria-label={name} className="space-y-3 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+          <ServiceLogo
+            service={PROVIDER_ROW[provider].logo}
+            className="text-foreground size-4"
+          />
         </div>
-      )}
+        <div className="min-w-0 flex-1">
+          <p className="text-foreground font-medium">
+            {name}
+            {runs ? (
+              <span className="bg-muted text-muted-foreground ml-2 rounded px-1.5 py-0.5 text-xs font-normal">
+                Runs your threads
+              </span>
+            ) : null}
+          </p>
+          <p
+            className={cn(
+              'text-xs',
+              subscription?.health === 'invalid' && 'text-destructive',
+            )}
+          >
+            {subscription?.plan
+              ? `ChatGPT ${subscription.plan.charAt(0).toUpperCase()}${subscription.plan.slice(1)} · ${status}`
+              : subscription
+                ? status
+                : `${PROVIDER_ROW[provider].plans} · ${status}`}
+          </p>
+        </div>
+        {locked || connecting ? null : (
+          <div className="flex flex-wrap items-center gap-1">
+            {canResume ? (
+              <Button
+                size="sm"
+                onClick={() => resume.mutate()}
+                disabled={resume.isPending}
+              >
+                {resume.isPending ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : null}
+                Resume
+              </Button>
+            ) : null}
+            {subscription && !runs && available ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => use.mutate()}
+                disabled={use.isPending}
+              >
+                Use for threads
+              </Button>
+            ) : null}
+            {available ? (
+              // A login whose harness the gate switched off can still be
+              // disconnected, not signed in again.
+              <Button
+                size="sm"
+                variant={subscription ? 'ghost' : 'outline'}
+                onClick={() => setConnecting(true)}
+              >
+                {!subscription
+                  ? 'Connect'
+                  : provider === 'codex'
+                    ? 'Reconnect'
+                    : 'Replace'}
+              </Button>
+            ) : null}
+            {subscription ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => setConfirmDisconnect(true)}
+              >
+                Disconnect
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </div>
+      {connecting ? (
+        <SubscriptionConnect
+          provider={provider}
+          replacing={Boolean(subscription)}
+          onDone={() => setConnecting(false)}
+          onCancel={() => setConnecting(false)}
+        />
+      ) : null}
       <ConfirmDialog
         open={confirmDisconnect}
         onOpenChange={setConfirmDisconnect}
         title={`Disconnect ${name}?`}
-        description={`Threads run on free credits (${agent.managedModel}) until you connect it again.`}
+        description={
+          runs
+            ? `Threads run on free credits (${agent.managedModel}) until you connect one again.`
+            : `${name} stays off until you connect it again.`
+        }
         confirmLabel="Disconnect"
         destructive
         pending={disconnect.isPending}
-        onConfirm={() => disconnect.mutate(subscription.provider)}
+        onConfirm={() => disconnect.mutate(provider)}
       />
-    </div>
+    </section>
   )
 }
 
@@ -1072,19 +1266,34 @@ export function AgentChangeAction({ agent }: { agent: ComputerAgent }) {
   )
 }
 
-/** The Your agent card on the page once setup is done. */
+/**
+ * The Your agent line on the page once setup is done: what runs threads, and
+ * where to change it. Subscriptions are managed on Connections, one place
+ * for every account (work 083).
+ */
 export function AgentCard({ status }: { status: ComputerStatus }) {
-  if (!status.agent) return null
+  const { agent } = status
+  if (!agent) return null
+  const needsLink = status.slack.installed && !agent.linked
   return (
     <section aria-labelledby="computer-agent">
       <h2 id="computer-agent" className="mb-3 text-sm font-semibold">
         Your agent
       </h2>
-      <div className="bg-panel rounded-lg border px-5 py-4">
-        <AgentManage
-          agent={status.agent}
-          slackInstalled={status.slack.installed}
-        />
+      <div className="bg-panel flex flex-wrap items-center justify-between gap-3 rounded-lg border px-5 py-3 text-sm">
+        <div className="min-w-0">
+          <p className="text-foreground font-medium">{agentSummary(agent)}</p>
+          {needsLink ? (
+            <p className="text-muted-foreground">
+              Link your Slack account to use your own subscription.
+            </p>
+          ) : null}
+        </div>
+        <Button variant={needsLink ? 'default' : 'outline'} size="sm" asChild>
+          <Link to="/managed-agents/connections">
+            {needsLink ? 'Link Slack' : 'Manage'}
+          </Link>
+        </Button>
       </div>
     </section>
   )

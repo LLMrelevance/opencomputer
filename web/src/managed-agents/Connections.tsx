@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ExternalLink, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { Cpu, ExternalLink, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { GithubMark } from '@/components/github-mark'
@@ -30,12 +30,14 @@ import {
   navigateAuthorizationWindow,
   openAuthorizationWindow,
 } from './authorization-window'
+import { AgentManage, LinkSlack } from './AgentStep'
 import { computerQueryKey, getComputer } from './computer-api'
 import { SlackInstallButton, UnlinkSlackDialog } from './computer-slack'
 import { slackLinks } from './computer-state'
 
 // The organization's connections: the Slack app the computer answers in and
-// the GitHub accounts it works in, then, less prominently, the Google and
+// the GitHub accounts it works in, each person's model subscriptions (and
+// the Slack user they belong to, work 083), then, less prominently, the Google and
 // Linear accounts agents call through callService(). Serverless agents also
 // send people here to link a channel identity or connect an account
 // (`?channel_link=…`, `?connect=1&service=…`).
@@ -193,6 +195,7 @@ export default function ManagedAgentConnections() {
         )}
 
         {computerEnabled ? <SlackConnection /> : null}
+        {computerEnabled ? <ModelConnection /> : null}
         <GitHubConnection />
         <OtherConnections />
       </div>
@@ -340,6 +343,7 @@ function SlackConnection() {
               </>
             }
           />
+          <SlackYou />
           <UnlinkSlackDialog
             teamName={slack.teamName}
             open={confirmUnlink}
@@ -347,6 +351,53 @@ function SlackConnection() {
           />
         </>
       ) : null}
+    </ServiceCard>
+  )
+}
+
+/**
+ * Who you are in Slack: subscriptions belong to Slack users, so a person not
+ * linked to one links here, by sending a code to the app (work 083).
+ */
+function SlackYou() {
+  const status = useQuery({ queryKey: computerQueryKey, queryFn: getComputer })
+  const agent = status.data?.agent
+  if (!agent) return null
+  const user = agent.linkedSlackUser
+  if (agent.linked)
+    return (
+      <ServiceRow
+        title={user?.name ? `@${user.name}` : 'Linked'}
+        detail="You, in Slack"
+      />
+    )
+  return (
+    <div className="text-muted-foreground border-t py-3 pr-5 pl-18 text-sm">
+      <LinkSlack />
+    </div>
+  )
+}
+
+/**
+ * Your model subscription: what runs your threads, its health, Replace and
+ * Disconnect, or how to connect one. Per person, unlike the rest of the page.
+ */
+function ModelConnection() {
+  const status = useQuery({ queryKey: computerQueryKey, queryFn: getComputer })
+  const agent = status.data?.agent
+  if (!agent) return null
+  return (
+    <ServiceCard
+      icon={<Cpu className="size-4" aria-hidden />}
+      title="Models"
+      summary="Your Claude or ChatGPT subscription runs your threads."
+    >
+      <div className="py-4 pr-5 pl-18">
+        <AgentManage
+          agent={agent}
+          slackInstalled={status.data?.slack.installed ?? false}
+        />
+      </div>
     </ServiceCard>
   )
 }
