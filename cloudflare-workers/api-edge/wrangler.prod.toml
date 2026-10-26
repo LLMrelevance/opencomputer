@@ -20,6 +20,12 @@ routes = [
   { pattern = "*.sb.opencomputer.dev/*", zone_name = "opencomputer.dev" },
 ]
 
+# The deployed version on computer-API telemetry (work 084). The optional
+# TINYBIRD_API_URL and TINYBIRD_APPEND_TOKEN secrets switch it on; unset, the
+# edge sends nothing.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # Workers Logs: without this, exceptions behind a Cloudflare 1101 Ray ID are
 # only visible to a live `wrangler tail`.
 [observability]

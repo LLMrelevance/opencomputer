@@ -39,6 +39,12 @@ routes = [
   { pattern = "app2.opensandbox.ai", zone_name = "opensandbox.ai", custom_domain = true },
 ]
 
+# The deployed version on computer-API telemetry (work 084). The optional
+# TINYBIRD_API_URL and TINYBIRD_APPEND_TOKEN secrets switch it on; unset, the
+# edge sends nothing.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # Static assets — the dashboard SPA. Built from `web/` by the deploy script
 # (web/dist/ → cloudflare-workers/api-edge/assets/). The Worker handles
 # explicit API/auth/webhook paths; anything else falls through to the SPA's

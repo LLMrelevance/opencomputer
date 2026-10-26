@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "./index";
 import { hashAPIKey } from "./api_keys";
 import { computerApiFamily, isComputerApiRoute } from "./computer_api";
+import { computerApiRouteFamily } from "./computer_telemetry";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -898,5 +899,191 @@ describe("key create and revoke tell blue", () => {
     expect(res.status).toBe(201);
     await settle();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("computer API telemetry: one edge.request per call", () => {
+  const TB = "https://tb.test";
+  const SID = "cs_0123456789abcdef";
+  const tbEnv = (db: FakeDB, extra: Partial<Record<string, unknown>> = {}) =>
+    testEnv(db, {
+      TINYBIRD_API_URL: TB,
+      TINYBIRD_APPEND_TOKEN: "p.test-append",
+      CF_VERSION_METADATA: { id: "v-123" },
+      ...extra,
+    });
+
+  /** Blue answers with its Server-Timing; Tinybird's POSTs are collected. */
+  function stubFetch(blue: () => Response = () =>
+    Response.json({ ok: true }, { headers: { "server-timing": "blue;dur=12.6" } })) {
+    const lines: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).startsWith(TB)) {
+        expect(String(url)).toBe(`${TB}/v0/events?name=calvin_events&wait=false`);
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer p.test-append");
+        for (const l of String(init?.body).split("\n")) lines.push(JSON.parse(l));
+        return new Response("{}", { status: 202 });
+      }
+      return blue();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, lines };
+  }
+
+  const dataOf = (line: Record<string, unknown>) => JSON.parse(String(line.data)) as Record<string, unknown>;
+
+  it("reports a proxied call: route family, status, upstream, blue_ms, ids only, via waitUntil", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const { lines } = stubFetch();
+    const { ctx, settle } = testCtx();
+    const res = await worker.fetch(
+      api(`/sessions/${SID}/events?after=ev_1&wait=30`, { headers: { "x-api-key": key, "user-agent": "opc/1.2.3" } }),
+      tbEnv(db),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(ctx.waitUntil).toHaveBeenCalled(); // off the response path
+    await settle();
+    expect(lines).toHaveLength(1);
+    const [e] = lines;
+    expect(e).toMatchObject({
+      schema_version: 1,
+      event_name: "edge.request",
+      service_name: "edge",
+      service_version: "v-123",
+      surface: "cli",
+      session_key: SID,
+      org_id: ORG,
+      outcome: "completed",
+      synthetic: false,
+    });
+    expect(typeof e.duration_ms).toBe("number");
+    expect(dataOf(e)).toEqual({
+      route: "events",
+      method: "GET",
+      status: 200,
+      upstream: "blue",
+      auth: "ok",
+      via: "key",
+      rate_limited: false,
+      blue_ms: 13,
+      key_id: db.keys.get(await hashAPIKey(key))!.id,
+    });
+    // Data policy: no paths, query strings, key secrets, user agents or IPs.
+    const text = JSON.stringify(e);
+    expect(text).not.toContain(key);
+    expect(text).not.toContain("/");
+    expect(text).not.toContain("ev_1");
+    expect(text).not.toContain("opc/1.2.3");
+  });
+
+  it.each([
+    ["missing", {}, 401],
+    ["invalid", { "x-api-key": "osb_nope" }, 401],
+    ["conflicting", { "x-api-key": "osb_a", authorization: "Bearer osb_b" }, 401],
+  ] as const)("classes a refused caller: %s", async (auth, headers, status) => {
+    const { lines } = stubFetch();
+    const { ctx, settle } = testCtx();
+    const res = await worker.fetch(api("/me", { headers }), tbEnv(new FakeDB()), ctx);
+    expect(res.status).toBe(status);
+    await settle();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ outcome: "failed", error_code: String(status) });
+    expect(lines[0]).not.toHaveProperty("org_id");
+    expect(dataOf(lines[0])).toMatchObject({ route: "me", status, upstream: "edge", auth, rate_limited: false });
+  });
+
+  it("marks a rate-limited key", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const { lines } = stubFetch();
+    const { ctx, settle } = testCtx();
+    const limit = vi.fn().mockResolvedValue({ success: false });
+    const res = await worker.fetch(
+      api("/sessions", { headers: { "x-api-key": key } }),
+      tbEnv(db, { COMPUTER_API_RATE_LIMIT: { limit } }),
+      ctx,
+    );
+    expect(res.status).toBe(429);
+    await settle();
+    expect(dataOf(lines[0])).toMatchObject({ route: "sessions", status: 429, upstream: "edge", auth: "ok", rate_limited: true });
+  });
+
+  it("names a dashboard call that needs a key, and the wire Worker as upstream", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const { lines } = stubFetch(() => new Response("x", { status: 200 }));
+    const cookie = await sessionCookie();
+    let t = testCtx();
+    await worker.fetch(api(`/sessions/${SID}/workspace/file?path=a`, { headers: { cookie } }), tbEnv(db), t.ctx);
+    await t.settle();
+    t = testCtx();
+    await worker.fetch(api(`/sessions/${SID}/workspace/file?path=a`, { headers: { "x-api-key": key } }), tbEnv(db), t.ctx);
+    await t.settle();
+    expect(lines.map(dataOf)).toEqual([
+      expect.objectContaining({ route: "workspace", status: 403, auth: "key_required", via: "dashboard", upstream: "edge" }),
+      expect.objectContaining({ route: "workspace", status: 200, auth: "ok", via: "key", upstream: "wire" }),
+    ]);
+    expect(dataOf(lines[1])).not.toHaveProperty("blue_ms");
+  });
+
+  it("sends nothing when Tinybird is not configured", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const { fetchMock, lines } = stubFetch();
+    const { ctx, settle } = testCtx();
+    await worker.fetch(api("/me", { headers: { "x-api-key": key } }), testEnv(db), ctx);
+    await worker.fetch(api("/me", { headers: { "x-api-key": key } }), tbEnv(db, { TINYBIRD_APPEND_TOKEN: " " }), ctx);
+    await settle();
+    expect(lines).toHaveLength(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // blue only
+  });
+
+  it("never fails the call when Tinybird does", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    let tbCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        if (String(url).startsWith(TB)) {
+          tbCalls += 1;
+          throw new Error("down");
+        }
+        return Response.json({ ok: true });
+      }),
+    );
+    const { ctx, settle } = testCtx();
+    const res = await worker.fetch(api("/me", { headers: { "x-api-key": key } }), tbEnv(db), ctx);
+    expect(res.status).toBe(200);
+    await settle();
+    expect(tbCalls).toBe(2); // one retry, then dropped
+  });
+
+  it("maps every documented route to a family", () => {
+    expect(
+      [
+        "/computer/me",
+        "/computer/tickets",
+        "/computer/sessions",
+        `/computer/sessions/${SID}`,
+        `/computer/sessions/${SID}/capabilities`,
+        `/computer/sessions/${SID}/interrupt`,
+        `/computer/sessions/${SID}/turns/tn_1/cancel`,
+        `/computer/sessions/${SID}/events`,
+        `/computer/sessions/${SID}/asks/toolu_1/answer`,
+        `/computer/sessions/${SID}/subagents`,
+        "/computer/secrets",
+        "/computer/me/secrets/X",
+        "/computer/organization/secrets/X",
+        `/computer/sessions/${SID}/secrets/X`,
+        `/computer/sessions/${SID}/workspace/archive`,
+        "/computer/nope",
+      ].map(computerApiRouteFamily),
+    ).toEqual([
+      "me", "tickets", "sessions", "sessions", "sessions", "control", "turns", "events", "asks",
+      "subagents", "secrets", "secrets", "secrets", "secrets", "workspace", "other",
+    ]);
   });
 });

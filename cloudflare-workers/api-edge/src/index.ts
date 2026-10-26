@@ -110,10 +110,16 @@ import {
   withComputerApiCors,
   COMPUTER_API_PREFIX,
 } from "./computer_api";
+import {
+  type EdgeRequestFacts,
+  type EdgeTelemetryEnv,
+  newEdgeRequestFacts,
+  reportEdgeRequest,
+} from "./computer_telemetry";
 import { computerEnabledFor } from "./computer";
 import { createdKeyForSync, revokeComputerKey, syncComputerKey } from "./computer_keys";
 
-export interface Env extends DashboardEnv, AgentFeedbackEnv {
+export interface Env extends DashboardEnv, AgentFeedbackEnv, EdgeTelemetryEnv {
   CF_ADMIN_SECRET: string;
   STRIPE_WEBHOOK_SECRET: string;
   EVENT_SECRET: string;
@@ -4711,15 +4717,35 @@ async function handleComputerApi(
   ctx: ExecutionContext,
   path: string,
 ): Promise<Response> {
-  const method = req.method.toUpperCase();
-  if (method === "OPTIONS") return computerApiPreflight(req, env);
+  if (req.method.toUpperCase() === "OPTIONS") return computerApiPreflight(req, env);
+  // One `edge.request` per call (work 084 instrumentation), sent off the
+  // response path; the duration ends when the response's headers are ready.
   const suffix = path.slice("/api/managed-agents".length);
+  const facts = newEdgeRequestFacts();
+  let response: Response | null = null;
+  try {
+    response = await computerApiCall(req, env, ctx, suffix, facts);
+    return response;
+  } finally {
+    reportEdgeRequest(env, ctx, req, suffix, facts, response);
+  }
+}
+
+async function computerApiCall(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  suffix: string,
+  facts: EdgeRequestFacts,
+): Promise<Response> {
+  const method = req.method.toUpperCase();
   if (!isComputerApiRoute(method, suffix)) {
     return computerApiError(req, 404, "not_found", "No such route.");
   }
 
   const credential = computerApiKey(req);
   if ("conflict" in credential) {
+    facts.auth = "conflicting";
     return computerApiError(
       req,
       401,
@@ -4731,6 +4757,7 @@ async function handleComputerApi(
   let viaKey = false;
   if (credential.key) {
     viaKey = true;
+    facts.via = "key";
     caller = await authenticateKey(credential.key, env, ctx);
     // Entries cached before the key fields existed: re-read the row once, so
     // blue always learns which key acted.
@@ -4741,6 +4768,7 @@ async function handleComputerApi(
     // The only non-user credential is the act-as-org provisioning token, a
     // project-scoped credential: the computer API is a person's.
     if (caller?.scope) {
+      facts.auth = "project_key";
       return computerApiError(req, 403, "forbidden", "This credential cannot use the computer API.", {
         reason: "project_key",
       });
@@ -4753,6 +4781,8 @@ async function handleComputerApi(
         () => true,
       );
       if (!allowed) {
+        facts.auth = "ok";
+        facts.rateLimited = true;
         const response = computerApiError(req, 429, "rate_limited", "Too many requests for this key. Slow down.", {
           retryAfterMs: COMPUTER_API_RATE_LIMIT_RETRY_SEC * 1000,
         });
@@ -4763,9 +4793,11 @@ async function handleComputerApi(
   } else {
     const session = await authDashboard(req, env);
     if (session) {
+      facts.via = "dashboard";
       // A cookie rides along on cross-site requests SameSite=Lax still
       // allows (sibling subdomains); unsafe methods need an allowed Origin.
       if (!SAFE_METHODS.has(method) && !computerApiOriginAllowed(req, env)) {
+        facts.auth = "origin";
         return computerApiError(req, 403, "forbidden", "Cross-origin request refused.", {
           reason: "origin_not_allowed",
         });
@@ -4776,6 +4808,7 @@ async function handleComputerApi(
         .bind(session.orgID, session.userID)
         .first<{ role: string }>();
       if (!membership) {
+        facts.auth = "not_member";
         return computerApiError(req, 401, "unauthenticated", "Sign in again.");
       }
       caller = {
@@ -4789,9 +4822,13 @@ async function handleComputerApi(
     }
   }
   if (!caller) {
+    facts.auth = credential.key ? "invalid" : "missing";
     return computerApiError(req, 401, "unauthenticated", "Missing or invalid API key.");
   }
+  facts.orgId = caller.orgID;
+  if (caller.key?.id) facts.keyId = caller.key.id;
   if (!computerEnabledFor(env, caller.orgID)) {
+    facts.auth = "disabled";
     return computerApiError(req, 404, "not_found", "No such route.");
   }
 
@@ -4799,6 +4836,7 @@ async function handleComputerApi(
   if (workspace) {
     // The wire Worker checks the caller's key itself; a cookie is not one.
     if (!viaKey) {
+      facts.auth = "key_required";
       return computerApiError(
         req,
         403,
@@ -4807,8 +4845,12 @@ async function handleComputerApi(
         { reason: "key_required" },
       );
     }
+    facts.auth = "ok";
+    facts.upstream = "wire";
     return proxyComputerWorkspace(req, env, workspace);
   }
+  facts.auth = "ok";
+  facts.upstream = "blue";
   return proxyManagedAgents(req, env, caller, "/api/managed-agents");
 }
 
