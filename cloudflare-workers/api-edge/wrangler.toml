@@ -90,6 +90,15 @@ namespace_id = "2026102321"
   limit = 20
   period = 60
 
+# Computer API (work 084): HTTP calls per API key, ahead of blue.
+[[ratelimits]]
+name = "COMPUTER_API_RATE_LIMIT"
+namespace_id = "2026102621"
+
+  [ratelimits.simple]
+  limit = 600
+  period = 60
+
 [[durable_objects.bindings]]
 name = "CREDIT_ACCOUNT"
 class_name = "CreditAccount"

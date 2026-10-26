@@ -124,6 +124,8 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv {
   CLI_AUTH_EXCHANGE_RATE_LIMIT: RateLimit;
   // Public CLI connect (work 082), per caller IP ahead of blue.
   COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
+  // The computer API (work 084): HTTP calls per API key, ahead of blue.
+  COMPUTER_API_RATE_LIMIT?: RateLimit;
   // The computer API (work 084): the wire Worker's HTTP base for workspace
   // files (default https://wire.opencomputer.dev), and extra browser origins
   // allowed to call /api/managed-agents/computer/* (comma-separated; the
@@ -4693,6 +4695,9 @@ async function authCLIExchange(req: Request, env: Env, ctx?: ExecutionContext): 
 // ── computer API (work 084) ─────────────────────────────────────────────
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+// The Workers rate limit counts per 60 s window; a refused caller waits for
+// the next one.
+const COMPUTER_API_RATE_LIMIT_RETRY_SEC = 60;
 
 /**
  * /api/managed-agents/computer/*: authenticates an API key (`x-api-key` or
@@ -4733,10 +4738,27 @@ async function handleComputerApi(
       await refreshAuth(env, await hashAPIKey(credential.key));
       caller = await authenticateKey(credential.key, env, ctx);
     }
+    // The only non-user credential is the act-as-org provisioning token, a
+    // project-scoped credential: the computer API is a person's.
     if (caller?.scope) {
       return computerApiError(req, 403, "forbidden", "This credential cannot use the computer API.", {
-        reason: "scope_missing",
+        reason: "project_key",
       });
+    }
+    if (caller?.key && env.COMPUTER_API_RATE_LIMIT) {
+      // Per key, ahead of blue. A limiter error fails open: blue still
+      // authorizes every call.
+      const allowed = await env.COMPUTER_API_RATE_LIMIT.limit({ key: caller.key.id }).then(
+        (r) => r.success,
+        () => true,
+      );
+      if (!allowed) {
+        const response = computerApiError(req, 429, "rate_limited", "Too many requests for this key. Slow down.", {
+          retryAfterMs: COMPUTER_API_RATE_LIMIT_RETRY_SEC * 1000,
+        });
+        response.headers.set("retry-after", String(COMPUTER_API_RATE_LIMIT_RETRY_SEC));
+        return response;
+      }
     }
   } else {
     const session = await authDashboard(req, env);

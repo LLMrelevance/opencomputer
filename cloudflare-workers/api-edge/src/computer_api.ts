@@ -172,6 +172,8 @@ const WIRE_REQUEST_HEADERS = [
   "x-request-id",
   "user-agent",
   "accept",
+  // The archive is compressed only when the caller asks for it.
+  "accept-encoding",
 ];
 
 /** Response headers passed back from the wire Worker. */

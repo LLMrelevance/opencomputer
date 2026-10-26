@@ -164,6 +164,36 @@ async function sessionCookie(secret = "test-session-secret"): Promise<string> {
   return `oc_session=${input}.${b64url(sig)}`;
 }
 
+// An act-as-org provisioning token (sessions-api): the project-scoped credential.
+async function provisionToken(secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const now = Math.floor(Date.now() / 1000);
+  const input =
+    b64url(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" }))) +
+    "." +
+    b64url(
+      enc.encode(
+        JSON.stringify({
+          iss: "sessions-api",
+          aud: "opencomputer-api",
+          scope: "sandbox-provision",
+          org_id: ORG,
+          iat: now,
+          exp: now + 600,
+        }),
+      ),
+    );
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(input));
+  return `${input}.${b64url(sig)}`;
+}
+
 function claims(token: string): Record<string, unknown> {
   return JSON.parse(
     atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
@@ -291,6 +321,96 @@ describe("computer API allowlist", () => {
     );
     expect(res.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a project-scoped credential with 403 project_key", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const token = await provisionToken("provision-secret");
+    const res = await worker.fetch(
+      api("/me", { headers: { authorization: `Bearer ${token}` } }),
+      testEnv(new FakeDB(), { OC_PROVISION_SECRET: "provision-secret" }),
+      testCtx().ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-request-id")).toMatch(/^req_/);
+    const body = (await res.json()) as { error: Record<string, unknown> };
+    expect(body.error).toMatchObject({ code: "forbidden", reason: "project_key", retryable: false });
+    expect(body.error.message).toEqual(expect.any(String));
+    expect(body.error.requestId).toMatch(/^req_/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves a key's missing scope to blue, passing its 403 through", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db, { scopes: "sandbox:*" });
+    const refusal = {
+      error: { code: "forbidden", reason: "missing_scope", message: "Needs computer:write.", requestId: "req_blue", retryable: false },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(refusal, { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await worker.fetch(
+      api("/sessions", { method: "POST", headers: { "x-api-key": key, "content-type": "application/json" }, body: "{}" }),
+      testEnv(db),
+      testCtx().ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual(refusal);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("computer API rate limit", () => {
+  it("limits per key id and answers 429 with Retry-After and retryAfterMs", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const limit = vi.fn().mockResolvedValue({ success: false });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await worker.fetch(
+      api("/me", { headers: { "x-api-key": key } }),
+      testEnv(db, { COMPUTER_API_RATE_LIMIT: { limit } }),
+      testCtx().ctx,
+    );
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    const body = (await res.json()) as { error: Record<string, unknown> };
+    expect(body.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 60_000 });
+    expect(body.error.requestId).toMatch(/^req_/);
+    expect(limit).toHaveBeenCalledWith({ key: db.keys.get(await hashAPIKey(key))!.id });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes a key under the limit, and fails open when the limiter errors", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const limit of [
+      vi.fn().mockResolvedValue({ success: true }),
+      vi.fn().mockRejectedValue(new Error("limiter down")),
+    ]) {
+      const res = await worker.fetch(
+        api("/me", { headers: { "x-api-key": key } }),
+        testEnv(db, { COMPUTER_API_RATE_LIMIT: { limit } }),
+        testCtx().ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(limit).toHaveBeenCalledTimes(1);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not count dashboard sessions", async () => {
+    const limit = vi.fn().mockResolvedValue({ success: false });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
+    const res = await worker.fetch(
+      api("/me", { headers: { cookie: await sessionCookie() } }),
+      testEnv(new FakeDB(), { COMPUTER_API_RATE_LIMIT: { limit } }),
+      testCtx().ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(limit).not.toHaveBeenCalled();
   });
 });
 
@@ -567,6 +687,24 @@ describe("workspace files go to the wire Worker", () => {
     const { url, headers } = sent(fetchMock);
     expect(url).toBe("https://wire.opencomputer.dev/v1/sessions/cs_1/workspace/file?path=README.md");
     expect(headers.get("x-api-key")).toBe(key);
+  });
+
+  it("forwards accept-encoding so the archive can come back compressed", async () => {
+    const db = new FakeDB();
+    const key = await addKey(db);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1]), { headers: { "content-type": "application/x-tar", "content-encoding": "zstd" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await worker.fetch(
+      api("/sessions/cs_1/workspace/archive", {
+        headers: { "x-api-key": key, "accept-encoding": "zstd, gzip" },
+      }),
+      testEnv(db),
+      testCtx().ctx,
+    );
+    expect(sent(fetchMock).headers.get("accept-encoding")).toBe("zstd, gzip");
+    expect(res.headers.get("content-encoding")).toBe("zstd");
   });
 
   it("refuses a dashboard session with key_required", async () => {
