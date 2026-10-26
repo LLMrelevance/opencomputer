@@ -55,7 +55,7 @@ import {
   type CellRow,
   type OrgPolicy,
 } from "./create_context_cache";
-import { handleDashboard, type DashboardEnv } from "./dashboard";
+import { authDashboard, handleDashboard, type DashboardEnv } from "./dashboard";
 import { handleAgentFeedback, isAgentFeedbackPath, type AgentFeedbackEnv } from "./agent_feedback";
 import {
   AGENT_SECURITY_NOTIFICATION_PATH,
@@ -84,7 +84,7 @@ import * as secretStores from "./secret_stores";
 import * as snapshots from "./snapshots";
 import * as templates from "./templates";
 import * as webhooks from "./webhooks";
-import { createAPIKey, hashAPIKey } from "./api_keys";
+import { createAPIKey, createAPIKeyWithHash, hashAPIKey } from "./api_keys";
 import { envWithD1Retry } from "./d1_retry";
 import {
   handleAgentWebhookInvocation,
@@ -97,7 +97,21 @@ import {
   handleComputerAgentConnect,
   handleManagedAgentChannelConnection,
   proxyManagedAgents,
+  type AssertedAPIKey,
 } from "./managed_agents";
+import {
+  computerApiError,
+  computerApiKey,
+  computerApiOriginAllowed,
+  computerApiPreflight,
+  computerWorkspaceRoute,
+  isComputerApiRoute,
+  proxyComputerWorkspace,
+  withComputerApiCors,
+  COMPUTER_API_PREFIX,
+} from "./computer_api";
+import { computerEnabledFor } from "./computer";
+import { createdKeyForSync, revokeComputerKey, syncComputerKey } from "./computer_keys";
 
 export interface Env extends DashboardEnv, AgentFeedbackEnv {
   CF_ADMIN_SECRET: string;
@@ -110,6 +124,12 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv {
   CLI_AUTH_EXCHANGE_RATE_LIMIT: RateLimit;
   // Public CLI connect (work 082), per caller IP ahead of blue.
   COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
+  // The computer API (work 084): the wire Worker's HTTP base for workspace
+  // files (default https://wire.opencomputer.dev), and extra browser origins
+  // allowed to call /api/managed-agents/computer/* (comma-separated; the
+  // edge's own origin is always allowed).
+  WIRE_HTTP_URL?: string;
+  COMPUTER_API_CORS_ORIGINS?: string;
   // Dedicated HMAC secret for the Sessions API's minimal Agent Hook exposure
   // alert. It is intentionally not shared with other internal routes.
   OC_SECURITY_NOTIFICATION_SECRET?: string;
@@ -398,6 +418,12 @@ interface Caller {
   // the Slack thread the key was minted for, when the gateway named one.
   principal?: "computer";
   sessionKey?: string;
+  // The key itself, for the computer API's assertion (work 084): blue records
+  // which key acted. Absent on provision tokens and on entries cached before
+  // these fields existed (the computer path re-reads those).
+  key?: AssertedAPIKey;
+  userName?: string | null;
+  userEmail?: string | null;
 }
 
 const COMPUTER_PRINCIPAL = "computer";
@@ -415,7 +441,32 @@ function callerFromRow(row: AuthRow): Caller {
     ...(row.role ? { role: row.role } : {}),
     ...(computer ? { principal: "computer" as const } : {}),
     ...(computer && row.session_key ? { sessionKey: row.session_key } : {}),
+    ...(row.key_id && row.key_hash
+      ? {
+          key: {
+            id: row.key_id,
+            hash: row.key_hash,
+            name: row.key_name ?? "",
+            // api_keys has no project keys: every key belongs to its creator.
+            kind: "user" as const,
+            scopes: (row.key_scopes ?? "")
+              .split(",")
+              .map((scope) => scope.trim())
+              .filter(Boolean),
+            expiresAt: epochToISO(row.expires_at),
+            createdAt: epochToISO(row.key_created_at) ?? new Date(0).toISOString(),
+          },
+          userName: row.user_name ?? null,
+          userEmail: row.user_email ?? null,
+        }
+      : {}),
   };
+}
+
+function epochToISO(seconds: number | null | undefined): string | null {
+  return typeof seconds === "number" && Number.isFinite(seconds)
+    ? new Date(seconds * 1000).toISOString()
+    : null;
 }
 
 interface SandboxCreateResult {
@@ -612,10 +663,13 @@ function bumpLastUsed(env: Env, hash: string, entry: AuthEntry, nowMs: number): 
 }
 
 const AUTH_KEY_SQL = `SELECT k.org_id, k.created_by, k.expires_at, k.session_key,
+          k.id AS key_id, k.key_hash, k.name AS key_name, k.scopes AS key_scopes,
+          k.created_at AS key_created_at, u.name AS user_name, u.email AS user_email,
           CASE WHEN m.role IN ('owner', 'admin') THEN 'admin' ELSE m.role END AS role
      FROM api_keys k
      LEFT JOIN org_memberships m
        ON m.org_id = k.org_id AND m.user_id = k.created_by
+     LEFT JOIN users u ON u.id = k.created_by
     WHERE k.key_hash = ?1`;
 
 // One row shape for both readers. refreshAuth repopulates the same cache tiers
@@ -627,6 +681,13 @@ type AuthRow = {
   expires_at: number | null;
   role: string | null;
   session_key?: string | null;
+  key_id?: string | null;
+  key_hash?: string | null;
+  key_name?: string | null;
+  key_scopes?: string | null;
+  key_created_at?: number | null;
+  user_name?: string | null;
+  user_email?: string | null;
 };
 
 // In-flight auth refreshes, keyed by hash — same single-flight shape as
@@ -688,6 +749,10 @@ export interface AuthProbe {
 async function authenticate(req: Request, env: Env, ctx?: ExecutionContext, probe?: AuthProbe): Promise<Caller | null> {
   const apiKey = apiKeyFromRequest(req);
   if (!apiKey) return null;
+  return authenticateKey(apiKey, env, ctx, probe);
+}
+
+async function authenticateKey(apiKey: string, env: Env, ctx?: ExecutionContext, probe?: AuthProbe): Promise<Caller | null> {
   // Act-as-org provisioning token (sessions-api): a signed JWT, not an osb_ key.
   // Recognized only when OC_PROVISION_SECRET is configured — inert otherwise, so
   // a stray JWT can't authenticate. The edge re-derives the org from the token;
@@ -4452,7 +4517,7 @@ function providerErrorCode(body: Record<string, unknown> | null): string {
   return typeof body?.error === "string" ? body.error : "";
 }
 
-async function authCLIExchange(req: Request, env: Env): Promise<Response> {
+async function authCLIExchange(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const requestID = crypto.randomUUID();
   const startedAt = Date.now();
   const finish = (
@@ -4583,11 +4648,20 @@ async function authCLIExchange(req: Request, env: Env): Promise<Response> {
 
   let credential;
   try {
-    credential = await createAPIKey(env, {
+    const made = await createAPIKeyWithHash(env, {
       orgID: identity.org.id,
       userID: identity.user.id,
       name: credentialName,
     });
+    credential = made.created;
+    // Tell the computer API about the key (work 084); never the key itself.
+    ctx?.waitUntil(
+      syncComputerKey(
+        env,
+        identity.org.id,
+        createdKeyForSync(made.created, made.hash, identity.user.id),
+      ),
+    );
   } catch {
     return finish(
       cliAuthError("credential_creation_failed", 503),
@@ -4616,7 +4690,107 @@ async function authCLIExchange(req: Request, env: Env): Promise<Response> {
   });
 }
 
-async function authCLIRevoke(req: Request, env: Env): Promise<Response> {
+// ── computer API (work 084) ─────────────────────────────────────────────
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * /api/managed-agents/computer/*: authenticates an API key (`x-api-key` or
+ * `Authorization: Bearer`) or a dashboard session, then streams the call to
+ * blue (or, for workspace files, to the wire Worker). Errors here use the
+ * documented shape; blue's own pass through untouched.
+ */
+async function handleComputerApi(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  path: string,
+): Promise<Response> {
+  const method = req.method.toUpperCase();
+  if (method === "OPTIONS") return computerApiPreflight(req, env);
+  const suffix = path.slice("/api/managed-agents".length);
+  if (!isComputerApiRoute(method, suffix)) {
+    return computerApiError(req, 404, "not_found", "No such route.");
+  }
+
+  const credential = computerApiKey(req);
+  if ("conflict" in credential) {
+    return computerApiError(
+      req,
+      401,
+      "unauthenticated",
+      "The x-api-key and Authorization headers name different keys.",
+    );
+  }
+  let caller: Caller | null = null;
+  let viaKey = false;
+  if (credential.key) {
+    viaKey = true;
+    caller = await authenticateKey(credential.key, env, ctx);
+    // Entries cached before the key fields existed: re-read the row once, so
+    // blue always learns which key acted.
+    if (caller && !caller.key && !caller.scope) {
+      await refreshAuth(env, await hashAPIKey(credential.key));
+      caller = await authenticateKey(credential.key, env, ctx);
+    }
+    if (caller?.scope) {
+      return computerApiError(req, 403, "forbidden", "This credential cannot use the computer API.", {
+        reason: "scope_missing",
+      });
+    }
+  } else {
+    const session = await authDashboard(req, env);
+    if (session) {
+      // A cookie rides along on cross-site requests SameSite=Lax still
+      // allows (sibling subdomains); unsafe methods need an allowed Origin.
+      if (!SAFE_METHODS.has(method) && !computerApiOriginAllowed(req, env)) {
+        return computerApiError(req, 403, "forbidden", "Cross-origin request refused.", {
+          reason: "origin_not_allowed",
+        });
+      }
+      const membership = await env.OPENCOMPUTER_DB.prepare(
+        `SELECT role FROM org_memberships WHERE org_id = ?1 AND user_id = ?2`,
+      )
+        .bind(session.orgID, session.userID)
+        .first<{ role: string }>();
+      if (!membership) {
+        return computerApiError(req, 401, "unauthenticated", "Sign in again.");
+      }
+      caller = {
+        orgID: session.orgID,
+        userID: session.userID,
+        role:
+          membership.role === "owner" || membership.role === "admin"
+            ? "admin"
+            : membership.role,
+      };
+    }
+  }
+  if (!caller) {
+    return computerApiError(req, 401, "unauthenticated", "Missing or invalid API key.");
+  }
+  if (!computerEnabledFor(env, caller.orgID)) {
+    return computerApiError(req, 404, "not_found", "No such route.");
+  }
+
+  const workspace = computerWorkspaceRoute(method, suffix);
+  if (workspace) {
+    // The wire Worker checks the caller's key itself; a cookie is not one.
+    if (!viaKey) {
+      return computerApiError(
+        req,
+        403,
+        "forbidden",
+        "Workspace files need an API key; dashboard sessions cannot read them here.",
+        { reason: "key_required" },
+      );
+    }
+    return proxyComputerWorkspace(req, env, workspace);
+  }
+  return proxyManagedAgents(req, env, caller, "/api/managed-agents");
+}
+
+async function authCLIRevoke(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const requestID = crypto.randomUUID();
   const startedAt = Date.now();
   const finish = (response: Response, result: string): Response => {
@@ -4640,8 +4814,17 @@ async function authCLIRevoke(req: Request, env: Env): Promise<Response> {
   if (!caller || caller.scope) {
     return finish(cliAuthError("missing or invalid API key", 401), "unauthorized");
   }
+  let keyID: string | null = caller.key?.id ?? null;
   try {
     const hash = await hashAPIKey(plainKey);
+    if (!keyID && env.MANAGED_AGENTS_API_URL) {
+      const row = await env.OPENCOMPUTER_DB.prepare(
+        `SELECT id FROM api_keys WHERE key_hash = ?1 AND org_id = ?2`,
+      )
+        .bind(hash, caller.orgID)
+        .first<{ id?: string }>();
+      keyID = row?.id ?? null;
+    }
     await env.OPENCOMPUTER_DB.prepare(
       `DELETE FROM api_keys WHERE key_hash = ?1 AND org_id = ?2`,
     )
@@ -4650,6 +4833,7 @@ async function authCLIRevoke(req: Request, env: Env): Promise<Response> {
   } catch {
     return finish(cliAuthError("credential_revocation_unavailable", 503), "storage_error");
   }
+  if (keyID) ctx?.waitUntil(revokeComputerKey(env, caller.orgID, caller.userID, keyID));
   return finish(new Response(null, {
     status: 204,
     headers: { "cache-control": "no-store" },
@@ -5382,19 +5566,15 @@ export default {
       // cache would hit and serve a subtly different caller.
       const rows = await env.OPENCOMPUTER_DB.prepare(
         `SELECT k.key_hash, k.org_id, k.created_by, k.expires_at, k.session_key,
+                k.id AS key_id, k.name AS key_name, k.scopes AS key_scopes,
+                k.created_at AS key_created_at, u.name AS user_name, u.email AS user_email,
                 CASE WHEN m.role IN ('owner', 'admin') THEN 'admin' ELSE m.role END AS role
            FROM api_keys k
            LEFT JOIN org_memberships m
              ON m.org_id = k.org_id AND m.user_id = k.created_by
+           LEFT JOIN users u ON u.id = k.created_by
           WHERE k.org_id = ?1`,
-      ).bind(parsed.org_id).all<{
-        key_hash: string;
-        org_id: string;
-        created_by: string | null;
-        expires_at: number | null;
-        role: string | null;
-        session_key: string | null;
-      }>();
+      ).bind(parsed.org_id).all<AuthRow & { key_hash: string }>();
 
       const at = Date.now();
       let warmed = 0;
@@ -5622,10 +5802,10 @@ export default {
       return authCLIStart(req, env);
     }
     if (path === "/auth/cli/device/exchange") {
-      return authCLIExchange(req, env);
+      return authCLIExchange(req, env, ctx);
     }
     if (path === "/auth/cli/credential") {
-      return authCLIRevoke(req, env);
+      return authCLIRevoke(req, env, ctx);
     }
 
     // Browser auth flow.
@@ -5716,6 +5896,12 @@ export default {
     }
     if (path.startsWith("/api/agent-webhooks/")) {
       return handleAgentWebhookInvocation(req, env);
+    }
+    // The computer's session API (work 084), for API keys and dashboard
+    // sessions alike. Below the Slack and connect mounts above, which keep
+    // their own credentials.
+    if (path === COMPUTER_API_PREFIX || path.startsWith(`${COMPUTER_API_PREFIX}/`)) {
+      return withComputerApiCors(req, env, await handleComputerApi(req, env, ctx, path));
     }
     if (
       path === "/api/managed-agents" ||

@@ -3,7 +3,8 @@
 // `proxyManagedAgents` looks a request's family up once and dispatches to it,
 // instead of branching per route at each of those four points.
 //
-// Only the organization's computer (./computer.ts) is a family so far. The
+// Only the organization's computer is a family so far: its dashboard surface
+// (./computer.ts) and its session API (./computer_api.ts, work 084). The
 // Slack-setup, deployment-source, Linear and workspace-export routes still
 // take the hand-written branches in managed_agents.ts; each can be ported to
 // this interface on its own, without changing the others' behaviour.
@@ -17,6 +18,8 @@ export interface RouteFamily {
   allows(method: string, suffix: string): boolean;
   /** Only the dashboard mount reaches the family; API keys get a 404. */
   dashboardOnly: boolean;
+  /** Only the API mount (`/api/managed-agents`) reaches the family. */
+  apiOnly?: boolean;
   /** Whether the organization has the family (rollouts); true when absent. */
   enabledFor?(env: ManagedAgentsEnv, orgID: string | null | undefined): boolean;
   /**
@@ -38,4 +41,18 @@ export interface RouteFamily {
     suffix: string,
     backendMessage: string,
   ): string;
+  /**
+   * Takes over the upstream exchange once the edge has allowed the route and
+   * built `target` and `headers` (assertion included): for a family whose
+   * backend already speaks the public contract, so bodies, statuses and
+   * errors stream through instead of being rebuilt by shapeSuccess and
+   * errorMessage.
+   */
+  forward?(args: {
+    request: Request;
+    method: string;
+    suffix: string;
+    target: URL;
+    headers: Headers;
+  }): Promise<Response>;
 }

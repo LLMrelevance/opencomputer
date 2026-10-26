@@ -1,6 +1,7 @@
 import { getAutumnCustomer } from "./autumn_webhook";
 import { FREE_CREDITS_PAYWALL } from "./billing_onramp";
 import { computerFamily } from "./computer";
+import { computerApiFamily } from "./computer_api";
 import type { RouteFamily } from "./route_family";
 
 export interface ManagedAgentsEnv {
@@ -15,6 +16,28 @@ export interface ManagedAgentsEnv {
   /** Per-IP cap on the public CLI connect route (work 082). */
   COMPUTER_CONNECT_RATE_LIMIT?: RateLimit;
   WORKER_ENV?: string;
+  /** The wire Worker's HTTP base (work 084); default https://wire.opencomputer.dev. */
+  WIRE_HTTP_URL?: string;
+  /** Extra browser origins for /api/managed-agents/computer, comma-separated. */
+  COMPUTER_API_CORS_ORIGINS?: string;
+}
+
+/**
+ * The API key a request authenticated with (work 084), asserted to managed
+ * agents so the computer API can apply the key's scopes and name the key.
+ * Absent for dashboard sessions, which blue reads as "session credential,
+ * all scopes".
+ */
+export interface AssertedAPIKey {
+  id: string;
+  /** SHA-256 hex of the key; the key itself never leaves the edge. */
+  hash: string;
+  name: string;
+  kind: "user" | "project";
+  /** The raw `scopes` column, split on commas (legacy keys: `sandbox:*`). */
+  scopes: string[];
+  expiresAt: string | null;
+  createdAt: string;
 }
 
 export interface ManagedAgentsCaller {
@@ -25,6 +48,11 @@ export interface ManagedAgentsCaller {
   principal?: "computer";
   /** The computer session (Slack thread) the key was minted for. */
   sessionKey?: string;
+  /** Set only when the caller authenticated with an API key (work 084). */
+  key?: AssertedAPIKey;
+  /** The key creator's name and email, when the auth read loaded them. */
+  userName?: string | null;
+  userEmail?: string | null;
 }
 
 const DEFAULT_MANAGED_AGENTS_API_URL = "https://managedagents.opencomputer.dev";
@@ -104,6 +132,17 @@ export async function mintManagedAgentsAssertion(
   if (caller.role) payload.role = caller.role;
   if (caller.principal) payload.principal = caller.principal;
   if (caller.principal && caller.sessionKey) payload.session_key = caller.sessionKey;
+  if (caller.key) {
+    payload.key_id = caller.key.id;
+    payload.key_hash = caller.key.hash;
+    payload.key_name = caller.key.name;
+    payload.key_kind = caller.key.kind;
+    payload.key_scopes = caller.key.scopes;
+    payload.key_expires_at = caller.key.expiresAt;
+    payload.key_created_at = caller.key.createdAt;
+    if (caller.userName) payload.user_name = caller.userName;
+    if (caller.userEmail) payload.user_email = caller.userEmail;
+  }
   const encoder = new TextEncoder();
   const signingInput =
     `${b64url(encoder.encode(JSON.stringify(header)))}.` +
@@ -295,7 +334,7 @@ async function publicErrorResponse(
       : undefined;
   const familyMessage =
     suffix !== undefined
-      ? routeFamilyFor(suffix)?.errorMessage(
+      ? routeFamilyFor(suffix, DASHBOARD_MANAGED_AGENTS_PREFIX)?.errorMessage(
           backendCode,
           upstream.status,
           suffix,
@@ -2720,16 +2759,34 @@ export function isGrantRoute(method: string, suffix: string): boolean {
 }
 
 // The route families the proxy dispatches to as a unit (see route_family.ts).
-// Only the organization's computer so far (work 052); the other surfaces keep
-// their branches below until each is ported.
-const ROUTE_FAMILIES: ReadonlyArray<RouteFamily> = [computerFamily];
+// Only the organization's computer so far: its dashboard surface (work 052)
+// on the dashboard mount and its session API (work 084) on the API mount; the
+// other surfaces keep their branches below until each is ported.
+const ROUTE_FAMILIES: ReadonlyArray<RouteFamily> = [
+  computerFamily,
+  computerApiFamily,
+];
 
-function routeFamilyFor(suffix: string): RouteFamily | undefined {
-  return ROUTE_FAMILIES.find((family) => family.owns(suffix));
+function routeFamilyFor(
+  suffix: string,
+  publicPrefix: string,
+): RouteFamily | undefined {
+  const dashboard = publicPrefix === DASHBOARD_MANAGED_AGENTS_PREFIX;
+  return (
+    ROUTE_FAMILIES.find(
+      (family) =>
+        family.owns(suffix) &&
+        (dashboard ? !family.apiOnly : !family.dashboardOnly),
+    ) ?? ROUTE_FAMILIES.find((family) => family.owns(suffix))
+  );
 }
 
-function isAllowedManagedAgentsRoute(method: string, suffix: string): boolean {
-  const family = routeFamilyFor(suffix);
+function isAllowedManagedAgentsRoute(
+  method: string,
+  suffix: string,
+  publicPrefix: string,
+): boolean {
+  const family = routeFamilyFor(suffix, publicPrefix);
   if (family) return family.allows(method, suffix);
   if (method === "GET" && suffix === "/account/runtime-profile") return true;
   if (method === "POST" && suffix === "/template-inspections") return true;
@@ -3795,7 +3852,13 @@ export async function proxyManagedAgents(
   ) {
     return Response.json({ error: "route not found" }, { status: 404 });
   }
-  if (!isAllowedManagedAgentsRoute(request.method.toUpperCase(), suffix)) {
+  if (
+    !isAllowedManagedAgentsRoute(
+      request.method.toUpperCase(),
+      suffix,
+      publicPrefix,
+    )
+  ) {
     return Response.json({ error: "route not found" }, { status: 404 });
   }
   if (
@@ -3813,11 +3876,12 @@ export async function proxyManagedAgents(
       { status: 403 },
     );
   }
-  const family = routeFamilyFor(suffix);
+  const family = routeFamilyFor(suffix, publicPrefix);
   if (
     family &&
     ((family.dashboardOnly &&
       publicPrefix !== DASHBOARD_MANAGED_AGENTS_PREFIX) ||
+      (family.apiOnly && publicPrefix === DASHBOARD_MANAGED_AGENTS_PREFIX) ||
       family.enabledFor?.(env, caller.orgID) === false)
   ) {
     return Response.json({ error: "route not found" }, { status: 404 });
@@ -3957,6 +4021,9 @@ export async function proxyManagedAgents(
     "x-opencomputer-agent-token",
     await mintManagedAgentsAssertion(env.OC_MANAGED_AGENTS_SECRET, caller),
   );
+  if (family?.forward) {
+    return family.forward({ request, method, suffix, target, headers });
+  }
   if (request.method.toUpperCase() === "POST" && suffix === "/deployments") {
     try {
       return await deploySourceAgent(request, base, headers);

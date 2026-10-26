@@ -472,6 +472,50 @@ describe("CLI device authorization edge contract", () => {
     expect(logs).not.toContain("igor@example.com");
   });
 
+  it("tells the computer API about the new key by hash (work 084)", async () => {
+    const db = new FakeDB();
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).startsWith("https://managedagents.test")
+        ? new Response(null, { status: 204 })
+        : Response.json({ user: { id: "workos-user", email: "igor@example.com", first_name: "Igor" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const pending: Promise<unknown>[] = [];
+    const syncCtx = {
+      waitUntil: (p: Promise<unknown>) => pending.push(p),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext;
+    const env = {
+      ...testEnv(db),
+      MANAGED_AGENTS_API_URL: "https://managedagents.test",
+      OC_MANAGED_AGENTS_SECRET: "assert-secret",
+    } as Env;
+
+    const resp = await worker.fetch(request("/auth/cli/device/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ device_code: "opaque", credential_name: "oc CLI on test" }),
+    }), env, syncCtx);
+    expect(resp.status).toBe(200);
+    const body = await resp.json<{ credential: { id: string; key: string } }>();
+    await Promise.all(pending);
+
+    const sync = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/v1/computer/keys/sync"));
+    expect(sync).toBeDefined();
+    const sent = JSON.parse(String(sync?.[1]?.body)) as { key: Record<string, unknown> };
+    const insert = db.executed.find((entry) => entry.sql.includes("INSERT INTO api_keys"));
+    expect(sent.key).toMatchObject({
+      id: body.credential.id,
+      hash: insert?.args[3],
+      name: "oc CLI on test",
+      kind: "user",
+      scopes: ["sandbox:*"],
+      expiresAt: null,
+      userId: userID,
+    });
+    expect(String(sync?.[1]?.body)).not.toContain(body.credential.key);
+  });
+
   it("owns the empty CLI credential-name fallback at the edge", async () => {
     const db = new FakeDB();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({

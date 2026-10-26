@@ -25,8 +25,28 @@ export async function hashAPIKey(key: string): Promise<string> {
  */
 export async function createAPIKey(
   env: APIKeyEnv,
-  input: { orgID: string; userID: string; name: string; expiresAt?: number; sessionKey?: string },
+  input: CreateAPIKeyInput,
 ): Promise<CreatedAPIKey> {
+  return (await createAPIKeyWithHash(env, input)).created;
+}
+
+export interface CreateAPIKeyInput {
+  orgID: string;
+  userID: string;
+  name: string;
+  expiresAt?: number;
+  sessionKey?: string;
+}
+
+/**
+ * createAPIKey plus the stored SHA-256 hex, for callers that tell the
+ * computer API about the new key (work 084). The hash never goes in the
+ * one-time response.
+ */
+export async function createAPIKeyWithHash(
+  env: APIKeyEnv,
+  input: CreateAPIKeyInput,
+): Promise<{ created: CreatedAPIKey; hash: string }> {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   const plainKey = "osb_" + [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -42,7 +62,7 @@ export async function createAPIKey(
     .bind(id, input.orgID, input.userID, hash, prefix, input.name, now, input.expiresAt ?? null, input.sessionKey ?? null)
     .run();
 
-  return {
+  const created: CreatedAPIKey = {
     id,
     orgId: input.orgID,
     name: input.name,
@@ -54,4 +74,5 @@ export async function createAPIKey(
       ? { expiresAt: new Date(input.expiresAt * 1000).toISOString() }
       : {}),
   };
+  return { created, hash };
 }
