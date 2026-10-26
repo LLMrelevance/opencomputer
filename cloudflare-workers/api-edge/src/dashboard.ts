@@ -33,7 +33,8 @@ import {
   acknowledgeAgentSecurityNotification,
   listAgentSecurityNotifications,
 } from "./agent_security_notifications";
-import { createAPIKey } from "./api_keys";
+import { createAPIKeyWithHash } from "./api_keys";
+import { createdKeyForSync, revokeComputerKey, syncComputerKey } from "./computer_keys";
 import {
   proxyManagedAgents,
   proxyPublicTemplateInspection,
@@ -645,7 +646,12 @@ async function handleListAPIKeys(_req: Request, env: DashboardEnv, caller: Calle
   return json(keys);
 }
 
-async function handleCreateAPIKey(req: Request, env: DashboardEnv, caller: Caller): Promise<Response> {
+async function handleCreateAPIKey(
+  req: Request,
+  env: DashboardEnv,
+  ctx: ExecutionContext | undefined,
+  caller: Caller,
+): Promise<Response> {
   const body = await req.json<{ name?: string; expiresAt?: unknown }>()
     .catch(() => ({} as { name?: string; expiresAt?: unknown }));
   const name = (body.name ?? "Untitled").trim() || "Untitled";
@@ -656,16 +662,31 @@ async function handleCreateAPIKey(req: Request, env: DashboardEnv, caller: Calle
     if (ms <= Date.now()) return json({ error: "expiresAt must be in the future" }, 400);
     expiresAt = Math.floor(ms / 1000);
   }
-  return json(await createAPIKey(env, {
+  const { created, hash } = await createAPIKeyWithHash(env, {
     orgID: caller.orgID,
     userID: caller.userID,
     name,
     expiresAt,
-  }), 201);
+  });
+  // Tell the computer API about the key (work 084); never the key itself.
+  ctx?.waitUntil(
+    syncComputerKey(env, caller.orgID, createdKeyForSync(created, hash, caller.userID)),
+  );
+  return json(created, 201);
 }
 
-async function handleDeleteAPIKey(_req: Request, env: DashboardEnv, caller: Caller, keyID: string): Promise<Response> {
-  await env.OPENCOMPUTER_DB.prepare(`DELETE FROM api_keys WHERE id = ?1 AND org_id = ?2`).bind(keyID, caller.orgID).run();
+async function handleDeleteAPIKey(
+  _req: Request,
+  env: DashboardEnv,
+  ctx: ExecutionContext | undefined,
+  caller: Caller,
+  keyID: string,
+): Promise<Response> {
+  const result = await env.OPENCOMPUTER_DB.prepare(`DELETE FROM api_keys WHERE id = ?1 AND org_id = ?2`).bind(keyID, caller.orgID).run();
+  // Only a key this org held is reported revoked (D1 says how many rows went).
+  if (result?.meta?.changes !== 0) {
+    ctx?.waitUntil(revokeComputerKey(env, caller.orgID, caller.userID, keyID));
+  }
   return new Response(null, { status: 204 });
 }
 
@@ -1033,7 +1054,7 @@ async function proxyToBrowserAPI(
 export async function handleDashboard(
   req: Request,
   env: DashboardEnv,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   path: string,
 ): Promise<Response> {
   // /api/dashboard/* — strip the prefix for routing.
@@ -1170,10 +1191,10 @@ export async function handleDashboard(
 
   // ── api keys ───────────────────────────────────────────────────────────
   if (sub === "/api-keys" && method === "GET") return handleListAPIKeys(req, env, caller);
-  if (sub === "/api-keys" && method === "POST") return handleCreateAPIKey(req, env, caller);
+  if (sub === "/api-keys" && method === "POST") return handleCreateAPIKey(req, env, ctx, caller);
   {
     const m = sub.match(/^\/api-keys\/([^/]+)$/);
-    if (m && method === "DELETE") return handleDeleteAPIKey(req, env, caller, m[1]);
+    if (m && method === "DELETE") return handleDeleteAPIKey(req, env, ctx, caller, m[1]);
     if (m && method === "PATCH") return handleRenameAPIKey(req, env, caller, m[1]);
   }
 

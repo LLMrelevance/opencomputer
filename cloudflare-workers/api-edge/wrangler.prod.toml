@@ -20,6 +20,12 @@ routes = [
   { pattern = "*.sb.opencomputer.dev/*", zone_name = "opencomputer.dev" },
 ]
 
+# The deployed version on computer-API telemetry (work 084). The optional
+# TINYBIRD_API_URL and TINYBIRD_APPEND_TOKEN secrets switch it on; unset, the
+# edge sends nothing.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # Workers Logs: without this, exceptions behind a Cloudflare 1101 Ray ID are
 # only visible to a live `wrangler tail`.
 [observability]
@@ -66,6 +72,15 @@ namespace_id = "2026102301"
 
   [ratelimits.simple]
   limit = 20
+  period = 60
+
+# Computer API (work 084): HTTP calls per API key, ahead of blue.
+[[ratelimits]]
+name = "COMPUTER_API_RATE_LIMIT"
+namespace_id = "2026102601"
+
+  [ratelimits.simple]
+  limit = 600
   period = 60
 
 [[durable_objects.bindings]]

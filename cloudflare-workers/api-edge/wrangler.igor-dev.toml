@@ -70,6 +70,15 @@ namespace_id = "2026102311"
   limit = 20
   period = 60
 
+# Computer API (work 084): HTTP calls per API key, ahead of blue.
+[[ratelimits]]
+name = "COMPUTER_API_RATE_LIMIT"
+namespace_id = "2026102611"
+
+  [ratelimits.simple]
+  limit = 600
+  period = 60
+
 # CreditAccount DO is self-hosted by this worker (script_name defaults to self).
 [[durable_objects.bindings]]
 name = "CREDIT_ACCOUNT"
