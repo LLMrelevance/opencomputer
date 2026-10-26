@@ -57,6 +57,13 @@ const COMPUTER_API_ROUTES: ReadonlyArray<{
     methods: new Set(["POST"]),
     pattern: route(`/sessions/${SEG}/asks/${SEG}/(?:answer|dismiss)`),
   },
+  // Subagents (docs/api/http/subagents.mdx).
+  { methods: new Set(["GET"]), pattern: route(`/sessions/${SEG}/subagents`) },
+  { methods: new Set(["GET"]), pattern: route(`/sessions/${SEG}/subagents/${SEG}`) },
+  {
+    methods: new Set(["POST"]),
+    pattern: route(`/sessions/${SEG}/subagents/${SEG}/stop`),
+  },
   // Secrets (docs/api/http/secrets.mdx).
   { methods: new Set(["GET"]), pattern: route("/secrets") },
   {
