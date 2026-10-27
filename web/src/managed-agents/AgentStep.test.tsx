@@ -837,6 +837,43 @@ describe('choosing the coding agent', () => {
     expect(computerApi.setAgentChoice).not.toHaveBeenCalled()
   })
 
+  it('persists switching from Codex to Claude before connecting, including after reload', async () => {
+    let savedAgent: ComputerAgent = { ...withCodex, choice: 'codex' }
+    await show({ ...empty, agent: savedAgent }, 'Choose your coding agent')
+    await settle(() => command()?.includes(' codex ') === true, 'codex command')
+    computerApi.setAgentChoice.mockImplementation(
+      (choice: ComputerAgent['choice']) => {
+        savedAgent = { ...savedAgent, choice }
+        return Promise.resolve(savedAgent)
+      },
+    )
+
+    act(() => claudeCard().click())
+    await settle(
+      () =>
+        computerApi.setAgentChoice.mock.calls.length === 1 &&
+        savedAgent.choice === 'claude',
+      'saved Claude choice',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledWith('claude')
+    await settle(
+      () => command()?.includes(' claude ') === true,
+      'claude command',
+    )
+    expect(computerApi.connectClaudeSubscription).not.toHaveBeenCalled()
+
+    // A new root and query cache model a reload, using only the saved response.
+    act(() => root.unmount())
+    client.clear()
+    root = createRoot(container)
+    await show({ ...empty, agent: savedAgent }, 'Choose your coding agent')
+    await settle(
+      () => command()?.includes(' claude ') === true,
+      'restored Claude command',
+    )
+    expect(computerApi.setAgentChoice).toHaveBeenCalledTimes(1)
+  })
+
   describe('where this computer cannot run Codex yet', () => {
     it.each([
       ['an older backend that names none', fresh],
