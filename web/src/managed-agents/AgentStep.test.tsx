@@ -841,10 +841,12 @@ describe('choosing the coding agent', () => {
     let savedAgent: ComputerAgent = { ...withCodex, choice: 'codex' }
     await show({ ...empty, agent: savedAgent }, 'Choose your coding agent')
     await settle(() => command()?.includes(' codex ') === true, 'codex command')
-    computerApi.setAgentChoice.mockImplementation(async (choice) => {
-      savedAgent = { ...savedAgent, choice }
-      return savedAgent
-    })
+    computerApi.setAgentChoice.mockImplementation(
+      (choice: ComputerAgent['choice']) => {
+        savedAgent = { ...savedAgent, choice }
+        return Promise.resolve(savedAgent)
+      },
+    )
 
     act(() => claudeCard().click())
     await settle(
