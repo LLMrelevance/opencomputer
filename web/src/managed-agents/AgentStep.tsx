@@ -236,14 +236,9 @@ export function AgentSetup({
   const pick = (choice: AgentCardChoice) => {
     if (choice === selected) return
     onSelect(choice)
-    // Codex is recorded on selection, so the step reopens on it after a
-    // reload; so is any card this computer cannot run yet, as the interest
-    // is all that card does.
-    if (
-      (choice === 'codex' || !isHarnessAvailable(agent, choice)) &&
-      agent.choice !== choice
-    )
-      choose.mutate(choice)
+    // Persist either card immediately so a refresh restores what was selected,
+    // even before the person connects their subscription.
+    if (agent.choice !== choice) choose.mutate(choice)
   }
   const onCredits = !agent.subscription && agent.choice === 'credits'
 
