@@ -205,6 +205,7 @@ describe('Computer page', () => {
         'setup',
       )
       expect(computerApi.createComputer).not.toHaveBeenCalled()
+      expect(projectsApi.getManagedProjects).not.toHaveBeenCalled()
     },
   )
 
@@ -213,6 +214,7 @@ describe('Computer page', () => {
     computerApi.getComputer.mockResolvedValue(empty)
     render('/', 'computer')
     await settle(() => location() === '/computer', 'Computer override')
+    expect(projectsApi.getManagedProjects).not.toHaveBeenCalled()
   })
 
   it('preserves explicit automation access with the Computer override', async () => {
@@ -223,6 +225,10 @@ describe('Computer page', () => {
       'project list',
     )
     expect(location()).toBe('/automations')
+    expect(projectsApi.getManagedProjects).toHaveBeenCalledWith()
+    expect(projectsApi.getManagedProjects).toHaveBeenCalledWith({
+      archived: true,
+    })
   })
 
   it('can select Automations for an empty workspace without looping', async () => {

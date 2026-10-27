@@ -35,17 +35,23 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
   const user = useContext(AuthContext)?.user
   const computerEnabled = user?.computerEnabled ?? false
   const onboardingExperience = user?.onboardingExperience
+  const redirectToComputer =
+    !list && onboardingExperience === 'computer' && computerEnabled
+  const redirectToAutomations = !list && onboardingExperience === 'automations'
+  const needsProjects = !redirectToComputer && !redirectToAutomations
   const queryClient = useQueryClient()
   // Always read afresh: projects are created elsewhere too (the CLI, a
   // template deploy), and an empty list sends the organization away to its
   // computer, so a stale cached [] must never decide that.
   const projects = useQuery({
     queryKey: ['managed-projects'],
+    enabled: needsProjects,
     queryFn: () => getManagedProjects(),
     refetchOnMount: 'always',
   })
   const archivedProjects = useQuery({
     queryKey: ['managed-projects', 'archived'],
+    enabled: needsProjects,
     queryFn: () => getManagedProjects({ archived: true }),
     refetchOnMount: 'always',
   })
@@ -119,10 +125,10 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
   // An administrator can send an existing workspace into onboarding without
   // deleting its projects. Explicit /automations visits always keep the list.
   // Decide before project loading/errors: an override does not depend on them.
-  if (!list && onboardingExperience === 'computer' && computerEnabled) {
+  if (redirectToComputer) {
     return <Navigate to="/computer" replace />
   }
-  if (!list && onboardingExperience === 'automations') {
+  if (redirectToAutomations) {
     return <Navigate to="/automations" replace />
   }
 
