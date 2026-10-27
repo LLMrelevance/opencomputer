@@ -257,7 +257,9 @@ describe('choosing the coding agent', () => {
     await show({ ...empty, agent: fresh }, 'Choose your coding agent')
     expect(text()).toContain('Step 1 of 4')
     expect(text()).toContain('Bring your own subscription.')
-    expect(text()).toContain('No subscription? Start with $10 free.')
+    expect(text()).toContain(
+      'No subscription? Your trial includes $10 of model credits.',
+    )
     expect(text()).toContain('Runs Claude Opus 5.5 on our credits.')
     expect(text()).toContain('Claude Code on its own machine')
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_shown')
@@ -971,11 +973,11 @@ describe('choosing the coding agent', () => {
       ...fresh,
       choice: 'credits',
     })
-    act(() => button('Use free credits')!.click())
+    act(() => button('Use OpenComputer credits')!.click())
     await settle(() => text().includes('Step 2 of 4'), 'Slack step')
     expect(computerApi.setAgentChoice).toHaveBeenCalledWith('credits')
     expect(computerApi.disconnectClaudeSubscription).not.toHaveBeenCalled()
-    expect(text()).toContain('Claude Opus 5.5 · free credits')
+    expect(text()).toContain('Claude Opus 5.5 · OpenComputer credits')
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
       choice: 'credits',
     })
@@ -998,7 +1000,7 @@ describe('choosing the coding agent', () => {
     await settle(() => command() !== undefined, 'command')
     openPaste()
     expect(button('Replace token')).toBeDefined()
-    expect(text()).toContain('Switch to free credits.')
+    expect(text()).toContain('Switch to OpenComputer credits.')
     expect(text()).toContain('Disconnects Claude Code')
     // Free credits behind a subscription: disconnect, then record the choice.
     computerApi.disconnectClaudeSubscription.mockResolvedValue(undefined)
@@ -1006,7 +1008,7 @@ describe('choosing the coding agent', () => {
       ...fresh,
       choice: 'credits',
     })
-    act(() => button('Use free credits')!.click())
+    act(() => button('Use OpenComputer credits')!.click())
     await settle(
       () => computerApi.setAgentChoice.mock.calls.length === 1,
       'credits choice',
@@ -1014,7 +1016,7 @@ describe('choosing the coding agent', () => {
     expect(computerApi.disconnectClaudeSubscription).toHaveBeenCalledTimes(1)
     await settle(() => !text().includes('Your coding agent'), 'dialog closed')
     await settle(
-      () => text().includes('Claude Opus 5.5 · free credits'),
+      () => text().includes('Claude Opus 5.5 · OpenComputer credits'),
       'credits row',
     )
     expect(capture).toHaveBeenCalledWith('computer.setup.agent_chosen', {
