@@ -27,7 +27,11 @@ vi.mock('./api', () => projectsApi)
 
 const { default: ComputerPage } = await import('./Computer')
 const { AuthContext } = await import('@/hooks/useAuth')
-const authWith = (computerEnabled: boolean) =>
+import type { AuthUser } from '@/hooks/useAuth'
+const authWith = (
+  computerEnabled: boolean,
+  onboardingExperience?: AuthUser['onboardingExperience'],
+) =>
   ({
     user: {
       id: 'u1',
@@ -36,6 +40,7 @@ const authWith = (computerEnabled: boolean) =>
       durableSessionsEnabled: false,
       infrastructureEnabled: false,
       computerEnabled,
+      onboardingExperience,
     },
     loading: false,
     error: null,
@@ -151,14 +156,20 @@ describe('Computer page', () => {
     document.body.replaceChildren()
   })
 
-  function render(url: string) {
+  function render(
+    url: string,
+    experience?: AuthUser['onboardingExperience'],
+    computerEnabled = true,
+  ) {
     act(() => {
       root.render(
-        <AuthContext.Provider value={authWith(true)}>
+        <AuthContext.Provider value={authWith(computerEnabled, experience)}>
           <QueryClientProvider client={client}>
             <MemoryRouter initialEntries={[url]}>
               <Routes>
                 <Route index element={<ProjectsHome />} />
+                <Route path="getting-started" element={<ProjectsHome />} />
+                <Route path="automations" element={<ProjectsHome list />} />
                 <Route path="computer" element={<ComputerPage />} />
               </Routes>
               <Location />
@@ -171,6 +182,78 @@ describe('Computer page', () => {
 
   const location = () =>
     container.querySelector('[data-testid="location"]')?.textContent
+
+  const existingProject = {
+    id: 'project_1',
+    slug: 'support',
+    name: 'Support',
+    environments: [],
+    agents: [],
+    createdAt: '2026-10-27T10:00:00Z',
+    updatedAt: '2026-10-27T10:00:00Z',
+  }
+
+  it.each(['/', '/getting-started'])(
+    'sends existing workspaces into Computer setup from %s',
+    async (url) => {
+      projectsApi.getManagedProjects.mockResolvedValue([existingProject])
+      computerApi.getComputer.mockResolvedValue(empty)
+      render(url, 'computer')
+      await settle(() => location() === '/computer', 'Computer override')
+      await settle(
+        () => container.textContent?.includes('Set up your computer') === true,
+        'setup',
+      )
+      expect(computerApi.createComputer).not.toHaveBeenCalled()
+    },
+  )
+
+  it('can reach Computer setup even when the project service fails', async () => {
+    projectsApi.getManagedProjects.mockRejectedValue(new Error('unavailable'))
+    computerApi.getComputer.mockResolvedValue(empty)
+    render('/', 'computer')
+    await settle(() => location() === '/computer', 'Computer override')
+  })
+
+  it('preserves explicit automation access with the Computer override', async () => {
+    projectsApi.getManagedProjects.mockResolvedValue([existingProject])
+    render('/automations', 'computer')
+    await settle(
+      () => container.textContent?.includes('Support') === true,
+      'project list',
+    )
+    expect(location()).toBe('/automations')
+  })
+
+  it('can select Automations for an empty workspace without looping', async () => {
+    projectsApi.getManagedProjects.mockResolvedValue([])
+    render('/', 'automations')
+    await settle(
+      () => container.textContent?.includes('No automations yet') === true,
+      'empty list',
+    )
+    expect(location()).toBe('/automations')
+  })
+
+  it('preserves default routing for existing workspaces when the override is cleared', async () => {
+    projectsApi.getManagedProjects.mockResolvedValue([existingProject])
+    render('/', null)
+    await settle(
+      () => container.textContent?.includes('Support') === true,
+      'project list',
+    )
+    expect(location()).toBe('/')
+  })
+
+  it('does not bypass the Computer availability gate', async () => {
+    projectsApi.getManagedProjects.mockResolvedValue([existingProject])
+    render('/', 'computer', false)
+    await settle(
+      () => container.textContent?.includes('Support') === true,
+      'project list',
+    )
+    expect(location()).toBe('/')
+  })
 
   it('does not create the computer on a visit: installing Slack brings it to life', async () => {
     computerApi.getComputer.mockResolvedValue(empty)

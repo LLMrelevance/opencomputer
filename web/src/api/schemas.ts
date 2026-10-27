@@ -23,6 +23,11 @@ export const MeResponseSchema = z.object({
   infrastructureEnabled: z.boolean(),
   /** Work 052 rollout: the organization has its computer. Absent on older edges. */
   computerEnabled: z.boolean().optional(),
+  /** Administrator-selected workspace landing experience; absent on older edges. */
+  onboardingExperience: z
+    .enum(['computer', 'automations'])
+    .nullable()
+    .optional(),
   authMode: z.string().optional(),
   capabilities: z
     .object({

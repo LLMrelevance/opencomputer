@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { OrgInfo } from '../api/client'
+import type { MeResponse, OrgInfo } from '../api/client'
 
 export const ME_QUERY_KEY = ['me'] as const
 
@@ -11,6 +11,7 @@ export interface AuthUser {
   durableSessionsEnabled: boolean
   infrastructureEnabled: boolean
   computerEnabled?: boolean
+  onboardingExperience?: MeResponse['onboardingExperience']
   authMode?: string
   capabilities?: {
     signOut: boolean

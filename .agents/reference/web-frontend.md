@@ -29,6 +29,11 @@ afford it. Unused code may sit dead and removed features move to a clearly
 dormant module, but neither should masquerade as a live alternative. The code in
 front of you should describe what actually ships.
 
+The narrow exception is administrator-selected onboarding experiences (Igor,
+2026-10-27): existing customers can be directed into the current onboarding by
+changing workspace data. This is presentation only, not a general feature-flag
+system. See [workspace onboarding](workspace-onboarding.md) for the control.
+
 ## Preserve product contracts while rewriting internals
 
 A dashboard rewrite can simplify the code without narrowing the product. Before
