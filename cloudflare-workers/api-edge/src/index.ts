@@ -125,6 +125,7 @@ import {
 } from "./computer_telemetry";
 import { computerEnabledFor } from "./computer";
 import { createdKeyForSync, revokeComputerKey, syncComputerKey } from "./computer_keys";
+import { FIRST_TOUCH_COOKIE, readCookie, recordSignupAttribution, withFirstTouchCookie } from "./signup_attribution";
 
 export interface Env extends DashboardEnv, AgentFeedbackEnv, BillingEventsEnv {
   CF_ADMIN_SECRET: string;
@@ -3822,6 +3823,8 @@ interface ProvisionedIdentity {
     name: string;
     plan: string;
   };
+  /** True when this login created the user row: a signup. */
+  created: boolean;
 }
 
 type IdentitySelection = "browser" | "cli";
@@ -3966,6 +3969,7 @@ async function provisionWorkOSIdentity(
     .bind(profile.id)
     .first<{ id: string; email: string; name: string | null }>();
 
+  let created = false;
   if (!userRow) {
     const candidateID = crypto.randomUUID();
     await env.OPENCOMPUTER_DB.prepare(
@@ -3990,6 +3994,8 @@ async function provisionWorkOSIdentity(
       .bind(profile.id)
       .first<{ id: string; email: string; name: string | null }>();
     if (!userRow) throw new Error("workos user upsert did not resolve");
+    // The email-conflict path keeps an existing account: not a signup.
+    created = userRow.id === candidateID;
   }
 
   const userID = userRow.id;
@@ -4132,6 +4138,7 @@ async function provisionWorkOSIdentity(
       name: orgRow.name,
       plan: orgRow.plan,
     },
+    created,
   };
 }
 
@@ -4157,7 +4164,7 @@ async function authCallback(req: Request, env: Env): Promise<Response> {
     const errText = await tokenResp.text();
     return json({ error: `workos exchange failed: ${tokenResp.status}: ${errText}` }, 401);
   }
-  const tokenBody = await tokenResp.json<{ user: WorkOSProfile; organization_id?: string; access_token?: string }>();
+  const tokenBody = await tokenResp.json<AuthenticateResponse>();
   // The code is spent from here on, so a throw would leave the user on a 1101
   // whose refresh fails with "code already exchanged". Restart the login once
   // (WorkOS issues a fresh code); a second failure gets a plain retry page.
@@ -4197,11 +4204,18 @@ function parseAuthState(raw: string | null): { returnTo: string | null; retried:
   }
 }
 
+type AuthenticateResponse = {
+  user: WorkOSProfile;
+  organization_id?: string;
+  access_token?: string;
+  authentication_method?: string;
+};
+
 async function completeAuthCallback(
   req: Request,
   env: Env,
   reqURL: URL,
-  tokenBody: { user: WorkOSProfile; organization_id?: string; access_token?: string },
+  tokenBody: AuthenticateResponse,
 ): Promise<Response> {
   const profile = tokenBody.user;
   // WorkOS session id (sid) for the hosted logout flow — carried in our session JWT.
@@ -4209,14 +4223,25 @@ async function completeAuthCallback(
   // Re-validate here: `state` is attacker-influenceable, so the path is only
   // trusted after safeReturnTo passes a second time.
   const returnTo = parseAuthState(reqURL.searchParams.get("state")).returnTo;
+  const planIntent = planIntentOf(returnTo);
   const identity = await provisionWorkOSIdentity(
     req,
     env,
     profile,
     tokenBody.organization_id ?? profile.organization_id,
     "browser",
-    planIntentOf(returnTo),
+    planIntent,
   );
+  if (identity.created) {
+    await recordSignupAttribution(env, {
+      userId: identity.user.id,
+      orgId: identity.org.id,
+      client: "web",
+      authMethod: tokenBody.authentication_method,
+      planIntent,
+      cookie: readCookie(req.headers.get("cookie"), FIRST_TOUCH_COOKIE),
+    });
+  }
 
   // Mint session JWT — same signing secret as cap-token but a different
   // Issuer so cell middleware can distinguish.
@@ -4683,6 +4708,16 @@ async function authCLIExchange(req: Request, env: Env, ctx?: ExecutionContext): 
     identity = await provisionWorkOSIdentity(req, env, typedProfile, workosOrgID, "cli");
   } catch {
     return finish(cliAuthError("account_provisioning_unavailable", 503), "provisioning_error");
+  }
+  if (identity.created) {
+    await recordSignupAttribution(env, {
+      userId: identity.user.id,
+      orgId: identity.org.id,
+      client: "cli",
+      authMethod: providerBody?.authentication_method,
+      planIntent: null,
+      cookie: null,
+    });
   }
 
   let credential;
@@ -5904,7 +5939,7 @@ export default {
     }
 
     // Browser auth flow.
-    if (path === "/auth/login")    { if (req.method === "GET")  return authLogin(req, env); }
+    if (path === "/auth/login")    { if (req.method === "GET")  return withFirstTouchCookie(req, await authLogin(req, env)); }
     if (path === "/auth/callback") { if (req.method === "GET")  return authCallback(req, env); }
     if (path === "/auth/logout")   { if (req.method === "POST") return authLogout(req, env); }
     if (path === "/auth/refresh")  { if (req.method === "POST") return authRefresh(req, env); }
@@ -6301,7 +6336,9 @@ export default {
     // this Worker before checking assets, so we have to explicitly hand
     // requests off here. The assets binding's not_found_handling=
     // "single-page-application" serves index.html for client-side routes.
-    if (env.ASSETS) return env.ASSETS.fetch(req);
+    // Visitors who land on the app first get the site's first-touch cookie
+    // here (work 087).
+    if (env.ASSETS) return withFirstTouchCookie(req, await env.ASSETS.fetch(req));
     return new Response("not found", { status: 404 });
   },
 
