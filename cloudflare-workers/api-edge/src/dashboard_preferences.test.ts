@@ -52,6 +52,11 @@ function testEnv(durableSessionsEnabled = false) {
     infrastructureEnabled: true,
   };
 
+  const orgs = [
+    { id: orgID, name: "Personal", is_personal: 1, onboarding_experience: null as string | null },
+    { id: "org-other", name: "Other", is_personal: 0, onboarding_experience: "automations" as string | null },
+  ];
+
   class Statement {
     private args: unknown[] = [];
 
@@ -79,7 +84,7 @@ function testEnv(durableSessionsEnabled = false) {
     async all<T>() {
       if (this.sql.includes("JOIN org_memberships")) {
         return {
-          results: [{ id: orgID, name: "Personal", is_personal: 1 }] as T[],
+          results: orgs as T[],
         };
       }
       return { results: [] as T[] };
@@ -102,7 +107,7 @@ function testEnv(durableSessionsEnabled = false) {
     },
   } as unknown as DashboardEnv;
 
-  return { env, preferences };
+  return { env, preferences, orgs };
 }
 
 async function request(body: unknown): Promise<Request> {
@@ -137,6 +142,33 @@ describe("dashboard navigation preferences", () => {
       durableSessionsEnabled: true,
       infrastructureEnabled: true,
     });
+  });
+
+  it("reads the current workspace onboarding choice afresh and isolates other workspaces", async () => {
+    const { env, orgs } = testEnv();
+    const read = async () => {
+      const response = await handleDashboard(await meRequest(), env, {} as ExecutionContext, "/api/dashboard/me");
+      expect(response.status).toBe(200);
+      return response.json() as Promise<{ onboardingExperience: string | null }>;
+    };
+    expect((await read()).onboardingExperience).toBeNull();
+    orgs[0].onboarding_experience = "computer";
+    expect((await read()).onboardingExperience).toBe("computer");
+    orgs[0].onboarding_experience = "automations";
+    expect((await read()).onboardingExperience).toBe("automations");
+    orgs[0].onboarding_experience = null;
+    expect((await read()).onboardingExperience).toBeNull();
+  });
+
+  it("does not let customer preferences change onboarding", async () => {
+    const { env, orgs } = testEnv();
+    const response = await handleDashboard(
+      await request({ infrastructureEnabled: false, onboardingExperience: "computer" }),
+      env, {} as ExecutionContext, "/api/dashboard/me/preferences",
+    );
+    expect(response.status).toBe(200);
+    expect(orgs[0].onboarding_experience).toBeNull();
+    expect(await response.json()).toMatchObject({ onboardingExperience: null });
   });
 
   it("updates one preference without changing the other", async () => {

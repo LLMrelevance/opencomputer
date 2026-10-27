@@ -392,10 +392,10 @@ async function handleMe(req: Request, env: DashboardEnv, caller: Caller): Promis
   if (!user) return json({ error: "user not found" }, 404);
 
   const { results } = await env.OPENCOMPUTER_DB.prepare(
-    `SELECT o.id, o.name, o.is_personal FROM orgs o
+    `SELECT o.id, o.name, o.is_personal, o.onboarding_experience FROM orgs o
        JOIN org_memberships m ON m.org_id = o.id
       WHERE m.user_id = ?1`,
-  ).bind(caller.userID).all<{ id: string; name: string; is_personal: number }>();
+  ).bind(caller.userID).all<{ id: string; name: string; is_personal: number; onboarding_experience: string | null }>();
   const orgs = (results ?? []).map((r) => ({
     id: r.id, name: r.name, isPersonal: !!r.is_personal, isActive: r.id === caller.orgID,
   }));
@@ -409,6 +409,7 @@ async function handleMe(req: Request, env: DashboardEnv, caller: Caller): Promis
     durableSessionsEnabled: !!user.durable_sessions_enabled,
     infrastructureEnabled: !!user.infrastructure_enabled,
     computerEnabled: computerEnabledFor(env, caller.orgID),
+    onboardingExperience: (results ?? []).find((org) => org.id === caller.orgID)?.onboarding_experience ?? null,
   });
 }
 
