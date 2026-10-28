@@ -6,12 +6,16 @@
 // Runs on the */5 cron, never in the login path. A row in slack_connect_invites
 // is the claim that a user is handled, so a re-run does nothing; a Slack error
 // leaves the row pending and the next tick retries, up to MAX_ATTEMPTS.
-// Dormant unless SLACK_CONNECT_BOT_TOKEN and SLACK_CONNECT_SINCE are set; SINCE
+// SLACK_CONNECT_TOKEN is a user token (xoxp-, scopes channels:write,
+// channels:read, conversations.connect:write), so channels and invites come from
+// that person rather than a bot. The token's own user is the channel's creator
+// and is left out of the team invite.
+// Dormant unless SLACK_CONNECT_TOKEN and SLACK_CONNECT_SINCE are set; SINCE
 // keeps the first deploy from inviting every user who signed up before it.
 
 export interface SlackConnectEnv {
   OPENCOMPUTER_DB: D1Database;
-  SLACK_CONNECT_BOT_TOKEN?: string;
+  SLACK_CONNECT_TOKEN?: string;
   SLACK_CONNECT_SINCE?: string; // unix seconds; only users created at or after it
   SLACK_CONNECT_TEAM_USER_IDS?: string; // comma-separated Slack user ids added to every channel
   SLACK_CONNECT_BATCH?: string; // users per tick, default 10
@@ -91,7 +95,7 @@ async function slackCall(
   const resp = await fetchImpl(`https://slack.com/api/${method}`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${env.SLACK_CONNECT_BOT_TOKEN}`,
+      authorization: `Bearer ${env.SLACK_CONNECT_TOKEN}`,
       "content-type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams(params).toString(),
@@ -117,7 +121,7 @@ export async function runSlackConnectInvites(
 ): Promise<{ invited: number; skipped: number; failed: number; pending: number }> {
   const counts = { invited: 0, skipped: 0, failed: 0, pending: 0 };
   const since = Number(env.SLACK_CONNECT_SINCE);
-  if (!env.SLACK_CONNECT_BOT_TOKEN || !Number.isFinite(since) || since <= 0) return counts;
+  if (!env.SLACK_CONNECT_TOKEN || !Number.isFinite(since) || since <= 0) return counts;
   const batch = Number(env.SLACK_CONNECT_BATCH) || DEFAULT_BATCH;
   const nowSec = Math.floor(nowMs / 1000);
 
@@ -215,7 +219,11 @@ async function inviteOne(
       .bind(c.user_id, channelID, name)
       .run();
 
-    const team = (env.SLACK_CONNECT_TEAM_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const self = await slackCall(env, fetchImpl, "auth.test", {});
+    const team = (env.SLACK_CONNECT_TEAM_USER_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((id) => id && id !== self.user_id);
     if (team.length > 0) {
       // Not fatal: the invite still goes out, and the team can join by hand.
       const r = await slackCall(env, fetchImpl, "conversations.invite", {

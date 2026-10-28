@@ -185,9 +185,10 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv, BillingEventsEnv {
   // as the API key so /v3 sandboxes are owned by + billed to the customer org.
   // Unset → the feature is inert (JWT keys rejected). See dashboard.ts.
   OC_PROVISION_SECRET?: string;
-  // Slack Connect per signup (slack_connect.ts): dormant unless the bot token
+  // Slack Connect per signup (slack_connect.ts), sent as a person via a user
+  // token: dormant unless the token
   // and SINCE (unix seconds) are set.
-  SLACK_CONNECT_BOT_TOKEN?: string;
+  SLACK_CONNECT_TOKEN?: string;
   SLACK_CONNECT_SINCE?: string;
   SLACK_CONNECT_TEAM_USER_IDS?: string;
   SLACK_CONNECT_BATCH?: string;
@@ -6378,7 +6379,7 @@ export default {
       runPoolKeepWarm(env).catch((err) => console.error("pool-keepwarm: run failed", err)),
     );
     // Slack Connect invite per signup, regardless of billing config. Dormant
-    // unless SLACK_CONNECT_BOT_TOKEN is set. See slack_connect.ts.
+    // unless SLACK_CONNECT_TOKEN is set. See slack_connect.ts.
     ctx.waitUntil(
       runSlackConnectInvites(env, Date.now()).catch((err) => console.error("slack-connect: run failed", err)),
     );

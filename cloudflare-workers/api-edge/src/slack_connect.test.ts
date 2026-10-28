@@ -83,6 +83,7 @@ function fakeSlack(errors: Record<string, string | string[]> = {}, taken: string
       taken.push(params.name);
       return Response.json({ ok: true, channel: { id: `C${++n}`, name: params.name } });
     }
+    if (method === "auth.test") return Response.json({ ok: true, user_id: "U1" });
     if (method === "conversations.inviteShared") return Response.json({ ok: true, invite_id: `I${n}` });
     return Response.json({ ok: true });
   }) as unknown as typeof fetch;
@@ -96,7 +97,7 @@ function setup(users: [string, string, number?][]) {
   }
   const env: SlackConnectEnv = {
     OPENCOMPUTER_DB: d1(db),
-    SLACK_CONNECT_BOT_TOKEN: "xoxb-test",
+    SLACK_CONNECT_TOKEN: "xoxp-test",
     SLACK_CONNECT_SINCE: String(SINCE),
     SLACK_CONNECT_TEAM_USER_IDS: "U1,U2,U3",
   };
@@ -126,7 +127,7 @@ describe("runSlackConnectInvites", () => {
   it("does nothing without a token or a start time", async () => {
     const { env, rows } = setup([["u1", "jane@acme.com"]]);
     const slack = fakeSlack();
-    await runSlackConnectInvites({ ...env, SLACK_CONNECT_BOT_TOKEN: undefined }, NOW, slack.fetchImpl);
+    await runSlackConnectInvites({ ...env, SLACK_CONNECT_TOKEN: undefined }, NOW, slack.fetchImpl);
     await runSlackConnectInvites({ ...env, SLACK_CONNECT_SINCE: undefined }, NOW, slack.fetchImpl);
     expect(slack.calls).toEqual([]);
     expect(rows()).toEqual([]);
@@ -138,13 +139,15 @@ describe("runSlackConnectInvites", () => {
     expect(await runSlackConnectInvites(env, NOW, slack.fetchImpl)).toMatchObject({ invited: 1 });
     expect(slack.calls).toEqual([
       { method: "conversations.create", params: { name: "opencomputer-acme", is_private: "false" } },
-      { method: "conversations.invite", params: { channel: "C1", users: "U1,U2,U3", force: "true" } },
+      { method: "auth.test", params: {} },
+      // U1 is the token's own user, already in the channel it created.
+      { method: "conversations.invite", params: { channel: "C1", users: "U2,U3", force: "true" } },
       { method: "conversations.inviteShared", params: { channel: "C1", emails: "jane@acme.com" } },
     ]);
     expect(rows()).toMatchObject([{ user_id: "u1", channel_id: "C1", status: "invited" }]);
 
     await runSlackConnectInvites(env, NOW + 300_000, slack.fetchImpl);
-    expect(slack.calls).toHaveLength(3);
+    expect(slack.calls).toHaveLength(4);
   });
 
   it("puts colleagues in one channel and free-email users in their own", async () => {
@@ -186,7 +189,7 @@ describe("runSlackConnectInvites", () => {
     expect(rows()).toMatchObject([{ status: "pending", attempts: 1, channel_id: "C1", last_error: "internal_error" }]);
     await runSlackConnectInvites(env, NOW, slack.fetchImpl);
     expect(slack.methods()).toEqual([
-      "conversations.create", "conversations.invite", "conversations.inviteShared", "conversations.inviteShared",
+      "conversations.create", "auth.test", "conversations.invite", "conversations.inviteShared", "conversations.inviteShared",
     ]);
     expect(rows()).toMatchObject([{ status: "invited", last_error: null }]);
   });
