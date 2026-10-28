@@ -113,6 +113,7 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
       else next.add(id)
       return next
     })
+  const allSelected = selected.size === items.length
   const selectedProjects = items.filter((project) => selected.has(project.id))
   const restore = useMutation({
     mutationFn: restoreManagedProject,
@@ -205,27 +206,54 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
   return (
     <div className="space-y-8">
       <PageHeader
+        // Actions sit under the description until there is room beside it,
+        // so the reserved selection width never squeezes the text.
+        className="sm:flex-col lg:flex-row lg:items-start lg:justify-between"
         title="Automation projects"
         description="Open one to see its agent playground, deployments, sessions, and resources."
         actions={
-          // Selection swaps the header actions in place, so entering and
-          // leaving it never moves the list below.
-          selecting ? (
-            <>
-              <span className="text-muted-foreground mr-1 text-sm tabular-nums">
+          // Both sets of actions always occupy the slot, one of them hidden,
+          // so it is as wide in either mode: the description beside it wraps
+          // the same and the list below never moves.
+          <div className="grid justify-items-start lg:justify-items-end">
+            <div
+              className={cn(
+                'col-start-1 row-start-1 flex flex-wrap items-center gap-2',
+                !selecting && 'invisible',
+              )}
+            >
+              <span className="text-muted-foreground mr-1 min-w-20 text-right text-sm tabular-nums">
                 {selected.size} selected
               </span>
               <Button
                 variant="ghost"
                 onClick={() =>
                   setSelected(
-                    selected.size === items.length
+                    allSelected
                       ? new Set()
                       : new Set(items.map((project) => project.id)),
                   )
                 }
               >
-                {selected.size === items.length ? 'Select none' : 'Select all'}
+                {/* Sized for the longer label, so toggling it can't reflow. */}
+                <span className="grid">
+                  <span
+                    className={cn(
+                      'col-start-1 row-start-1',
+                      allSelected && 'invisible',
+                    )}
+                  >
+                    Select all
+                  </span>
+                  <span
+                    className={cn(
+                      'col-start-1 row-start-1',
+                      !allSelected && 'invisible',
+                    )}
+                  >
+                    Select none
+                  </span>
+                </span>
               </Button>
               <Button variant="outline" onClick={stopSelecting}>
                 Cancel
@@ -241,9 +269,13 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
                 <Archive aria-hidden />
                 Archive
               </Button>
-            </>
-          ) : (
-            <>
+            </div>
+            <div
+              className={cn(
+                'col-start-1 row-start-1 flex flex-wrap items-center gap-2',
+                selecting && 'invisible',
+              )}
+            >
               {items.length > 1 && (
                 <Button variant="outline" onClick={() => setSelecting(true)}>
                   <CheckSquare /> Select
@@ -254,8 +286,8 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
                   <Plus /> New project
                 </Link>
               </Button>
-            </>
-          )
+            </div>
+          </div>
         }
       />
 
