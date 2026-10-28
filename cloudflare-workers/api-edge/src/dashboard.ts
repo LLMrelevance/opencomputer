@@ -46,6 +46,7 @@ import { computerEnabledFor } from "./computer";
 import { enableManagedBilling } from "./model_billing";
 import { paywallContext } from "./billing_onramp";
 import { insufficientManagedAgentCredits } from "./managed_agent_credit_gate";
+import { sendSlackAlert, teammateInvitedAlert } from "./slack_alerts";
 
 export interface DashboardEnv extends BillingEventsEnv {
   /** Computer rollout (work 052): see computerEnabledFor in computer.ts. */
@@ -602,6 +603,7 @@ async function handleSendInvitation(req: Request, env: DashboardEnv, caller: Cal
     `INSERT INTO invitations (id, org_id, email, role, invited_by, workos_invitation_id, status, expires_at, created_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8)`,
   ).bind(id, caller.orgID, email, role, caller.userID, workosInviteID, now + 7 * 86400, now).run();
+  await sendSlackAlert(env, teammateInvitedAlert(caller.orgID, email));
   return json({ id, email, role, status: "pending", workos_invitation_id: workosInviteID, expires_at: now + 7 * 86400 }, 201);
 }
 
