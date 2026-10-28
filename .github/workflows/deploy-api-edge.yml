@@ -105,6 +105,8 @@ jobs:
           # an unset GitHub secret leaves the worker's value alone.
           LOOPS_API_KEY: ${{ secrets.LOOPS_API_KEY }}
           LOOPS_EXCLUDE_EMAILS: ${{ secrets.LOOPS_EXCLUDE_EMAILS }}
+          # Optional (Slack Connect per signup, src/slack_connect.ts): same rule.
+          SLACK_CONNECT_TOKEN: ${{ secrets.SLACK_CONNECT_TOKEN }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "CLOUDFLARE_API_TOKEN GitHub secret is required for Wrangler deploys" >&2
@@ -118,9 +120,11 @@ jobs:
             --arg runtimeUsage "$AGENT_RUNTIME_USAGE_HMAC_SECRET" \
             --arg loopsKey "$LOOPS_API_KEY" \
             --arg loopsExclude "$LOOPS_EXCLUDE_EMAILS" \
+            --arg slackConnect "$SLACK_CONNECT_TOKEN" \
             '{OC_MANAGED_CRED_HMAC_SECRET: $managedCredential, AGENT_RUNTIME_USAGE_HMAC_SECRET: $runtimeUsage}
              + (if $loopsKey == "" then {} else {LOOPS_API_KEY: $loopsKey} end)
-             + (if $loopsExclude == "" then {} else {LOOPS_EXCLUDE_EMAILS: $loopsExclude} end)' \
+             + (if $loopsExclude == "" then {} else {LOOPS_EXCLUDE_EMAILS: $loopsExclude} end)
+             + (if $slackConnect == "" then {} else {SLACK_CONNECT_TOKEN: $slackConnect} end)' \
             > "$RUNNER_TEMP/api-edge-secrets.json"
           npx wrangler deploy \
             -c wrangler.ci.toml \
