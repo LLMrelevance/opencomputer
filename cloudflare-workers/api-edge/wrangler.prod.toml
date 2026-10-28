@@ -185,6 +185,11 @@ WORKER_ENV = "prod"
 # ids) see their computer until COMPUTER_ENABLED_FOR_ALL is "true".
 COMPUTER_ENABLED_FOR_ALL = "true"
 COMPUTER_ENABLED_ORGS = "be0cf06f-ef75-400a-851c-bfd1507a666e"
+# Slack Connect per signup (slack_connect.ts): users created from 2026-10-28
+# 00:00 UTC get a channel with utpal, Mo and Igor. Dormant until the
+# SLACK_CONNECT_TOKEN secret is set.
+SLACK_CONNECT_SINCE = "1793145600"
+SLACK_CONNECT_TEAM_USER_IDS = "U06G42NTEK1,U06GFN8DJ7P,U06H7D98X40"
 # PoolStock sizing. SHARDS × TARGET must stay ≤ the cell's MicroVM pool
 # (OPENSANDBOX_MICROVM_POOL_TARGET on the CP) or every shard sits permanently
 # below low-water, restocks on every claim, and competes for a supply that can
