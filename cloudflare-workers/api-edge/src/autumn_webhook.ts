@@ -20,6 +20,7 @@
 
 import { emitBillingEvent, type BillingEventName, type BillingEventsEnv } from "./billing_events";
 import { notifyTrialEvent, syncLoopsPlan, trialReason, type LoopsEnv } from "./loops";
+import { sendSlackAlert, trialEndedAlert } from "./slack_alerts";
 
 // AutumnApiEnv is the minimal binding set for calling Autumn's REST API
 // (GetCustomer / checkout). The dashboard handlers satisfy this without the
@@ -891,7 +892,10 @@ export async function syncAutumnToD1(env: AutumnSyncEnv, orgID: string): Promise
   const lowReason = trialReason(warning);
   if (lowReason && !trialReason(prevRow?.billing_warning)) await notifyTrialEvent(env, orgID, "trial_low", lowReason);
   const endReason = trialReason(reason);
-  if (endReason && !wasHalted) await notifyTrialEvent(env, orgID, "trial_ended", endReason);
+  if (endReason && !wasHalted) {
+    await notifyTrialEvent(env, orgID, "trial_ended", endReason);
+    await sendSlackAlert(env, trialEndedAlert(orgID, endReason));
+  }
   if (planChange) await syncLoopsPlan(env, orgID, usagePlan);
 
   return { customer: cust, creditsRemaining, maxConcurrent, halted, haltReason: reason, warning, wasHalted, usagePlan };

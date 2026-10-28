@@ -8,11 +8,13 @@
 // never retries; one attempt per sink, bounded, so a billing path can await it.
 //
 // Data policy (work 054): ids and scalars only, never emails or amounts tied
-// to a card.
+// to a card. The same call also feeds our own Slack (slack_alerts.ts, work
+// 090), which looks the owner's email up for that message only.
 
 import { edgeTelemetryEnabled, tbTime, uuidv7, type EdgeTelemetryEnv } from "./computer_telemetry";
+import { slackAlertForBillingEvent, type SlackAlertsEnv } from "./slack_alerts";
 
-export interface BillingEventsEnv extends EdgeTelemetryEnv {
+export interface BillingEventsEnv extends EdgeTelemetryEnv, SlackAlertsEnv {
   POSTHOG_PROJECT_TOKEN?: string;
   POSTHOG_HOST?: string;
 }
@@ -112,6 +114,7 @@ export async function emitBillingEvent(
         ),
       );
     }
+    sends.push(slackAlertForBillingEvent(env, name, event.orgId, event.data));
   } catch {
     // Telemetry never fails the billing path.
   }

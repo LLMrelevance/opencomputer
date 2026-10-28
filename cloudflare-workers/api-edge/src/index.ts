@@ -73,6 +73,7 @@ import {
 import { runAutumnMeter } from "./autumn_meter";
 import { runBillingClock } from "./billing_clock";
 import { runSlackConnectInvites } from "./slack_connect";
+import { runActivationAlerts } from "./slack_alerts";
 import { disableManagedBilling, enableManagedBilling } from "./model_billing";
 import { runModelMeter, syncModelCaps } from "./model_meter";
 import {
@@ -6401,6 +6402,11 @@ export default {
     // unless SLACK_CONNECT_TOKEN is set. See slack_connect.ts.
     ctx.waitUntil(
       runSlackConnectInvites(env, Date.now()).catch((err) => console.error("slack-connect: run failed", err)),
+    );
+    // First agent session per org into #signups (work 090). Dormant unless
+    // SERVERLESS_AGENTS_DB, SLACK_CONNECT_TOKEN and a channel are set.
+    ctx.waitUntil(
+      runActivationAlerts(env, Date.now()).catch((err) => console.error("slack-alerts: activation run failed", err)),
     );
     if (!env.AUTUMN_SECRET_KEY) return;
     ctx.waitUntil(
