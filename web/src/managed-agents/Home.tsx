@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/page-header'
 import { Panel, PanelContent } from '@/components/panel'
 import { Button } from '@/components/ui/button'
 import { notifyError, notifySuccess } from '@/lib/errors'
+import { cn } from '@/lib/utils'
 import {
   archiveManagedProject,
   getManagedProjects,
@@ -207,148 +208,155 @@ export default function ProjectsHome({ list = false }: { list?: boolean }) {
         title="Automation projects"
         description="Open one to see its agent playground, deployments, sessions, and resources."
         actions={
-          <>
-            {items.length > 1 && !selecting && (
-              <Button variant="outline" onClick={() => setSelecting(true)}>
-                <CheckSquare /> Select
+          // Selection swaps the header actions in place, so entering and
+          // leaving it never moves the list below.
+          selecting ? (
+            <>
+              <span className="text-muted-foreground mr-1 text-sm tabular-nums">
+                {selected.size} selected
+              </span>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  setSelected(
+                    selected.size === items.length
+                      ? new Set()
+                      : new Set(items.map((project) => project.id)),
+                  )
+                }
+              >
+                {selected.size === items.length ? 'Select none' : 'Select all'}
               </Button>
-            )}
-            <Button asChild>
-              <Link to="/new">
-                <Plus /> New project
-              </Link>
-            </Button>
-          </>
+              <Button variant="outline" onClick={stopSelecting}>
+                Cancel
+              </Button>
+              <Button
+                disabled={selected.size === 0}
+                onClick={() =>
+                  setPendingArchive(
+                    selectedProjects.map(({ id, name }) => ({ id, name })),
+                  )
+                }
+              >
+                <Archive aria-hidden />
+                Archive
+              </Button>
+            </>
+          ) : (
+            <>
+              {items.length > 1 && (
+                <Button variant="outline" onClick={() => setSelecting(true)}>
+                  <CheckSquare /> Select
+                </Button>
+              )}
+              <Button asChild>
+                <Link to="/new">
+                  <Plus /> New project
+                </Link>
+              </Button>
+            </>
+          )
         }
       />
 
-      <section className="space-y-3">
-        {selecting && (
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-muted-foreground mr-auto text-sm">
-              {selected.size} selected
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                setSelected(
-                  selected.size === items.length
-                    ? new Set()
-                    : new Set(items.map((project) => project.id)),
-                )
-              }
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((project) => {
+          const isSelected = selected.has(project.id)
+          // Both modes render the same card: only the leading tile turns into
+          // a checkbox and the trailing controls hide, keeping their space.
+          const card = (
+            <Panel
+              className={cn(
+                'h-full transition-colors',
+                isSelected
+                  ? 'border-primary/60 bg-primary/5'
+                  : 'group-hover:border-foreground/20 group-hover:bg-muted/25',
+              )}
             >
-              {selected.size === items.length ? 'Select none' : 'Select all'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={stopSelecting}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              disabled={selected.size === 0}
-              onClick={() =>
-                setPendingArchive(
-                  selectedProjects.map(({ id, name }) => ({ id, name })),
-                )
-              }
-            >
-              <Archive aria-hidden />
-              Archive
-              {selected.size > 0 ? ` ${selected.size}` : ''}
-            </Button>
-          </div>
-        )}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((project) =>
-            selecting ? (
-              <button
-                key={project.id}
-                type="button"
-                aria-pressed={selected.has(project.id)}
-                aria-label={`Select ${project.name}`}
-                onClick={() => toggleSelected(project.id)}
-                className="focus-visible:ring-ring/50 rounded-lg text-left outline-none focus-visible:ring-3"
-              >
-                <Panel
-                  className={
-                    selected.has(project.id)
-                      ? 'border-primary/60 bg-primary/5 h-full transition-colors'
-                      : 'hover:border-foreground/20 hover:bg-muted/25 h-full transition-colors'
-                  }
+              <PanelContent className="flex items-center gap-3">
+                <div
+                  aria-hidden={selecting}
+                  className={cn(
+                    'flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors',
+                    selecting && isSelected
+                      ? 'bg-primary text-primary-foreground'
+                      : selecting
+                        ? 'bg-muted text-muted-foreground'
+                        : 'bg-primary/10 text-primary',
+                  )}
                 >
-                  <PanelContent className="flex items-center gap-3">
-                    <span
-                      aria-hidden
-                      className={
-                        selected.has(project.id)
-                          ? 'border-primary bg-primary text-primary-foreground flex size-4 shrink-0 items-center justify-center rounded-[4px] border'
-                          : 'border-input flex size-4 shrink-0 items-center justify-center rounded-[4px] border'
-                      }
-                    >
-                      {selected.has(project.id) && (
-                        <Check className="size-3.5" />
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
-                        {project.name}
-                      </p>
-                      <p className="text-muted-foreground mt-0.5 text-xs">
-                        {project.agents.length}{' '}
-                        {project.agents.length === 1 ? 'agent' : 'agents'}
-                      </p>
-                    </div>
-                  </PanelContent>
-                </Panel>
-              </button>
-            ) : (
-              <Link
-                key={project.id}
-                to={`/projects/${encodeURIComponent(project.id)}`}
-                className="group focus-visible:ring-ring/50 rounded-lg outline-none focus-visible:ring-3"
-              >
-                <Panel className="group-hover:border-foreground/20 group-hover:bg-muted/25 h-full transition-colors">
-                  <PanelContent className="flex items-center gap-3">
-                    <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-lg">
-                      <FolderKanban className="size-4" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
-                        {project.name}
-                      </p>
-                      <p className="text-muted-foreground mt-0.5 text-xs">
-                        {project.agents.length}{' '}
-                        {project.agents.length === 1 ? 'agent' : 'agents'} ·{' '}
-                        {project.environments.length === 1
-                          ? 'single environment'
-                          : `${project.environments.length} environments`}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Archive ${project.name}`}
-                      className="text-muted-foreground size-8 shrink-0"
-                      onClick={(event) => {
-                        // The whole card is a link; archiving must not navigate.
-                        event.preventDefault()
-                        event.stopPropagation()
-                        setPendingArchive([
-                          { id: project.id, name: project.name },
-                        ])
-                      }}
-                    >
-                      <Archive className="size-4" aria-hidden />
-                    </Button>
-                    <ChevronRight className="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5" />
-                  </PanelContent>
-                </Panel>
-              </Link>
-            ),
-          )}
-        </div>
-      </section>
+                  {selecting ? (
+                    isSelected ? (
+                      <Check className="size-4" />
+                    ) : (
+                      <span className="border-muted-foreground/60 size-4 rounded-[4px] border" />
+                    )
+                  ) : (
+                    <FolderKanban className="size-4" aria-hidden />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{project.name}</p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {project.agents.length}{' '}
+                    {project.agents.length === 1 ? 'agent' : 'agents'} ·{' '}
+                    {project.environments.length === 1
+                      ? 'single environment'
+                      : `${project.environments.length} environments`}
+                  </p>
+                </div>
+                {selecting ? (
+                  <span aria-hidden className="size-8 shrink-0" />
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Archive ${project.name}`}
+                    className="text-muted-foreground size-8 shrink-0"
+                    onClick={(event) => {
+                      // The whole card is a link; archiving must not navigate.
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setPendingArchive([
+                        { id: project.id, name: project.name },
+                      ])
+                    }}
+                  >
+                    <Archive className="size-4" aria-hidden />
+                  </Button>
+                )}
+                <ChevronRight
+                  aria-hidden
+                  className={cn(
+                    'text-muted-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5',
+                    selecting && 'invisible',
+                  )}
+                />
+              </PanelContent>
+            </Panel>
+          )
+          return selecting ? (
+            <button
+              key={project.id}
+              type="button"
+              aria-pressed={isSelected}
+              aria-label={`Select ${project.name}`}
+              onClick={() => toggleSelected(project.id)}
+              className="group focus-visible:ring-ring/50 rounded-lg text-left outline-none focus-visible:ring-3"
+            >
+              {card}
+            </button>
+          ) : (
+            <Link
+              key={project.id}
+              to={`/projects/${encodeURIComponent(project.id)}`}
+              className="group focus-visible:ring-ring/50 rounded-lg outline-none focus-visible:ring-3"
+            >
+              {card}
+            </Link>
+          )
+        })}
+      </div>
 
       {archivedItems.length > 0 && (
         <details className="group space-y-3">
