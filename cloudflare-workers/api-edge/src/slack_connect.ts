@@ -6,10 +6,10 @@
 // Runs on the */5 cron, never in the login path. A row in slack_connect_invites
 // is the claim that a user is handled, so a re-run does nothing; a Slack error
 // leaves the row pending and the next tick retries, up to MAX_ATTEMPTS.
-// SLACK_CONNECT_TOKEN is a user token (xoxp-, scopes channels:write,
-// channels:read, conversations.connect:write), so channels and invites come from
-// that person rather than a bot. The token's own user is the channel's creator
-// and is left out of the team invite.
+// SLACK_CONNECT_TOKEN is the OpenComputer app's bot token (xoxb-, scopes
+// channels:manage, channels:read, conversations.connect:write); a user token with
+// the matching user scopes works too. The token's own user is the channel's
+// creator and is left out of the team invite.
 // Dormant unless SLACK_CONNECT_TOKEN and SLACK_CONNECT_SINCE are set; SINCE
 // keeps the first deploy from inviting every user who signed up before it.
 

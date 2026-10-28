@@ -185,8 +185,8 @@ export interface Env extends DashboardEnv, AgentFeedbackEnv, BillingEventsEnv {
   // as the API key so /v3 sandboxes are owned by + billed to the customer org.
   // Unset → the feature is inert (JWT keys rejected). See dashboard.ts.
   OC_PROVISION_SECRET?: string;
-  // Slack Connect per signup (slack_connect.ts), sent as a person via a user
-  // token: dormant unless the token
+  // Slack Connect per signup (slack_connect.ts), sent by the OpenComputer
+  // Slack app: dormant unless the token
   // and SINCE (unix seconds) are set.
   SLACK_CONNECT_TOKEN?: string;
   SLACK_CONNECT_SINCE?: string;
